@@ -67,8 +67,6 @@ bpf/*.o
 # Wasm
 *.wasm
 
-# Proto generated (tracked in git for reproducibility)
-
 # Coverage
 coverage.out
 coverage.html
@@ -78,7 +76,17 @@ coverage.html
 *.key
 credentials.json
 
-/docs
-.claude
+# Project docs (reference only, not part of source)
+/docs/
+
+# AI agent config (not part of source)
+.claude/
 AGENTS.md
 CLAUDE.md
+
+# Proto generated code (regenerable via buf generate)
+api/proto/gen/
+
+# Build artifacts
+/forge
+/forge.exe
