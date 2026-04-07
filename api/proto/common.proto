@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package forge.v1;
+
+option go_package = "github.com/castwell/forge/api/proto/gen/forgepb";
+
+// TaskStatus represents the lifecycle state of a task instance.
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING     = 1; // Created but dependencies not met
+  TASK_STATUS_READY       = 2; // All dependencies met, waiting for scheduling
+  TASK_STATUS_SCHEDULED   = 3; // Assigned to a worker
+  TASK_STATUS_RUNNING     = 4; // Worker is executing
+  TASK_STATUS_COMPLETED   = 5; // Execution succeeded
+  TASK_STATUS_FAILED      = 6; // Execution failed (may retry)
+  TASK_STATUS_SKIPPED     = 7; // Skipped due to upstream failure policy
+  TASK_STATUS_COMPENSATING = 8; // Running compensation handler
+}
+
+// WorkflowStatus represents the lifecycle state of a workflow instance.
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED  = 0;
+  WORKFLOW_STATUS_PENDING      = 1; // Submitted but not started
+  WORKFLOW_STATUS_RUNNING      = 2; // At least one task is executing
+  WORKFLOW_STATUS_COMPLETED    = 3; // All tasks completed successfully
+  WORKFLOW_STATUS_FAILED       = 4; // Workflow failed
+  WORKFLOW_STATUS_CANCELLED    = 5; // Cancelled by user
+  WORKFLOW_STATUS_COMPENSATING = 6; // Running saga compensation
+}
+
+// Error carries structured error information across gRPC boundaries.
+message Error {
+  string code    = 1; // Machine-readable error code
+  string message = 2; // Human-readable error description
+  map<string, string> details = 3; // Additional context
+}
