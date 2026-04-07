@@ -1,0 +1,80 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+/bin/
+/dist/
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / TypeScript (Dashboard)
+node_modules/
+web/node_modules/
+web/dist/
+web/build/
+web/.next/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+.env
+
+# C / C++
+*.o
+*.a
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+compile_commands.json
+sdk/cpp/build/
+
+# eBPF
+bpf/*.o
+
+# Wasm
+*.wasm
+
+# Proto generated
+api/proto/gen/
+
+# Coverage
+coverage.out
+coverage.html
+
+# Secrets
+*.pem
+*.key
+credentials.json

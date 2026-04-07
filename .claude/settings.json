@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(D:\\forge\\**)",
+      "Execute(go *)",
+      "Execute(buf *)",
+      "Execute(make *)",
+      "Execute(git *)",
+      "Execute(golangci-lint *)",
+      "Execute(npm *)",
+      "Execute(pip *)",
+      "Execute(cmake *)",
+      "Execute(docker *)",
+      "Execute(helm *)",
+      "Execute(kubectl *)",
+      "Execute(tinygo *)"
+    ],
+    "deny": [
+      "Execute(rm -rf /)",
+      "Execute(format *)",
+      "Execute(shutdown *)"
+    ]
+  }
+}
