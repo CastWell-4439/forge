@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package forge.v1;
+
+option go_package = "github.com/castwell/forge/api/proto/gen/forgepb";
+
+import "google/protobuf/timestamp.proto";
+
+// WorkerService defines the interface that all workers implement.
+service WorkerService {
+  // Register registers a worker with the coordinator.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat maintains a bidirectional stream for health checking.
+  rpc Heartbeat(stream HeartbeatPing) returns (stream HeartbeatPong);
+
+  // ExecuteTask sends a task to the worker for execution.
+  rpc ExecuteTask(TaskRequest) returns (TaskResponse);
+}
+
+// RegisterRequest contains worker registration information.
+message RegisterRequest {
+  WorkerRegistration registration = 1;
+}
+
+// RegisterResponse confirms successful registration.
+message RegisterResponse {
+  bool   accepted = 1;
+  string message  = 2;
+}
+
+// WorkerRegistration describes a worker's capabilities.
+message WorkerRegistration {
+  string              id       = 1; // Unique worker identifier
+  string              addr     = 2; // Worker gRPC address (host:port)
+  map<string, string> labels   = 3; // Labels for scheduling affinity (e.g., gpu=true)
+  int32               capacity = 4; // Maximum concurrent tasks
+  repeated string     handlers = 5; // Supported handler names
+}
+
+// HeartbeatPing is sent by the coordinator to check worker health.
+message HeartbeatPing {
+  google.protobuf.Timestamp timestamp = 1;
+}
+
+// HeartbeatPong is the worker's response with current status.
+message HeartbeatPong {
+  string                    worker_id    = 1;
+  int32                     active_tasks = 2; // Currently running tasks
+  int32                     capacity     = 3; // Max concurrent tasks
+  google.protobuf.Timestamp timestamp    = 4;
+}
+
+// TaskRequest contains the task to execute.
+message TaskRequest {
+  string task_id     = 1;
+  string workflow_id = 2;
+  string task_name   = 3;
+  string handler     = 4;
+  bytes  input       = 5; // JSON-encoded task parameters
+  int64  timeout_ms  = 6; // Task timeout in milliseconds
+}
+
+// TaskResponse contains the result of task execution.
+message TaskResponse {
+  string task_id    = 1;
+  bool   success    = 2;
+  bytes  output     = 3; // JSON-encoded result
+  string error_msg  = 4;
+}
