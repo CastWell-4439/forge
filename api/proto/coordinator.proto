@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package forge.v1;
+
+option go_package = "github.com/castwell/forge/api/proto/gen/forgepb";
+
+import "common.proto";
+import "google/protobuf/timestamp.proto";
+
+// CoordinatorService manages workflow lifecycle.
+service CoordinatorService {
+  // SubmitWorkflow creates and starts a new workflow instance.
+  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowResponse);
+
+  // GetWorkflow retrieves the current state of a workflow instance.
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+
+  // ListWorkflows returns a paginated list of workflow instances.
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+
+  // CancelWorkflow cancels a running workflow.
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowResponse);
+}
+
+// SubmitWorkflowRequest contains the workflow definition to execute.
+message SubmitWorkflowRequest {
+  string name       = 1; // Workflow definition name
+  int32  version    = 2; // Definition version (0 = latest)
+  string dag_yaml   = 3; // Inline DAG YAML (alternative to name+version)
+  bytes  input      = 4; // JSON-encoded workflow input parameters
+}
+
+// SubmitWorkflowResponse returns the created workflow instance.
+message SubmitWorkflowResponse {
+  string workflow_id = 1;
+}
+
+// GetWorkflowRequest identifies a workflow instance to retrieve.
+message GetWorkflowRequest {
+  string workflow_id = 1;
+}
+
+// GetWorkflowResponse returns the full workflow instance state.
+message GetWorkflowResponse {
+  WorkflowInstance workflow = 1;
+}
+
+// ListWorkflowsRequest provides filtering and pagination options.
+message ListWorkflowsRequest {
+  WorkflowStatus status   = 1; // Filter by status (0 = all)
+  int32          page_size = 2; // Max results per page
+  string         page_token = 3; // Pagination cursor
+}
+
+// ListWorkflowsResponse returns a page of workflow instances.
+message ListWorkflowsResponse {
+  repeated WorkflowInstance workflows   = 1;
+  string                    next_page_token = 2;
+}
+
+// CancelWorkflowRequest identifies a workflow to cancel.
+message CancelWorkflowRequest {
+  string workflow_id = 1;
+  string reason      = 2;
+}
+
+// CancelWorkflowResponse confirms cancellation.
+message CancelWorkflowResponse {}
+
+// WorkflowInstance represents a single execution of a workflow.
+message WorkflowInstance {
+  string                    id          = 1;
+  string                    name        = 2;
+  int32                     version     = 3;
+  WorkflowStatus            status      = 4;
+  bytes                     input       = 5;
+  bytes                     output      = 6;
+  string                    error_msg   = 7;
+  repeated TaskInstance     tasks       = 8;
+  google.protobuf.Timestamp started_at  = 9;
+  google.protobuf.Timestamp finished_at = 10;
+  google.protobuf.Timestamp created_at  = 11;
+}
+
+// TaskInstance represents a single task within a workflow execution.
+message TaskInstance {
+  string                    id          = 1;
+  string                    task_name   = 2;
+  string                    handler     = 3;
+  TaskStatus                status      = 4;
+  string                    worker_id   = 5;
+  bytes                     input       = 6;
+  bytes                     output      = 7;
+  string                    error_msg   = 8;
+  int32                     attempt     = 9;
+  int32                     max_attempts = 10;
+  google.protobuf.Timestamp scheduled_at = 11;
+  google.protobuf.Timestamp started_at  = 12;
+  google.protobuf.Timestamp finished_at = 13;
+  google.protobuf.Timestamp created_at  = 14;
+}
