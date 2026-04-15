@@ -5,9 +5,15 @@ managed:
     - file_option: go_package_prefix
       value: github.com/castwell/forge/api/proto/gen
 plugins:
+  # Go plugins
   - remote: buf.build/protocolbuffers/go
     out: api/proto/gen
     opt: paths=source_relative
   - remote: buf.build/grpc/go
     out: api/proto/gen
     opt: paths=source_relative
+  # Python plugins
+  - remote: buf.build/protocolbuffers/python
+    out: sdk/python/forge_sdk/generated
+  - remote: buf.build/grpc/python
+    out: sdk/python/forge_sdk/generated
