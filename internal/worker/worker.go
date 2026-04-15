@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync/atomic"
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/discovery"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -15,14 +17,15 @@ import (
 type Worker struct {
 	forgev1.UnimplementedWorkerServiceServer
 
-	id       string
-	addr     string
+	id        string
+	addr      string
 	coordAddr string
-	capacity int
-	registry *Registry
-	executor *Executor
-	active   atomic.Int32
-	server   *grpc.Server
+	capacity  int
+	registry  *Registry
+	executor  *Executor
+	active    atomic.Int32
+	server    *grpc.Server
+	disco     discovery.Discovery
 }
 
 // NewWorker creates a new Worker with the given configuration.
@@ -37,11 +40,24 @@ func NewWorker(id, addr, coordAddr string, capacity int, registry *Registry) *Wo
 	}
 }
 
+// SetDiscovery sets the Discovery backend so the worker registers itself in etcd
+// for discovery by the coordinator's WorkerManager.
+func (w *Worker) SetDiscovery(d discovery.Discovery) {
+	w.disco = d
+}
+
 // Start registers the worker with the coordinator and starts serving gRPC requests.
 func (w *Worker) Start(ctx context.Context) error {
-	// Register with coordinator
+	// Register with coordinator via direct gRPC (legacy/fallback).
 	if err := w.registerWithCoordinator(ctx); err != nil {
 		return fmt.Errorf("register with coordinator: %w", err)
+	}
+
+	// If discovery is configured, also register in etcd so WorkerManager can discover us.
+	if w.disco != nil {
+		if err := w.registerWithDiscovery(ctx); err != nil {
+			return fmt.Errorf("register with discovery: %w", err)
+		}
 	}
 
 	// Start gRPC server for receiving task execution requests
@@ -93,17 +109,6 @@ func (w *Worker) Register(_ context.Context, _ *forgev1.RegisterRequest) (*forge
 	return &forgev1.RegisterResponse{Accepted: true}, nil
 }
 
-// Heartbeat implements the WorkerService Heartbeat RPC (placeholder for Phase 2).
-func (w *Worker) Heartbeat(stream grpc.BidiStreamingServer[forgev1.HeartbeatPing, forgev1.HeartbeatPong]) error {
-	for {
-		_, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-		// TODO Phase 2: respond with status
-	}
-}
-
 // ExecuteTask implements the WorkerService ExecuteTask RPC.
 // It receives a task from the coordinator, runs the matching handler, and returns the result.
 func (w *Worker) ExecuteTask(ctx context.Context, req *forgev1.TaskRequest) (*forgev1.TaskResponse, error) {
@@ -121,4 +126,18 @@ func (w *Worker) ID() string {
 // Addr returns the worker's gRPC listen address.
 func (w *Worker) Addr() string {
 	return w.addr
+}
+
+// registerWithDiscovery registers this worker in etcd under forge/workers/{id}
+// so the coordinator's WorkerManager can discover it via Watch.
+func (w *Worker) registerWithDiscovery(ctx context.Context) error {
+	node := discovery.NodeInfo{
+		ID:   "forge/workers/" + w.id,
+		Addr: w.addr,
+		Metadata: map[string]string{
+			"handlers": strings.Join(w.registry.Handlers(), ","),
+			"capacity": fmt.Sprintf("%d", w.capacity),
+		},
+	}
+	return w.disco.Register(ctx, node)
 }

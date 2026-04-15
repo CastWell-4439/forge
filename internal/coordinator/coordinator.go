@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/castwell/forge/internal/discovery"
 	"github.com/castwell/forge/internal/storage"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -35,11 +36,14 @@ type WorkerEntry struct {
 type Coordinator struct {
 	forgev1.UnimplementedCoordinatorServiceServer
 
-	store   storage.Storage
-	workers map[string]*WorkerEntry
-	mu      sync.RWMutex
-	seqNum  int64
-	seqMu   sync.Mutex
+	store        storage.Storage
+	workers      map[string]*WorkerEntry
+	mu           sync.RWMutex
+	seqNum       int64
+	seqMu        sync.Mutex
+	disco        discovery.Discovery
+	leader       *LeaderController
+	workerMgr    *WorkerManager
 }
 
 // NewCoordinator creates a new Coordinator with the given storage backend.
@@ -85,6 +89,10 @@ func (c *Coordinator) DeregisterWorker(id string) {
 // SubmitWorkflow implements the CoordinatorService SubmitWorkflow RPC.
 // It parses the DAG, persists the workflow and task instances, and kicks off execution.
 func (c *Coordinator) SubmitWorkflow(ctx context.Context, req *forgev1.SubmitWorkflowRequest) (*forgev1.SubmitWorkflowResponse, error) {
+	if !c.IsLeader() {
+		return nil, status.Error(codes.Unavailable, "not the leader coordinator")
+	}
+
 	dagYAML := req.GetDagYaml()
 	if dagYAML == "" {
 		return nil, status.Error(codes.InvalidArgument, "dag_yaml is required")
@@ -346,8 +354,34 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 }
 
 // findWorker selects a worker that supports the given handler.
-// Uses simple round-robin (first available with capacity).
+// When WorkerManager is configured (distributed mode), it searches active workers
+// from the WorkerManager. Otherwise, falls back to the legacy c.workers map
+// (standalone/test mode).
 func (c *Coordinator) findWorker(handler string) *WorkerEntry {
+	// Distributed mode: use WorkerManager
+	if c.workerMgr != nil {
+		for _, w := range c.workerMgr.ActiveWorkers() {
+			if w.ActiveTasks >= w.Capacity {
+				continue
+			}
+			for _, h := range w.Handlers {
+				if h == handler {
+					return &WorkerEntry{
+						ID:       w.Registration.ID,
+						Addr:     w.Registration.Addr,
+						Handlers: w.Handlers,
+						Capacity: w.Capacity,
+						Active:   w.ActiveTasks,
+						Conn:     w.Conn,
+						Client:   w.Client,
+					}
+				}
+			}
+		}
+		return nil
+	}
+
+	// Standalone/test mode: use legacy workers map
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -366,15 +400,30 @@ func (c *Coordinator) findWorker(handler string) *WorkerEntry {
 
 // dispatchTask sends a task to a worker for execution via the ExecuteTask RPC.
 func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, task *storage.Task) {
-	c.mu.Lock()
-	worker.Active++
-	c.mu.Unlock()
-
-	defer func() {
+	// Track active task count on the appropriate data structure.
+	if c.workerMgr != nil {
+		c.workerMgr.mu.Lock()
+		if wi, ok := c.workerMgr.workers[worker.ID]; ok {
+			wi.ActiveTasks++
+		}
+		c.workerMgr.mu.Unlock()
+		defer func() {
+			c.workerMgr.mu.Lock()
+			if wi, ok := c.workerMgr.workers[worker.ID]; ok {
+				wi.ActiveTasks--
+			}
+			c.workerMgr.mu.Unlock()
+		}()
+	} else {
 		c.mu.Lock()
-		worker.Active--
+		worker.Active++
 		c.mu.Unlock()
-	}()
+		defer func() {
+			c.mu.Lock()
+			worker.Active--
+			c.mu.Unlock()
+		}()
+	}
 
 	// Update task to RUNNING
 	if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusRunning); err != nil {
