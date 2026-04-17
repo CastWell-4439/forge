@@ -1,0 +1,31 @@
+# Agent worker handler configuration
+# Mode: "mock" for testing (returns fake results), "real" for production
+
+[handler]
+mode = "mock"
+workspace = "/tmp/forge"
+
+[media]
+# OSS/CDN configuration for real mode
+oss_endpoint = ""
+oss_bucket = ""
+oss_access_key = ""
+oss_secret_key = ""
+
+[ai]
+# FaceFusion API for real mode
+facefusion_url = ""
+# TTS service for real mode
+tts_url = ""
+# LLM API for script generation
+llm_url = ""
+llm_api_key = ""
+
+[video]
+# FFmpeg binary path for real mode
+ffmpeg_path = "ffmpeg"
+ffprobe_path = "ffprobe"
+
+[quality]
+# Similarity threshold for face check
+face_similarity_threshold = 0.7
