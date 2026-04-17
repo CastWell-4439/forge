@@ -82,8 +82,8 @@ func (tm *TimeoutManager) checkTaskTimeouts(ctx context.Context) {
 				log.Printf("INFO: task %s timed out (deadline=%s, now=%s)",
 					task.ID, task.TimeoutAt.Format(time.RFC3339), now.Format(time.RFC3339))
 
-				if err := tm.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusFailed); err != nil {
-					log.Printf("ERROR: timeout manager update task %s to FAILED: %v", task.ID, err)
+				if err := tm.store.FailTask(ctx, task.ID, "timeout exceeded"); err != nil {
+					log.Printf("ERROR: timeout manager fail task %s: %v", task.ID, err)
 					continue
 				}
 

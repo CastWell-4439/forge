@@ -127,6 +127,18 @@ type Storage interface {
 	ClaimTask(ctx context.Context, workerID string, handlers []string) (*Task, error)
 	UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error
 
+	// CompleteTask marks a task as COMPLETED and persists its output.
+	// Also sets finished_at to now. Idempotent: if the task is already in a
+	// terminal state (COMPLETED / FAILED / SKIPPED), the call is a no-op and
+	// does not return an error. If the task does not exist, the call is also
+	// a no-op (a warning is logged).
+	CompleteTask(ctx context.Context, taskID string, output json.RawMessage) error
+
+	// FailTask marks a task as FAILED and persists its error message.
+	// Also sets finished_at to now. Same idempotent/no-op semantics as
+	// CompleteTask.
+	FailTask(ctx context.Context, taskID string, errorMsg string) error
+
 	// Event sourcing
 	SaveEvent(ctx context.Context, event *Event) error
 	GetWorkflowHistory(ctx context.Context, workflowID string) ([]*Event, error)

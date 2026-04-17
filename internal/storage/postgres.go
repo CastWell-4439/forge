@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -298,6 +299,49 @@ func (s *PGStorage) UpdateTaskStatus(ctx context.Context, taskID string, status 
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("task %s not found", taskID)
+	}
+	return nil
+}
+
+// CompleteTask marks a task as COMPLETED and persists its output.
+// Uses a WHERE guard against terminal states (blacklist) for idempotency.
+// A 0-row result is logged but not returned as an error.
+func (s *PGStorage) CompleteTask(ctx context.Context, taskID string, output json.RawMessage) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1,
+		    output = $2,
+		    finished_at = NOW()
+		WHERE id = $3
+		  AND status NOT IN ($4, $5, $6)
+	`, TaskStatusCompleted, nullableJSON(output), taskID,
+		TaskStatusCompleted, TaskStatusFailed, TaskStatusSkipped)
+	if err != nil {
+		return fmt.Errorf("complete task %s: %w", taskID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		log.Printf("WARN: CompleteTask(%s) affected 0 rows (already terminal or not found)", taskID)
+	}
+	return nil
+}
+
+// FailTask marks a task as FAILED and persists its error message.
+// Same idempotent semantics as CompleteTask.
+func (s *PGStorage) FailTask(ctx context.Context, taskID string, errorMsg string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1,
+		    error_msg = $2,
+		    finished_at = NOW()
+		WHERE id = $3
+		  AND status NOT IN ($4, $5, $6)
+	`, TaskStatusFailed, errorMsg, taskID,
+		TaskStatusCompleted, TaskStatusFailed, TaskStatusSkipped)
+	if err != nil {
+		return fmt.Errorf("fail task %s: %w", taskID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		log.Printf("WARN: FailTask(%s) affected 0 rows (already terminal or not found)", taskID)
 	}
 	return nil
 }

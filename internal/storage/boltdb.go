@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -329,6 +330,77 @@ func (s *BoltStorage) UpdateTaskStatus(_ context.Context, taskID string, status 
 			return err
 		}
 		return b.Put([]byte(taskID), updated)
+	})
+}
+
+// isTerminalTaskStatus reports whether a task status is a terminal state that
+// must not be overwritten by subsequent Complete/Fail calls.
+func isTerminalTaskStatus(s TaskStatus) bool {
+	return s == TaskStatusCompleted || s == TaskStatusFailed || s == TaskStatusSkipped
+}
+
+// CompleteTask marks a task as COMPLETED and persists its output.
+// Idempotent: a task already in a terminal state is left untouched.
+// A missing task is treated as a no-op with a warning log.
+func (s *BoltStorage) CompleteTask(_ context.Context, taskID string, output json.RawMessage) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTasks)
+		raw := b.Get([]byte(taskID))
+		if raw == nil {
+			log.Printf("WARN: CompleteTask(%s) task not found", taskID)
+			return nil
+		}
+		var task Task
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
+		}
+		if isTerminalTaskStatus(task.Status) {
+			log.Printf("WARN: CompleteTask(%s) already in terminal state %s, skip",
+				taskID, task.Status)
+			return nil
+		}
+		now := time.Now()
+		task.Status = TaskStatusCompleted
+		task.Output = output
+		task.FinishedAt = &now
+
+		data, err := json.Marshal(&task)
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", taskID, err)
+		}
+		return b.Put([]byte(taskID), data)
+	})
+}
+
+// FailTask marks a task as FAILED and persists its error message.
+// Idempotent with the same semantics as CompleteTask.
+func (s *BoltStorage) FailTask(_ context.Context, taskID string, errorMsg string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTasks)
+		raw := b.Get([]byte(taskID))
+		if raw == nil {
+			log.Printf("WARN: FailTask(%s) task not found", taskID)
+			return nil
+		}
+		var task Task
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
+		}
+		if isTerminalTaskStatus(task.Status) {
+			log.Printf("WARN: FailTask(%s) already in terminal state %s, skip",
+				taskID, task.Status)
+			return nil
+		}
+		now := time.Now()
+		task.Status = TaskStatusFailed
+		task.ErrorMsg = errorMsg
+		task.FinishedAt = &now
+
+		data, err := json.Marshal(&task)
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", taskID, err)
+		}
+		return b.Put([]byte(taskID), data)
 	})
 }
 

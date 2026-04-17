@@ -244,8 +244,8 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 		return fmt.Errorf("get task %s: %w", taskID, err)
 	}
 
-	if err := c.store.UpdateTaskStatus(ctx, taskID, storage.TaskStatusCompleted); err != nil {
-		return fmt.Errorf("update task %s to completed: %w", taskID, err)
+	if err := c.store.CompleteTask(ctx, taskID, output); err != nil {
+		return fmt.Errorf("complete task %s: %w", taskID, err)
 	}
 	c.saveEvent(ctx, task.WorkflowID, taskID, storage.EventTaskCompleted, output)
 
@@ -310,8 +310,8 @@ func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg st
 		return fmt.Errorf("get task %s: %w", taskID, err)
 	}
 
-	if err := c.store.UpdateTaskStatus(ctx, taskID, storage.TaskStatusFailed); err != nil {
-		return fmt.Errorf("update task %s to failed: %w", taskID, err)
+	if err := c.store.FailTask(ctx, taskID, errMsg); err != nil {
+		return fmt.Errorf("fail task %s: %w", taskID, err)
 	}
 	payload, _ := json.Marshal(map[string]string{"error": errMsg})
 	c.saveEvent(ctx, task.WorkflowID, taskID, storage.EventTaskFailed, payload)
