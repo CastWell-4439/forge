@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "forge-worker-sdk",
+  "version": "0.1.0",
+  "description": "Forge C++ Worker SDK — connects to Coordinator, executes high-performance tasks.",
+  "dependencies": [
+    "grpc",
+    "protobuf",
+    "nlohmann-json"
+  ]
+}

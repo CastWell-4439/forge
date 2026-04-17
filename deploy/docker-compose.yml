@@ -1,0 +1,124 @@
+version: "3.9"
+
+services:
+  # --- Infrastructure ---
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: forge
+      POSTGRES_PASSWORD: forge
+      POSTGRES_DB: forge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forge"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- Coordinator ---
+  coordinator:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile.coordinator
+    command:
+      - forge
+      - coordinator
+      - --embed-etcd
+      - --db=postgres://forge:forge@postgres:5432/forge?sslmode=disable
+      - --redis=redis://redis:6379
+    ports:
+      - "8080:8080"   # gRPC
+      - "8081:8081"   # HTTP/metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "grpc_health_probe -addr=:8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Go Worker ---
+  worker-go:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile.worker
+    command:
+      - forge
+      - worker
+      - --coordinator=coordinator:8080
+    deploy:
+      replicas: 3
+    depends_on:
+      coordinator:
+        condition: service_healthy
+
+  # --- Python Worker ---
+  worker-python:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile.worker-python
+    command:
+      - python
+      - -m
+      - forge_worker
+      - --coordinator=coordinator:8080
+    environment:
+      FORGE_COORDINATOR: coordinator:8080
+    deploy:
+      replicas: 2
+    depends_on:
+      coordinator:
+        condition: service_healthy
+
+  # --- C++ Worker ---
+  worker-cpp:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile.worker-cpp
+    command:
+      - ./forge-worker
+      - --coordinator=coordinator:8080
+    environment:
+      FORGE_COORDINATOR: coordinator:8080
+    deploy:
+      replicas: 1
+    depends_on:
+      coordinator:
+        condition: service_healthy
+
+  # --- Observability (optional) ---
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - coordinator
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+volumes:
+  pgdata:

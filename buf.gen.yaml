@@ -17,3 +17,8 @@ plugins:
     out: sdk/python/forge_sdk/generated
   - remote: buf.build/grpc/python
     out: sdk/python/forge_sdk/generated
+  # C++ plugins
+  - remote: buf.build/protocolbuffers/cpp
+    out: sdk/cpp/generated
+  - remote: buf.build/grpc/cpp
+    out: sdk/cpp/generated
