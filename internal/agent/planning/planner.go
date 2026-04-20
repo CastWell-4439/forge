@@ -1,6 +1,6 @@
-// Package agent implements the Agent layer for Forge — requirement parsing,
-// task planning, DAG generation, quality checking, and session management.
-package agent
+// Package planning implements requirement parsing, task planning, and DAG
+// generation for the Agent layer.
+package planning
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/tools"
 )
 
@@ -19,21 +20,21 @@ type DAGTemplate struct {
 	// Description explains what this template is for.
 	Description string
 	// Match returns true if the given requirement fits this template.
-	Match func(req *VideoRequirement) bool
+	Match func(req *core.VideoRequirement) bool
 	// Build generates a YAML DAG string from the requirement.
-	Build func(req *VideoRequirement) string
+	Build func(req *core.VideoRequirement) string
 }
 
 // TaskPlanner converts structured VideoRequirements into Forge DAG YAML.
 // It uses a two-strategy approach: template matching first, then LLM fallback.
 type TaskPlanner struct {
-	llmClient LLMClient
+	llmClient core.LLMClient
 	registry  *tools.ToolRegistry
 	templates []DAGTemplate
 }
 
 // NewTaskPlanner creates a new TaskPlanner.
-func NewTaskPlanner(llm LLMClient, registry *tools.ToolRegistry) *TaskPlanner {
+func NewTaskPlanner(llm core.LLMClient, registry *tools.ToolRegistry) *TaskPlanner {
 	p := &TaskPlanner{
 		llmClient: llm,
 		registry:  registry,
@@ -44,7 +45,7 @@ func NewTaskPlanner(llm LLMClient, registry *tools.ToolRegistry) *TaskPlanner {
 
 // Plan generates a DAG YAML string for the given requirement.
 // It checks templates first, then falls back to LLM generation.
-func (p *TaskPlanner) Plan(ctx context.Context, req *VideoRequirement) (string, error) {
+func (p *TaskPlanner) Plan(ctx context.Context, req *core.VideoRequirement) (string, error) {
 	// Strategy A: try template matching first (fast, stable).
 	for _, tmpl := range p.templates {
 		if tmpl.Match(req) {
@@ -57,7 +58,7 @@ func (p *TaskPlanner) Plan(ctx context.Context, req *VideoRequirement) (string, 
 }
 
 // planWithLLM uses the LLM to dynamically generate a DAG.
-func (p *TaskPlanner) planWithLLM(ctx context.Context, req *VideoRequirement) (string, error) {
+func (p *TaskPlanner) planWithLLM(ctx context.Context, req *core.VideoRequirement) (string, error) {
 	selectedTools := p.selectTools(req)
 	toolsPrompt := p.registry.FormatForPrompt()
 
@@ -83,7 +84,7 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *VideoRequirement) (s
 
 只输出纯 YAML，不要包含 markdown 代码块或任何解释文字。`, toolsPrompt, strings.Join(selectedTools, ", "))
 
-	messages := []Message{
+	messages := []core.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: string(reqJSON)},
 	}
@@ -98,7 +99,7 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *VideoRequirement) (s
 
 // selectTools analyzes the requirement and returns a list of recommended
 // handler names that should be used in the DAG.
-func (p *TaskPlanner) selectTools(req *VideoRequirement) []string {
+func (p *TaskPlanner) selectTools(req *core.VideoRequirement) []string {
 	var selected []string
 
 	// Source material handling: always need download.
@@ -145,10 +146,10 @@ func (p *TaskPlanner) selectTools(req *VideoRequirement) []string {
 	selected = append(selected, "video.encode", "media.upload")
 
 	// Quality checks based on quality level.
-	if req.QualityLevel == QualityStandard || req.QualityLevel == QualityPremium {
+	if req.QualityLevel == core.QualityStandard || req.QualityLevel == core.QualityPremium {
 		selected = append(selected, "quality.video_check")
 	}
-	if req.FaceSwap != nil && (req.QualityLevel == QualityStandard || req.QualityLevel == QualityPremium) {
+	if req.FaceSwap != nil && (req.QualityLevel == core.QualityStandard || req.QualityLevel == core.QualityPremium) {
 		selected = append(selected, "quality.face_check")
 	}
 
@@ -189,14 +190,14 @@ func FaceSwapWithTTSTemplate() DAGTemplate {
 	return DAGTemplate{
 		Name:        "face_swap_with_tts",
 		Description: "Face swap video with TTS narration, BGM, and subtitles",
-		Match: func(req *VideoRequirement) bool {
+		Match: func(req *core.VideoRequirement) bool {
 			return req.FaceSwap != nil &&
 				req.TTS != nil &&
 				req.BGM != nil &&
 				req.Subtitles != nil &&
 				len(req.SourceVideos) > 0
 		},
-		Build: func(req *VideoRequirement) string {
+		Build: func(req *core.VideoRequirement) string {
 			sourceURL := ""
 			if len(req.SourceVideos) > 0 {
 				sourceURL = req.SourceVideos[0].URL

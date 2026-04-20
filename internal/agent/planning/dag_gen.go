@@ -1,9 +1,10 @@
-package agent
+package planning
 
 import (
 	"context"
 	"fmt"
 
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/tools"
 	"github.com/castwell/forge/internal/coordinator"
 )
@@ -22,11 +23,11 @@ type DAGGenerator struct {
 	planner   *TaskPlanner
 	validator *DAGValidator
 	registry  *tools.ToolRegistry
-	llmClient LLMClient
+	llmClient core.LLMClient
 }
 
 // NewDAGGenerator creates a new DAGGenerator.
-func NewDAGGenerator(llm LLMClient, registry *tools.ToolRegistry) *DAGGenerator {
+func NewDAGGenerator(llm core.LLMClient, registry *tools.ToolRegistry) *DAGGenerator {
 	return &DAGGenerator{
 		planner:   NewTaskPlanner(llm, registry),
 		validator: NewDAGValidator(registry),
@@ -45,7 +46,7 @@ type GenerateResult struct {
 
 // Generate produces a validated DAG from a VideoRequirement.
 // It tries three strategies in order: template, LLM+validate, fallback.
-func (g *DAGGenerator) Generate(ctx context.Context, req *VideoRequirement) (*GenerateResult, error) {
+func (g *DAGGenerator) Generate(ctx context.Context, req *core.VideoRequirement) (*GenerateResult, error) {
 	// Strategy 1: Template matching — check if any template fits.
 	for _, tmpl := range g.planner.templates {
 		if tmpl.Match(req) {
@@ -102,7 +103,7 @@ func (g *DAGGenerator) Generate(ctx context.Context, req *VideoRequirement) (*Ge
 
 // generateWithLLM calls the LLM to generate a DAG, optionally including
 // error feedback from a previous attempt.
-func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *VideoRequirement, previousErrors string) (string, error) {
+func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *core.VideoRequirement, previousErrors string) (string, error) {
 	if previousErrors == "" {
 		return g.planner.planWithLLM(ctx, req)
 	}
@@ -136,7 +137,7 @@ func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *VideoRequiremen
 		previousErrors, toolsPrompt,
 		fmt.Sprintf("%v", selectedTools))
 
-	messages := []Message{
+	messages := []core.Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: reqPrompt},
 	}
@@ -152,7 +153,7 @@ func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *VideoRequiremen
 // buildFallbackDAG creates a minimal but valid DAG that covers the basic
 // operations. This always succeeds but may lose some detail from the
 // original requirement.
-func (g *DAGGenerator) buildFallbackDAG(req *VideoRequirement) string {
+func (g *DAGGenerator) buildFallbackDAG(req *core.VideoRequirement) string {
 	// Build a minimal download -> encode -> upload pipeline.
 	sourceURL := "input"
 	if len(req.SourceVideos) > 0 {

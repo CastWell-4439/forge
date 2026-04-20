@@ -1,4 +1,4 @@
-package agent
+package session
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 )
 
 // ForgeClient wraps the Coordinator gRPC client for agent use.
-// It provides simplified methods for workflow management.
 type ForgeClient struct {
 	client forgev1.CoordinatorServiceClient
 }
@@ -39,7 +38,6 @@ func (c *ForgeClient) Submit(ctx context.Context, dagYAML string) (string, error
 }
 
 // Watch retrieves the current state of a workflow by ID.
-// In a production system this would stream status updates; for now it polls.
 func (c *ForgeClient) Watch(ctx context.Context, workflowID string) (*forgev1.WorkflowInstance, error) {
 	resp, err := c.client.GetWorkflow(ctx, &forgev1.GetWorkflowRequest{
 		WorkflowId: workflowID,

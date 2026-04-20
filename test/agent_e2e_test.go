@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent"
+	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/planning"
+	"github.com/castwell/forge/internal/agent/session"
 	"github.com/castwell/forge/internal/agent/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,15 +18,12 @@ type mockLLMForE2E struct {
 	plannerResponse string
 }
 
-func (m *mockLLMForE2E) Chat(_ context.Context, messages []agent.Message) (string, error) {
-	// Route based on system prompt content.
+func (m *mockLLMForE2E) Chat(_ context.Context, messages []core.Message) (string, error) {
 	for _, msg := range messages {
 		if msg.Role == "system" {
-			// Parser prompt contains "需求分析师".
 			if contains(msg.Content, "需求分析师") {
 				return m.parserResponse, nil
 			}
-			// Planner prompt contains "DAG 编排专家".
 			if contains(msg.Content, "DAG") {
 				return m.plannerResponse, nil
 			}
@@ -48,9 +47,7 @@ func searchSubstring(s, substr string) bool {
 
 // TestAgentE2ETemplateFlow tests the full pipeline:
 // input text -> RequirementParser -> TaskPlanner -> DAG generated -> validation passes.
-// This uses the FaceSwapWithTTS template path (no LLM for DAG generation).
 func TestAgentE2ETemplateFlow(t *testing.T) {
-	// Step 1: Set up mock LLM that returns a valid parsed requirement.
 	parserJSON := `{
 		"description": "30秒产品介绍视频，换脸，配BGM和字幕",
 		"duration": 30,
@@ -85,8 +82,7 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
 	registry := tools.DefaultRegistry()
 
-	// Step 2: Parse requirement.
-	parser := agent.NewRequirementParser(mock)
+	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "帮我做一个30秒的产品介绍视频，用这张人脸，配轻快的BGM和字幕")
 	require.NoError(t, err)
 	require.NotNil(t, req)
@@ -99,8 +95,7 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	require.NotNil(t, req.Subtitles)
 	require.Len(t, req.SourceVideos, 1)
 
-	// Step 3: Generate DAG (should match FaceSwapWithTTS template).
-	gen := agent.NewDAGGenerator(mock, registry)
+	gen := planning.NewDAGGenerator(mock, registry)
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
 
@@ -108,11 +103,9 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	assert.Equal(t, 0, result.Retries)
 	require.NotNil(t, result.DAG)
 
-	// Step 4: Verify DAG structure.
 	dag := result.DAG
 	assert.Equal(t, "face-swap-with-tts", dag.Name)
 
-	// Verify expected tasks exist.
 	expectedTasks := []string{
 		"download-source-video",
 		"download-face-image",
@@ -140,7 +133,6 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 		}
 	}
 
-	// Step 5: Verify handler assignments.
 	assert.Equal(t, "media.download", dag.Tasks["download-source-video"].Handler)
 	assert.Equal(t, "media.download", dag.Tasks["download-face-image"].Handler)
 	assert.Equal(t, "video.probe", dag.Tasks["probe-video"].Handler)
@@ -157,39 +149,29 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	assert.Equal(t, "quality.face_check", dag.Tasks["check-face"].Handler)
 	assert.Equal(t, "media.upload", dag.Tasks["upload"].Handler)
 
-	// Step 6: Verify dependencies.
-	// download tasks have no dependencies.
 	assert.Empty(t, dag.Tasks["download-source-video"].DependsOn)
 	assert.Empty(t, dag.Tasks["download-face-image"].DependsOn)
-
-	// probe depends on download.
 	assert.Equal(t, []string{"download-source-video"}, dag.Tasks["probe-video"].DependsOn)
 
-	// face-swap depends on preprocess + face image.
 	fsDeps := dag.Tasks["face-swap"].DependsOn
 	assert.Contains(t, fsDeps, "preprocess-video")
 	assert.Contains(t, fsDeps, "download-face-image")
 
-	// mix-audio depends on TTS + BGM.
 	mixDeps := dag.Tasks["mix-audio"].DependsOn
 	assert.Contains(t, mixDeps, "generate-tts")
 	assert.Contains(t, mixDeps, "select-bgm")
 
-	// lip-sync depends on face-swap + mix-audio.
 	lsDeps := dag.Tasks["lip-sync"].DependsOn
 	assert.Contains(t, lsDeps, "face-swap")
 	assert.Contains(t, lsDeps, "mix-audio")
 
-	// upload depends on quality checks.
 	uploadDeps := dag.Tasks["upload"].DependsOn
 	assert.Contains(t, uploadDeps, "check-quality")
 	assert.Contains(t, uploadDeps, "check-face")
 
-	// Step 7: Verify DAG passes coordinator-level validation.
 	err = dag.Validate()
 	assert.NoError(t, err, "DAG should pass structural validation")
 
-	// Step 8: Verify topological sort works (no cycles).
 	sorted, err := dag.TopologicalSort()
 	require.NoError(t, err)
 	assert.Len(t, sorted, 15)
@@ -197,7 +179,6 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 
 // TestAgentE2ELLMFlow tests the pipeline with LLM-generated DAG.
 func TestAgentE2ELLMFlow(t *testing.T) {
-	// Parser response: a simple trim request (no template match).
 	parserJSON := `{
 		"description": "裁剪视频5秒到15秒",
 		"duration": 10,
@@ -209,7 +190,6 @@ func TestAgentE2ELLMFlow(t *testing.T) {
 		"quality_level": "draft"
 	}`
 
-	// LLM-generated DAG for the trim request.
 	llmDAG := `name: trim-video
 tasks:
   download:
@@ -247,15 +227,13 @@ tasks:
 	}
 	registry := tools.DefaultRegistry()
 
-	// Parse.
-	parser := agent.NewRequirementParser(mock)
+	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "裁剪视频从5秒到15秒")
 	require.NoError(t, err)
 	assert.Nil(t, req.FaceSwap)
 	assert.Nil(t, req.TTS)
 
-	// Generate.
-	gen := agent.NewDAGGenerator(mock, registry)
+	gen := planning.NewDAGGenerator(mock, registry)
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
 
@@ -264,30 +242,25 @@ tasks:
 	assert.Equal(t, "trim-video", result.DAG.Name)
 	assert.Len(t, result.DAG.Tasks, 4)
 
-	// Verify deps.
 	assert.Empty(t, result.DAG.Tasks["download"].DependsOn)
 	assert.Equal(t, []string{"download"}, result.DAG.Tasks["trim"].DependsOn)
 	assert.Equal(t, []string{"trim"}, result.DAG.Tasks["encode"].DependsOn)
 	assert.Equal(t, []string{"encode"}, result.DAG.Tasks["upload"].DependsOn)
 
-	// Validate.
 	err = result.DAG.Validate()
 	assert.NoError(t, err)
 }
 
 // TestAgentE2ESessionFlow tests the session state machine through a full flow.
 func TestAgentE2ESessionFlow(t *testing.T) {
-	session := agent.NewSession()
-	store := agent.NewInMemorySessionStore()
+	sess := session.NewSession()
+	store := session.NewInMemorySessionStore()
 
-	// Save session.
-	require.NoError(t, store.Save(session))
+	require.NoError(t, store.Save(sess))
 
-	// Simulate: idle -> parsing.
-	require.NoError(t, session.Transition(agent.StateParsing))
-	session.AddMessage(agent.Message{Role: "user", Content: "make a face swap video"})
+	require.NoError(t, sess.Transition(session.StateParsing))
+	sess.AddMessage(core.Message{Role: "user", Content: "make a face swap video"})
 
-	// Parser output.
 	parserJSON := `{
 		"description": "face swap video",
 		"duration": 30,
@@ -302,39 +275,32 @@ func TestAgentE2ESessionFlow(t *testing.T) {
 		"quality_level": "standard"
 	}`
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
-	parser := agent.NewRequirementParser(mock)
+	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "make a face swap video")
 	require.NoError(t, err)
-	session.SetRequirement(req)
+	sess.SetRequirement(req)
 
-	// parsing -> planning.
-	require.NoError(t, session.Transition(agent.StatePlanning))
+	require.NoError(t, sess.Transition(session.StatePlanning))
 
 	registry := tools.DefaultRegistry()
-	gen := agent.NewDAGGenerator(mock, registry)
+	gen := planning.NewDAGGenerator(mock, registry)
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, "template", result.Strategy)
 
-	// planning -> executing.
-	require.NoError(t, session.Transition(agent.StateExecuting))
-	session.SetWorkflowID("wf-test-123")
+	require.NoError(t, sess.Transition(session.StateExecuting))
+	sess.SetWorkflowID("wf-test-123")
 
-	// executing -> checking.
-	require.NoError(t, session.Transition(agent.StateChecking))
+	require.NoError(t, sess.Transition(session.StateChecking))
+	require.NoError(t, sess.Transition(session.StateCompleted))
 
-	// checking -> completed.
-	require.NoError(t, session.Transition(agent.StateCompleted))
+	assert.Equal(t, session.StateCompleted, sess.GetState())
+	assert.Equal(t, "wf-test-123", sess.WorkflowID)
+	assert.NotNil(t, sess.Requirement)
 
-	// Verify final state.
-	assert.Equal(t, agent.StateCompleted, session.GetState())
-	assert.Equal(t, "wf-test-123", session.WorkflowID)
-	assert.NotNil(t, session.Requirement)
-
-	// Retrieve from store.
-	retrieved, err := store.Get(session.ID)
+	retrieved, err := store.Get(sess.ID)
 	require.NoError(t, err)
-	assert.Equal(t, agent.StateCompleted, retrieved.GetState())
+	assert.Equal(t, session.StateCompleted, retrieved.GetState())
 }
 
 // TestAgentE2EValidationRoundtrip tests that template-generated DAGs pass
@@ -359,29 +325,24 @@ func TestAgentE2EValidationRoundtrip(t *testing.T) {
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
 	registry := tools.DefaultRegistry()
 
-	// Parse.
-	parser := agent.NewRequirementParser(mock)
+	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "Create a premium product launch video")
 	require.NoError(t, err)
 
-	// Generate DAG.
-	gen := agent.NewDAGGenerator(mock, registry)
+	gen := planning.NewDAGGenerator(mock, registry)
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, "template", result.Strategy)
 
-	// Run full validation independently.
-	validator := agent.NewDAGValidator(registry)
+	validator := planning.NewDAGValidator(registry)
 	valResult := validator.Validate(result.YAML)
 	assert.True(t, valResult.Valid, "validation failed: %v", valResult.Issues)
 	assert.False(t, valResult.HasErrors())
 
-	// Check topological ordering is valid.
 	sorted, err := result.DAG.TopologicalSort()
 	require.NoError(t, err)
 	assert.Len(t, sorted, 15)
 
-	// Verify download tasks come before everything else.
 	downloadIdx := indexOf(sorted, "download-source-video")
 	probeIdx := indexOf(sorted, "probe-video")
 	faceSwapIdx := indexOf(sorted, "face-swap")

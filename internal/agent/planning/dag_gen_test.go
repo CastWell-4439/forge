@@ -1,9 +1,10 @@
-package agent
+package planning
 
 import (
 	"context"
 	"testing"
 
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,14 +15,14 @@ func TestDAGGeneratorTemplateStrategy(t *testing.T) {
 	registry := tools.DefaultRegistry()
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &VideoRequirement{
-		FaceSwap: &FaceSwapReq{
-			TargetFace: MediaRef{URL: "https://cdn.example.com/face.jpg"},
+	req := &core.VideoRequirement{
+		FaceSwap: &core.FaceSwapReq{
+			TargetFace: core.MediaRef{URL: "https://cdn.example.com/face.jpg"},
 		},
-		TTS:       &TTSReq{Text: "Hello", Voice: "zh-CN-XiaoxiaoNeural", Language: "zh-CN"},
-		BGM:       &BGMReq{Style: "upbeat", Volume: 0.3},
-		Subtitles: &SubtitleReq{Language: "zh-CN"},
-		SourceVideos: []MediaRef{
+		TTS:       &core.TTSReq{Text: "Hello", Voice: "zh-CN-XiaoxiaoNeural", Language: "zh-CN"},
+		BGM:       &core.BGMReq{Style: "upbeat", Volume: 0.3},
+		Subtitles: &core.SubtitleReq{Language: "zh-CN"},
+		SourceVideos: []core.MediaRef{
 			{URL: "https://cdn.example.com/source.mp4"},
 		},
 		Resolution: "1080p",
@@ -67,9 +68,9 @@ tasks:
 	gen := NewDAGGenerator(mock, registry)
 
 	// No template match — will use LLM.
-	req := &VideoRequirement{
+	req := &core.VideoRequirement{
 		Description: "trim a video",
-		SourceVideos: []MediaRef{
+		SourceVideos: []core.MediaRef{
 			{URL: "https://example.com/video.mp4"},
 		},
 	}
@@ -106,7 +107,7 @@ tasks:
 	registry := tools.DefaultRegistry()
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &VideoRequirement{Description: "download a file"}
+	req := &core.VideoRequirement{Description: "download a file"}
 
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
@@ -122,9 +123,9 @@ func TestDAGGeneratorFallbackStrategy(t *testing.T) {
 	registry := tools.DefaultRegistry()
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &VideoRequirement{
+	req := &core.VideoRequirement{
 		Description: "something complex",
-		SourceVideos: []MediaRef{
+		SourceVideos: []core.MediaRef{
 			{URL: "https://example.com/source.mp4"},
 		},
 		Resolution: "720p",
@@ -144,8 +145,8 @@ func TestDAGGeneratorFallbackUsesReqParams(t *testing.T) {
 	registry := tools.DefaultRegistry()
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &VideoRequirement{
-		SourceVideos: []MediaRef{
+	req := &core.VideoRequirement{
+		SourceVideos: []core.MediaRef{
 			{URL: "https://cdn.example.com/my-video.mp4"},
 		},
 		Resolution: "4K",
@@ -164,7 +165,7 @@ type countingMockLLM struct {
 	callCount *int
 }
 
-func (m *countingMockLLM) Chat(_ context.Context, _ []Message) (string, error) {
+func (m *countingMockLLM) Chat(_ context.Context, _ []core.Message) (string, error) {
 	idx := *m.callCount
 	*m.callCount++
 	if idx < len(m.responses) {

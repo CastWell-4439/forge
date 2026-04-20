@@ -1,9 +1,10 @@
-package agent
+package planning
 
 import (
 	"context"
 	"testing"
 
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ type mockLLMClient struct {
 	fallback  string            // default response if no match
 }
 
-func (m *mockLLMClient) Chat(_ context.Context, messages []Message) (string, error) {
+func (m *mockLLMClient) Chat(_ context.Context, messages []core.Message) (string, error) {
 	for _, msg := range messages {
 		if msg.Role == "user" {
 			if resp, ok := m.responses[msg.Content]; ok {
@@ -95,7 +96,7 @@ func TestRequirementParserParse(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/source.mp4", req.SourceVideos[0].URL)
 
 	// Quality.
-	assert.Equal(t, QualityStandard, req.QualityLevel)
+	assert.Equal(t, core.QualityStandard, req.QualityLevel)
 }
 
 func TestRequirementParserDefaults(t *testing.T) {
@@ -110,7 +111,7 @@ func TestRequirementParserDefaults(t *testing.T) {
 	assert.Equal(t, "make a video", req.Description) // fallback from input
 	assert.Equal(t, "16:9", req.AspectRatio)
 	assert.Equal(t, "1080p", req.Resolution)
-	assert.Equal(t, QualityStandard, req.QualityLevel)
+	assert.Equal(t, core.QualityStandard, req.QualityLevel)
 }
 
 func TestRequirementParserMarkdownWrapped(t *testing.T) {

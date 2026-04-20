@@ -1,10 +1,11 @@
-package agent
+package session
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	"github.com/castwell/forge/internal/agent/core"
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,7 +46,6 @@ func TestSessionTransitionHappyPath(t *testing.T) {
 func TestSessionTransitionWithFix(t *testing.T) {
 	s := NewSession()
 
-	// Happy path through fix cycle.
 	require.NoError(t, s.Transition(StateParsing))
 	require.NoError(t, s.Transition(StatePlanning))
 	require.NoError(t, s.Transition(StateExecuting))
@@ -60,9 +60,9 @@ func TestSessionTransitionWithFix(t *testing.T) {
 
 func TestSessionTransitionInvalid(t *testing.T) {
 	tests := []struct {
-		name   string
-		from   SessionState
-		to     SessionState
+		name string
+		from SessionState
+		to   SessionState
 	}{
 		{"idle to executing", StateIdle, StateExecuting},
 		{"idle to completed", StateIdle, StateCompleted},
@@ -83,7 +83,6 @@ func TestSessionTransitionInvalid(t *testing.T) {
 }
 
 func TestSessionTransitionToFailed(t *testing.T) {
-	// Every non-terminal state can transition to failed.
 	states := []SessionState{
 		StateIdle, StateParsing, StatePlanning,
 		StateExecuting, StateChecking, StateFixing,
@@ -101,8 +100,8 @@ func TestSessionTransitionToFailed(t *testing.T) {
 
 func TestSessionAddMessage(t *testing.T) {
 	s := NewSession()
-	s.AddMessage(Message{Role: "user", Content: "hello"})
-	s.AddMessage(Message{Role: "assistant", Content: "hi"})
+	s.AddMessage(core.Message{Role: "user", Content: "hello"})
+	s.AddMessage(core.Message{Role: "assistant", Content: "hi"})
 	assert.Len(t, s.Messages, 2)
 	assert.Equal(t, "user", s.Messages[0].Role)
 }
@@ -125,7 +124,7 @@ func TestSessionSetters(t *testing.T) {
 	s.SetWorkflowID("wf-123")
 	assert.Equal(t, "wf-123", s.WorkflowID)
 
-	req := &VideoRequirement{Description: "test"}
+	req := &core.VideoRequirement{Description: "test"}
 	s.SetRequirement(req)
 	assert.Equal(t, "test", s.Requirement.Description)
 }
@@ -135,21 +134,17 @@ func TestSessionSetters(t *testing.T) {
 func TestInMemorySessionStoreCRUD(t *testing.T) {
 	store := NewInMemorySessionStore()
 
-	// Save.
 	s := NewSession()
 	require.NoError(t, store.Save(s))
 
-	// Get.
 	got, err := store.Get(s.ID)
 	require.NoError(t, err)
 	assert.Equal(t, s.ID, got.ID)
 
-	// List.
 	list, err := store.List()
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 
-	// Delete.
 	require.NoError(t, store.Delete(s.ID))
 	_, err = store.Get(s.ID)
 	assert.Error(t, err)
@@ -171,14 +166,13 @@ func TestInMemorySessionStoreDeleteNotFound(t *testing.T) {
 
 // --- ForgeClient tests (with mock gRPC) ---
 
-// mockCoordinatorClient implements forgev1.CoordinatorServiceClient for testing.
 type mockCoordinatorClient struct {
-	submitResp  *forgev1.SubmitWorkflowResponse
-	getResp     *forgev1.GetWorkflowResponse
-	cancelResp  *forgev1.CancelWorkflowResponse
-	submitErr   error
-	getErr      error
-	cancelErr   error
+	submitResp *forgev1.SubmitWorkflowResponse
+	getResp    *forgev1.GetWorkflowResponse
+	cancelResp *forgev1.CancelWorkflowResponse
+	submitErr  error
+	getErr     error
+	cancelErr  error
 }
 
 func (m *mockCoordinatorClient) SubmitWorkflow(_ context.Context, _ *forgev1.SubmitWorkflowRequest, _ ...grpc.CallOption) (*forgev1.SubmitWorkflowResponse, error) {

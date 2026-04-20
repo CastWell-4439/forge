@@ -1,10 +1,12 @@
-package agent
+// Package session implements Agent session state machine and Forge client.
+package session
 
 import (
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/google/uuid"
 )
 
@@ -12,22 +14,14 @@ import (
 type SessionState string
 
 const (
-	// StateIdle is the initial state before any processing begins.
-	StateIdle SessionState = "idle"
-	// StateParsing indicates the requirement is being parsed.
-	StateParsing SessionState = "parsing"
-	// StatePlanning indicates the DAG is being planned/generated.
-	StatePlanning SessionState = "planning"
-	// StateExecuting indicates the workflow is being executed by Forge.
+	StateIdle      SessionState = "idle"
+	StateParsing   SessionState = "parsing"
+	StatePlanning  SessionState = "planning"
 	StateExecuting SessionState = "executing"
-	// StateChecking indicates quality checks are being run.
-	StateChecking SessionState = "checking"
-	// StateFixing indicates a correction DAG is being generated/executed.
-	StateFixing SessionState = "fixing"
-	// StateCompleted indicates all work has finished successfully.
+	StateChecking  SessionState = "checking"
+	StateFixing    SessionState = "fixing"
 	StateCompleted SessionState = "completed"
-	// StateFailed indicates the session has failed unrecoverably.
-	StateFailed SessionState = "failed"
+	StateFailed    SessionState = "failed"
 )
 
 // validTransitions defines the allowed state transitions for the session
@@ -44,27 +38,17 @@ var validTransitions = map[SessionState][]SessionState{
 }
 
 // Session holds the state and context for a single agent session.
-// From agent-tech-spec 3.5.
 type Session struct {
 	mu sync.RWMutex
 
-	// ID is the unique session identifier.
-	ID string
-	// State is the current session state.
-	State SessionState
-	// Messages is the conversation history.
-	Messages []Message
-	// Requirement is the parsed video requirement (continuously refined).
-	Requirement *VideoRequirement
-	// RetryCount tracks how many correction cycles have been attempted.
-	RetryCount int
-	// WorkflowID is the Forge workflow instance ID (set after submission).
-	WorkflowID string
-	// CreatedAt is when the session was created.
-	CreatedAt time.Time
-
-	// maxRetries is the maximum number of fix/re-execute cycles.
-	maxRetries int
+	ID          string
+	State       SessionState
+	Messages    []core.Message
+	Requirement *core.VideoRequirement
+	RetryCount  int
+	WorkflowID  string
+	CreatedAt   time.Time
+	maxRetries  int
 }
 
 // NewSession creates a new session in the idle state.
@@ -72,14 +56,13 @@ func NewSession() *Session {
 	return &Session{
 		ID:         uuid.New().String(),
 		State:      StateIdle,
-		Messages:   make([]Message, 0),
+		Messages:   make([]core.Message, 0),
 		CreatedAt:  time.Now(),
 		maxRetries: 3,
 	}
 }
 
 // Transition attempts to transition the session to the target state.
-// Returns an error if the transition is not valid.
 func (s *Session) Transition(target SessionState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -107,7 +90,7 @@ func (s *Session) GetState() SessionState {
 }
 
 // AddMessage appends a message to the session history.
-func (s *Session) AddMessage(msg Message) {
+func (s *Session) AddMessage(msg core.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Messages = append(s.Messages, msg)
@@ -135,7 +118,7 @@ func (s *Session) SetWorkflowID(id string) {
 }
 
 // SetRequirement sets the parsed requirement.
-func (s *Session) SetRequirement(req *VideoRequirement) {
+func (s *Session) SetRequirement(req *core.VideoRequirement) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Requirement = req
@@ -143,13 +126,9 @@ func (s *Session) SetRequirement(req *VideoRequirement) {
 
 // SessionStore is the interface for persisting sessions.
 type SessionStore interface {
-	// Save persists a session.
 	Save(session *Session) error
-	// Get retrieves a session by ID.
 	Get(id string) (*Session, error)
-	// Delete removes a session by ID.
 	Delete(id string) error
-	// List returns all sessions.
 	List() ([]*Session, error)
 }
 
@@ -166,7 +145,6 @@ func NewInMemorySessionStore() *InMemorySessionStore {
 	}
 }
 
-// Save persists a session in memory.
 func (s *InMemorySessionStore) Save(session *Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,7 +152,6 @@ func (s *InMemorySessionStore) Save(session *Session) error {
 	return nil
 }
 
-// Get retrieves a session by ID.
 func (s *InMemorySessionStore) Get(id string) (*Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -185,7 +162,6 @@ func (s *InMemorySessionStore) Get(id string) (*Session, error) {
 	return session, nil
 }
 
-// Delete removes a session by ID.
 func (s *InMemorySessionStore) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,7 +172,6 @@ func (s *InMemorySessionStore) Delete(id string) error {
 	return nil
 }
 
-// List returns all sessions.
 func (s *InMemorySessionStore) List() ([]*Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
