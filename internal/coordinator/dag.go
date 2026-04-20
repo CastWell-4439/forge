@@ -53,23 +53,25 @@ type rawDAG struct {
 
 // TaskDef defines a single task within a DAG.
 type TaskDef struct {
-	Name      string                 `yaml:"-"`
-	Handler   string                 `yaml:"handler"`
-	Params    map[string]interface{} `yaml:"params"`
-	DependsOn []string               `yaml:"depends_on"`
-	Timeout   time.Duration          `yaml:"-"`
-	Retry     RetryPolicy            `yaml:"-"`
-	OnFailure FailureAction          `yaml:"on_failure"`
+	Name       string                 `yaml:"-"`
+	Handler    string                 `yaml:"handler"`
+	Params     map[string]interface{} `yaml:"params"`
+	DependsOn  []string               `yaml:"depends_on"`
+	Timeout    time.Duration          `yaml:"-"`
+	Retry      RetryPolicy            `yaml:"-"`
+	OnFailure  FailureAction          `yaml:"on_failure"`
+	Compensate string                 `yaml:"compensate"` // Saga: handler to call for rollback
 }
 
 // rawTaskDef is the YAML-friendly representation for task definitions.
 type rawTaskDef struct {
-	Handler   string                 `yaml:"handler"`
-	Params    map[string]interface{} `yaml:"params"`
-	DependsOn []string               `yaml:"depends_on"`
-	Timeout   string                 `yaml:"timeout"`
-	Retry     *rawRetryPolicy        `yaml:"retry"`
-	OnFailure FailureAction          `yaml:"on_failure"`
+	Handler    string                 `yaml:"handler"`
+	Params     map[string]interface{} `yaml:"params"`
+	DependsOn  []string               `yaml:"depends_on"`
+	Timeout    string                 `yaml:"timeout"`
+	Retry      *rawRetryPolicy        `yaml:"retry"`
+	OnFailure  FailureAction          `yaml:"on_failure"`
+	Compensate string                 `yaml:"compensate"`
 }
 
 // RetryPolicy defines the retry behavior for a task.
@@ -118,11 +120,12 @@ func ParseDAG(data []byte) (*DAG, error) {
 
 	for name, rawTask := range raw.Tasks {
 		taskDef := &TaskDef{
-			Name:      name,
-			Handler:   rawTask.Handler,
-			Params:    rawTask.Params,
-			DependsOn: rawTask.DependsOn,
-			OnFailure: rawTask.OnFailure,
+			Name:       name,
+			Handler:    rawTask.Handler,
+			Params:     rawTask.Params,
+			DependsOn:  rawTask.DependsOn,
+			OnFailure:  rawTask.OnFailure,
+			Compensate: rawTask.Compensate,
 		}
 
 		if rawTask.Timeout != "" {
