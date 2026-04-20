@@ -1,0 +1,51 @@
+{{- $workers := dict
+  "go" .Values.workerGo
+  "python" .Values.workerPython
+  "cpp" .Values.workerCpp
+}}
+{{- range $lang, $cfg := $workers }}
+{{- if gt (int $cfg.replicas) 0 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "forge.fullname" $ }}-worker-{{ $lang }}
+  labels:
+    app.kubernetes.io/component: worker-{{ $lang }}
+    {{- include "forge.labels" $ | nindent 4 }}
+spec:
+  replicas: {{ $cfg.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker-{{ $lang }}
+      {{- include "forge.selectorLabels" $ | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: worker-{{ $lang }}
+        forge.io/worker-lang: {{ $lang }}
+        {{- include "forge.selectorLabels" $ | nindent 8 }}
+    spec:
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ $.Values.global.imageRegistry }}{{ $cfg.image.repository }}:{{ $cfg.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $cfg.image.pullPolicy }}
+          env:
+            - name: FORGE_COORDINATOR_ADDR
+              value: "{{ include "forge.fullname" $ }}-coordinator:{{ $.Values.coordinator.service.grpcPort }}"
+            - name: FORGE_WORKER_LANG
+              value: {{ $lang | quote }}
+          resources:
+            {{- toYaml $cfg.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["true"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      terminationGracePeriodSeconds: 15
+{{- end }}
+{{- end }}

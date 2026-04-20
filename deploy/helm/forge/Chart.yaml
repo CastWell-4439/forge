@@ -1,0 +1,16 @@
+apiVersion: v2
+name: forge
+description: Forge — Distributed Workflow Scheduling Engine
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+keywords:
+  - workflow
+  - scheduler
+  - distributed
+  - dag
+  - grpc
+
+maintainers:
+  - name: CastWell

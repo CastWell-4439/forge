@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "forge.fullname" . }}-coordinator
+  labels:
+    app.kubernetes.io/component: coordinator
+    {{- include "forge.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "forge.fullname" . }}-coordinator-headless
+  replicas: {{ .Values.coordinator.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: coordinator
+      {{- include "forge.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: coordinator
+        {{- include "forge.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: coordinator
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.coordinator.image.repository }}:{{ .Values.coordinator.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.coordinator.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.coordinator.service.grpcPort }}
+              protocol: TCP
+            - name: http
+              containerPort: {{ .Values.coordinator.service.httpPort }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.coordinator.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: FORGE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            {{- toYaml .Values.coordinator.resources | nindent 12 }}
+          livenessProbe:
+            grpc:
+              port: {{ .Values.coordinator.service.grpcPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            grpc:
+              port: {{ .Values.coordinator.service.grpcPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      terminationGracePeriodSeconds: 30

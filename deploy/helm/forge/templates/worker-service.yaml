@@ -1,0 +1,27 @@
+{{- $workers := dict
+  "go" .Values.workerGo
+  "python" .Values.workerPython
+  "cpp" .Values.workerCpp
+}}
+{{- range $lang, $cfg := $workers }}
+{{- if gt (int $cfg.replicas) 0 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "forge.fullname" $ }}-worker-{{ $lang }}
+  labels:
+    app.kubernetes.io/component: worker-{{ $lang }}
+    {{- include "forge.labels" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: worker-{{ $lang }}
+    {{- include "forge.selectorLabels" $ | nindent 4 }}
+{{- end }}
+{{- end }}

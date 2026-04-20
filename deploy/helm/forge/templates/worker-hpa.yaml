@@ -1,0 +1,31 @@
+{{- $workers := dict
+  "go" .Values.workerGo
+  "python" .Values.workerPython
+  "cpp" .Values.workerCpp
+}}
+{{- range $lang, $cfg := $workers }}
+{{- if and (gt (int $cfg.replicas) 0) $cfg.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "forge.fullname" $ }}-worker-{{ $lang }}
+  labels:
+    app.kubernetes.io/component: worker-{{ $lang }}
+    {{- include "forge.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "forge.fullname" $ }}-worker-{{ $lang }}
+  minReplicas: {{ $cfg.hpa.minReplicas }}
+  maxReplicas: {{ $cfg.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $cfg.hpa.targetCPU }}
+{{- end }}
+{{- end }}

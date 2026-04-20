@@ -1,0 +1,104 @@
+# Forge Helm Chart — Default Values
+
+## Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+## Coordinator
+coordinator:
+  replicas: 3
+  image:
+    repository: forge/coordinator
+    tag: ""  # defaults to appVersion
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  service:
+    grpcPort: 50051
+    httpPort: 8081
+  pdb:
+    minAvailable: 2
+  env:
+    FORGE_PG_DSN: "postgres://forge:forge@forge-pg:5432/forge?sslmode=disable"
+    FORGE_REDIS_ADDR: "forge-redis:6379"
+    FORGE_ETCD_ENDPOINTS: "forge-etcd:2379"
+
+## Go Worker
+workerGo:
+  replicas: 2
+  image:
+    repository: forge/worker-go
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPU: 70
+
+## Python Worker
+workerPython:
+  replicas: 2
+  image:
+    repository: forge/worker-python
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPU: 75
+
+## C++ Worker
+workerCpp:
+  replicas: 1
+  image:
+    repository: forge/worker-cpp
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "4"
+      memory: 2Gi
+  hpa:
+    enabled: false
+
+## Dependencies
+postgresql:
+  enabled: true
+  auth:
+    username: forge
+    password: forge
+    database: forge
+
+redis:
+  enabled: true
+  auth:
+    enabled: false
+
+etcd:
+  enabled: true
+  replicaCount: 3

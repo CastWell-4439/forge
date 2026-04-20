@@ -1,0 +1,26 @@
+# values-dev.yaml — Development overrides
+
+coordinator:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  pdb:
+    minAvailable: 1
+
+workerGo:
+  replicas: 1
+  hpa:
+    enabled: false
+
+workerPython:
+  replicas: 1
+  hpa:
+    enabled: false
+
+workerCpp:
+  replicas: 0

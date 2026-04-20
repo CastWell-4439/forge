@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "forge.fullname" . }}-coordinator
+  labels:
+    app.kubernetes.io/component: coordinator
+    {{- include "forge.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.coordinator.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: coordinator
+      {{- include "forge.selectorLabels" . | nindent 6 }}
