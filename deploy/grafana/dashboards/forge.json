@@ -1,0 +1,100 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "forge-overview",
+    "title": "Forge — Overview",
+    "tags": ["forge", "workflow", "distributed"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Workflow Throughput (rate/min)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(rate(forge_workflows_total[5m])) by (status) * 60",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "short"}
+        }
+      },
+      {
+        "id": 2,
+        "title": "Task Duration (p50/p95/p99)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(forge_task_duration_seconds_bucket[5m]))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(forge_task_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(forge_task_duration_seconds_bucket[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "s"}
+        }
+      },
+      {
+        "id": 3,
+        "title": "Active Workflows",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "forge_active_workflows",
+            "legendFormat": "active"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Worker Pool",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
+        "targets": [
+          {
+            "expr": "forge_worker_pool_size",
+            "legendFormat": "{{language}} ({{state}})"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Task Retries (rate/min)",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(forge_task_retries_total[5m])) by (handler) * 60",
+            "legendFormat": "{{handler}}"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Queue Depth",
+        "type": "timeseries",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "forge_queue_depth",
+            "legendFormat": "{{priority}}"
+          }
+        ]
+      }
+    ],
+    "schemaVersion": 39,
+    "version": 1
+  }
+}

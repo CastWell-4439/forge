@@ -1,0 +1,36 @@
+# Prometheus scrape configuration for Forge
+# Deploy alongside Prometheus (e.g., in Kubernetes via kube-prometheus-stack)
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "forge-coordinator"
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        regex: coordinator
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_ip]
+        target_label: __address__
+        replacement: "${1}:9090"
+    metrics_path: /metrics
+
+  - job_name: "forge-workers"
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        regex: forge
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        regex: worker-.*
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_ip]
+        target_label: __address__
+        replacement: "${1}:9090"
+      - source_labels: [__meta_kubernetes_pod_label_forge_io_worker_lang]
+        target_label: worker_lang
+    metrics_path: /metrics
