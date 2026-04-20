@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [master, develop, "feature/**"]
+  pull_request:
+    branches: [master, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: forge
+          POSTGRES_PASSWORD: forge
+          POSTGRES_DB: forge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Run tests
+        env:
+          FORGE_PG_DSN: "postgres://forge:forge@localhost:5432/forge_test?sslmode=disable"
+          FORGE_REDIS_ADDR: "localhost:6379"
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Build binaries
+        run: |
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/coordinator ./cmd/coordinator
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/worker ./cmd/worker
+      - name: Verify binary size
+        run: |
+          ls -lh bin/
+          # Coordinator should be < 30MB
+          size=$(stat --format=%s bin/coordinator)
+          if [ "$size" -gt 31457280 ]; then
+            echo "ERROR: coordinator binary too large: $size bytes"
+            exit 1
+          fi
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: bin/
+          retention-days: 7

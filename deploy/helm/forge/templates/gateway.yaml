@@ -1,0 +1,73 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "forge.fullname" . }}-gateway
+  labels:
+    {{- include "forge.labels" . | nindent 4 }}
+  annotations:
+    # Use the default GatewayClass (e.g., istio, envoy, etc.)
+    # Adjust based on your cluster's Gateway controller
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  gatewayClassName: {{ .Values.gateway.className | default "istio" }}
+  listeners:
+    - name: grpc
+      port: 50051
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: {{ include "forge.fullname" . }}-tls
+    - name: http
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: {{ include "forge.fullname" . }}-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ include "forge.fullname" . }}-grpc
+  labels:
+    {{- include "forge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "forge.fullname" . }}-gateway
+      sectionName: grpc
+  rules:
+    - matches:
+        - method:
+            service: forge.v1.CoordinatorService
+        - method:
+            service: forge.v1.AgentService
+      backendRefs:
+        - name: {{ include "forge.fullname" . }}-coordinator
+          port: {{ .Values.coordinator.service.grpcPort }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "forge.fullname" . }}-http
+  labels:
+    {{- include "forge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "forge.fullname" . }}-gateway
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1
+      backendRefs:
+        - name: {{ include "forge.fullname" . }}-coordinator
+          port: {{ .Values.coordinator.service.httpPort }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /healthz
+      backendRefs:
+        - name: {{ include "forge.fullname" . }}-coordinator
+          port: {{ .Values.coordinator.service.httpPort }}

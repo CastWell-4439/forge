@@ -102,3 +102,7 @@ redis:
 etcd:
   enabled: true
   replicaCount: 3
+
+## Gateway API
+gateway:
+  className: istio
