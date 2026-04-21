@@ -4,6 +4,7 @@ package coordinator
 
 import (
 	"fmt"
+	"iter"
 	"sort"
 	"time"
 
@@ -254,6 +255,60 @@ func (d *DAG) TopologicalSort() ([]string, error) {
 		return nil, fmt.Errorf("DAG contains cycle")
 	}
 	return sorted, nil
+}
+
+// TopologicalOrder returns an iter.Seq iterator over task definitions in
+// topological order (Kahn's algorithm). Callers can range over it and
+// break early without computing the full order.
+//
+// Usage:
+//
+//	for task := range dag.TopologicalOrder() {
+//	    fmt.Println(task.Name, task.Handler)
+//	}
+func (d *DAG) TopologicalOrder() iter.Seq[*TaskDef] {
+	return func(yield func(*TaskDef) bool) {
+		inDegree := make(map[string]int, len(d.Tasks))
+		for name := range d.Tasks {
+			inDegree[name] = 0
+		}
+		for name, task := range d.Tasks {
+			for range task.DependsOn {
+				inDegree[name]++
+			}
+		}
+
+		queue := make([]string, 0, len(d.Tasks))
+		for name, degree := range inDegree {
+			if degree == 0 {
+				queue = append(queue, name)
+			}
+		}
+		sort.Strings(queue)
+
+		for len(queue) > 0 {
+			node := queue[0]
+			queue = queue[1:]
+
+			if !yield(d.Tasks[node]) {
+				return // caller broke out of range
+			}
+
+			var newReady []string
+			for name, task := range d.Tasks {
+				for _, dep := range task.DependsOn {
+					if dep == node {
+						inDegree[name]--
+						if inDegree[name] == 0 {
+							newReady = append(newReady, name)
+						}
+					}
+				}
+			}
+			sort.Strings(newReady)
+			queue = append(queue, newReady...)
+		}
+	}
 }
 
 // detectCycle uses Kahn's algorithm to check for cycles.

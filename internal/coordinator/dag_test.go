@@ -217,3 +217,64 @@ func TestParseDAG_RoundTrip(t *testing.T) {
 	assert.Less(t, indexOf("render-video"), indexOf("upload"))
 	assert.Less(t, indexOf("upload"), indexOf("notify"))
 }
+
+func TestTopologicalOrder_IterSeq(t *testing.T) {
+	// A -> B -> C (linear chain)
+	dag := &DAG{
+		Name: "linear",
+		Tasks: map[string]*TaskDef{
+			"A": {Name: "A", Handler: "h1"},
+			"B": {Name: "B", Handler: "h2", DependsOn: []string{"A"}},
+			"C": {Name: "C", Handler: "h3", DependsOn: []string{"B"}},
+		},
+		Edges: map[string][]string{
+			"A": {},
+			"B": {"A"},
+			"C": {"B"},
+		},
+	}
+
+	var names []string
+	for task := range dag.TopologicalOrder() {
+		names = append(names, task.Name)
+	}
+	assert.Equal(t, []string{"A", "B", "C"}, names)
+}
+
+func TestTopologicalOrder_EarlyBreak(t *testing.T) {
+	dag := &DAG{
+		Name: "three",
+		Tasks: map[string]*TaskDef{
+			"A": {Name: "A", Handler: "h1"},
+			"B": {Name: "B", Handler: "h2", DependsOn: []string{"A"}},
+			"C": {Name: "C", Handler: "h3", DependsOn: []string{"B"}},
+		},
+		Edges: map[string][]string{
+			"A": {},
+			"B": {"A"},
+			"C": {"B"},
+		},
+	}
+
+	// Break after the first task — should only yield "A".
+	var names []string
+	for task := range dag.TopologicalOrder() {
+		names = append(names, task.Name)
+		break
+	}
+	assert.Equal(t, []string{"A"}, names)
+}
+
+func TestTopologicalOrder_EmptyDAG(t *testing.T) {
+	dag := &DAG{
+		Name:  "empty",
+		Tasks: map[string]*TaskDef{},
+		Edges: map[string][]string{},
+	}
+
+	var count int
+	for range dag.TopologicalOrder() {
+		count++
+	}
+	assert.Equal(t, 0, count)
+}

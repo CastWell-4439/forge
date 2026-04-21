@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"sort"
 	"time"
 
@@ -98,6 +99,33 @@ func ReplayUntil(events []*storage.Event, maxSeq int64) (*WorkflowState, error) 
 		}
 	}
 	return Replay(filtered)
+}
+
+// Events returns a lazy iter.Seq2 iterator over events for a workflow,
+// yielding (index, *Event) pairs sorted by sequence number.
+//
+// Usage:
+//
+//	for i, event := range store.Events(ctx, "wf-123") {
+//	    fmt.Println(i, event.Type)
+//	}
+func (s *Store) Events(ctx context.Context, workflowID string) iter.Seq2[int, *storage.Event] {
+	return func(yield func(int, *storage.Event) bool) {
+		events, err := s.History(ctx, workflowID)
+		if err != nil {
+			return // silently stop on error; callers can use History() for error handling
+		}
+
+		sort.Slice(events, func(i, j int) bool {
+			return events[i].SequenceNum < events[j].SequenceNum
+		})
+
+		for i, event := range events {
+			if !yield(i, event) {
+				return
+			}
+		}
+	}
 }
 
 // CompletedTasks returns the names of tasks that reached COMPLETED status.
