@@ -9,12 +9,27 @@ import (
 	"os/signal"
 	"syscall"
 
+	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/coordinator"
 	"github.com/castwell/forge/internal/observability"
+	"github.com/castwell/forge/internal/storage"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("INFO: forge-coordinator starting...")
+
+	// --- Storage ---
+	store, err := storage.NewBoltStorage(envOrDefault("FORGE_BOLT_PATH", "forge.db"))
+	if err != nil {
+		log.Fatalf("FATAL: open storage: %v", err)
+	}
+	defer store.Close()
+
+	// --- Coordinator ---
+	coord := coordinator.NewCoordinator(store)
 
 	// --- Observability ---
 	metrics := observability.NewMetrics()
@@ -25,7 +40,7 @@ func main() {
 	profiler := observability.NewProfiler(observability.DefaultProfilingConfig())
 	profiler.Start()
 
-	_ = tracer // used when coordinator logic is wired in
+	_ = tracer // attach to gRPC interceptors in future
 
 	// --- HTTP Server (metrics + profiling + health) ---
 	mux := http.NewServeMux()
@@ -39,7 +54,7 @@ func main() {
 	httpAddr := envOrDefault("FORGE_HTTP_ADDR", ":9090")
 	httpLn, err := net.Listen("tcp", httpAddr)
 	if err != nil {
-		log.Fatalf("FATAL: listen %s: %v", httpAddr, err)
+		log.Fatalf("FATAL: listen HTTP %s: %v", httpAddr, err)
 	}
 	go func() {
 		log.Printf("INFO: HTTP server listening on %s (/metrics, /debug/profile, /healthz)", httpAddr)
@@ -48,17 +63,33 @@ func main() {
 		}
 	}()
 
-	// --- gRPC Server (placeholder) ---
+	// --- gRPC Server ---
 	grpcAddr := envOrDefault("FORGE_GRPC_ADDR", ":50051")
-	log.Printf("INFO: gRPC endpoint configured at %s (not yet wired)", grpcAddr)
+	grpcLn, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		log.Fatalf("FATAL: listen gRPC %s: %v", grpcAddr, err)
+	}
+
+	grpcServer := grpc.NewServer()
+	forgev1.RegisterCoordinatorServiceServer(grpcServer, coord)
+	reflection.Register(grpcServer) // enables grpcurl discovery
+
+	go func() {
+		log.Printf("INFO: gRPC server listening on %s", grpcAddr)
+		if err := grpcServer.Serve(grpcLn); err != nil {
+			log.Printf("ERROR: gRPC serve: %v", err)
+		}
+	}()
 
 	// --- Graceful Shutdown ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	log.Printf("INFO: received %s, shutting down...", sig)
+	grpcServer.GracefulStop()
 	profiler.Stop()
 	httpLn.Close()
+	store.Close()
 	log.Println("INFO: forge-coordinator stopped")
 }
 

@@ -80,7 +80,8 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	}`
 
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 
 	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "帮我做一个30秒的产品介绍视频，用这张人脸，配轻快的BGM和字幕")
@@ -225,7 +226,8 @@ tasks:
 		parserResponse:  parserJSON,
 		plannerResponse: llmDAG,
 	}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 
 	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "裁剪视频从5秒到15秒")
@@ -282,7 +284,8 @@ func TestAgentE2ESessionFlow(t *testing.T) {
 
 	require.NoError(t, sess.Transition(session.StatePlanning))
 
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	gen := planning.NewDAGGenerator(mock, registry)
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
@@ -323,7 +326,8 @@ func TestAgentE2EValidationRoundtrip(t *testing.T) {
 	}`
 
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 
 	parser := planning.NewRequirementParser(mock)
 	req, err := parser.Parse(context.Background(), "Create a premium product launch video")

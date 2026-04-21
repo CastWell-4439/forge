@@ -27,6 +27,7 @@ type CronTrigger struct {
 	ID            string
 	WorkflowName  string
 	CronExpr      string
+	DagYAML       string                 // stored workflow definition; if empty, a fallback is generated
 	Params        map[string]interface{}
 	MaxConcurrent int
 	MisfirePolicy MisfirePolicy
@@ -176,11 +177,14 @@ func (s *CronScheduler) fire(trigger *CronTrigger, now time.Time) {
 
 	log.Printf("INFO: cron: firing trigger %q for workflow %q", trigger.ID, trigger.WorkflowName)
 
-	// Submit the workflow via Coordinator.
-	// In production this would look up a stored workflow definition.
-	// For now, construct a minimal DAG YAML.
-	dagYAML := fmt.Sprintf("name: %s\ntasks:\n  cron-task:\n    handler: %s\n    timeout: 5m\n",
-		trigger.WorkflowName, trigger.WorkflowName)
+	// Look up stored workflow definition from the trigger's DagYAML field.
+	// If no stored definition, fall back to a minimal single-task DAG.
+	dagYAML := trigger.DagYAML
+	if dagYAML == "" {
+		dagYAML = fmt.Sprintf("name: %s\ntasks:\n  cron-task:\n    handler: %s\n    timeout: 5m\n",
+			trigger.WorkflowName, trigger.WorkflowName)
+		log.Printf("WARN: cron: trigger %q has no stored DAG definition, using fallback", trigger.ID)
+	}
 
 	_, err := s.coordinator.SubmitWorkflow(ctx, &forgev1.SubmitWorkflowRequest{
 		DagYaml: dagYAML,

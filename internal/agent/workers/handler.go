@@ -29,5 +29,11 @@ type HandlerConfig struct {
 }
 
 // ErrNotConfigured is returned when a real-mode handler is called but the
-// underlying service is not configured.
+// underlying service is not configured. Each handler group documents its
+// required external dependencies:
+//   - ai.*:     LLM/TTS/STT API endpoints (face_swap, lip_sync, tts, script, subtitle_gen)
+//   - ffmpeg.*: FFmpeg binary on PATH or containerized ffmpeg-worker
+//   - media.*:  Object storage (S3/OSS) credentials for upload/download
+//   - video.*:  FFprobe binary + preprocessing pipeline
+//   - quality.*: Quality assessment models (VMAF, SSIM, etc.)
 var ErrNotConfigured = fmt.Errorf("handler not configured: real mode requires external service setup")

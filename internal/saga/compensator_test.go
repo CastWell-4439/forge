@@ -6,11 +6,24 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/castwell/forge/internal/coordinator"
 	"github.com/castwell/forge/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockDAG satisfies DAGView for saga tests, avoiding coordinator import cycle.
+type mockDAG struct {
+	topoOrder   []string
+	compensate  map[string]string // taskName -> compensate handler
+}
+
+func (m *mockDAG) TopologicalSort() ([]string, error) {
+	return m.topoOrder, nil
+}
+
+func (m *mockDAG) TaskCompensateHandler(taskName string) string {
+	return m.compensate[taskName]
+}
 
 // mockStorage implements just enough of storage.Storage for saga tests.
 type mockStorage struct {
@@ -39,8 +52,8 @@ func (m *mockStorage) GetWorkflowHistory(_ context.Context, _ string) ([]*storag
 func (m *mockStorage) Close() error { return nil }
 
 func TestBuildCompensationPlan(t *testing.T) {
-	// DAG: A → B → C, where C fails.
-	// A and B have compensate handlers, C does not.
+	// DAG: create-order → charge-payment → send-notification, where send-notification fails.
+	// create-order and charge-payment have compensate handlers, send-notification does not.
 	dag := buildTestDAG()
 
 	store := &mockStorage{
@@ -149,23 +162,15 @@ func TestExecuteEmptyPlan(t *testing.T) {
 	assert.True(t, AllSucceeded(results))
 }
 
-// buildTestDAG creates a test DAG: create-order → charge-payment → send-notification.
-func buildTestDAG() *coordinator.DAG {
-	dagYAML := `
-name: order-flow
-tasks:
-  create-order:
-    handler: order.create
-    compensate: order.cancel
-  charge-payment:
-    handler: payment.charge
-    depends_on: [create-order]
-    compensate: payment.refund
-  send-notification:
-    handler: notify.send
-    depends_on: [charge-payment]
-    on_failure: COMPENSATE
-`
-	dag, _ := coordinator.ParseDAG([]byte(dagYAML))
-	return dag
+// buildTestDAG creates a mock DAG: create-order → charge-payment → send-notification.
+// Topological order: create-order, charge-payment, send-notification.
+func buildTestDAG() *mockDAG {
+	return &mockDAG{
+		topoOrder: []string{"create-order", "charge-payment", "send-notification"},
+		compensate: map[string]string{
+			"create-order":   "order.cancel",
+			"charge-payment": "payment.refund",
+			// send-notification has no compensate handler
+		},
+	}
 }

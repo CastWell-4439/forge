@@ -9,9 +9,15 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/castwell/forge/internal/coordinator"
 	"github.com/castwell/forge/internal/storage"
 )
+
+// DAGView is the minimal interface saga needs from a DAG.
+// coordinator.DAG satisfies this interface.
+type DAGView interface {
+	TopologicalSort() ([]string, error)
+	TaskCompensateHandler(taskName string) string // returns "" if no compensate handler
+}
 
 // CompensationResult records the outcome of a single compensation step.
 type CompensationResult struct {
@@ -30,10 +36,10 @@ type CompensationPlan struct {
 
 // CompensationStep is a single step in a compensation plan.
 type CompensationStep struct {
-	TaskName       string
+	TaskName          string
 	CompensateHandler string
-	OriginalTaskID string
-	OriginalInput  json.RawMessage
+	OriginalTaskID    string
+	OriginalInput     json.RawMessage
 }
 
 // Compensator orchestrates Saga compensation for failed workflows.
@@ -48,7 +54,7 @@ func NewCompensator(store storage.Storage) *Compensator {
 
 // BuildPlan builds a compensation plan for a failed workflow.
 // It determines which completed tasks need compensation and in what order.
-func (c *Compensator) BuildPlan(ctx context.Context, dag *coordinator.DAG, workflowID, failedTaskName string) (*CompensationPlan, error) {
+func (c *Compensator) BuildPlan(ctx context.Context, dag DAGView, workflowID, failedTaskName string) (*CompensationPlan, error) {
 	// Get topological order.
 	topoOrder, err := dag.TopologicalSort()
 	if err != nil {
@@ -89,14 +95,14 @@ func (c *Compensator) BuildPlan(ctx context.Context, dag *coordinator.DAG, workf
 			continue
 		}
 		// Only if the DAG defines a compensate handler.
-		taskDef, ok := dag.Tasks[taskName]
-		if !ok || taskDef.Compensate == "" {
+		compHandler := dag.TaskCompensateHandler(taskName)
+		if compHandler == "" {
 			continue
 		}
 
 		plan.Steps = append(plan.Steps, CompensationStep{
 			TaskName:          taskName,
-			CompensateHandler: taskDef.Compensate,
+			CompensateHandler: compHandler,
 			OriginalTaskID:    task.ID,
 			OriginalInput:     task.Input,
 		})

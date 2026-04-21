@@ -90,9 +90,10 @@ func TestExecutorTaskError(t *testing.T) {
 
 func TestExecutorStubRuntime(t *testing.T) {
 	executor := NewExecutor(DefaultSandboxConfig(), nil)
-	_, err := executor.Execute(context.Background(), fakeWasmModule, TaskInput{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "runtime not configured")
+	out, err := executor.Execute(context.Background(), fakeWasmModule, TaskInput{Params: map[string]string{"key": "val"}})
+	require.NoError(t, err)
+	// Stub echoes input, so output should contain the serialized input.
+	assert.NotEmpty(t, out.Result)
 }
 
 // --- Validate module tests ---

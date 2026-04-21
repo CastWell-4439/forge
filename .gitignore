@@ -66,6 +66,7 @@ bpf/*.o
 
 # Wasm
 *.wasm
+!internal/wasm/testdata/echo.wasm
 
 # Coverage
 coverage.out

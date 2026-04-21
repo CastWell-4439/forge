@@ -12,7 +12,8 @@ import (
 
 func TestDAGGeneratorTemplateStrategy(t *testing.T) {
 	mock := &mockLLMClient{fallback: "should not be called"}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
 	req := &core.VideoRequirement{
@@ -64,7 +65,8 @@ tasks:
     timeout: 120s`
 
 	mock := &mockLLMClient{fallback: validDAG}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
 	// No template match — will use LLM.
@@ -104,7 +106,8 @@ tasks:
 		callCount: &callCount,
 	}
 
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
 	req := &core.VideoRequirement{Description: "download a file"}
@@ -120,7 +123,8 @@ tasks:
 func TestDAGGeneratorFallbackStrategy(t *testing.T) {
 	// LLM always returns invalid DAG.
 	mock := &mockLLMClient{fallback: "this is not yaml"}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
 	req := &core.VideoRequirement{
@@ -142,7 +146,8 @@ func TestDAGGeneratorFallbackStrategy(t *testing.T) {
 
 func TestDAGGeneratorFallbackUsesReqParams(t *testing.T) {
 	mock := &mockLLMClient{fallback: "invalid"}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
 	req := &core.VideoRequirement{

@@ -147,15 +147,15 @@ func (r *ToolRegistry) FindSimilar(name string) string {
 
 // DefaultRegistry creates a ToolRegistry pre-loaded with all 18 tools from
 // the Phase A1 worker handlers in mock mode.
-func DefaultRegistry() *ToolRegistry {
+// Returns an error if registration fails (should not happen with valid defs).
+func DefaultRegistry() (*ToolRegistry, error) {
 	inner := workers.NewToolRegistry()
 	cfg := workers.HandlerConfig{
 		Mode:      workers.HandlerModeMock,
 		Workspace: "/tmp/forge",
 	}
-	// RegisterAll always succeeds with valid defs; panic on unexpected errors.
 	if err := workers.RegisterAll(inner, cfg); err != nil {
-		panic(fmt.Sprintf("default registry: %v", err))
+		return nil, fmt.Errorf("default registry: %w", err)
 	}
-	return NewToolRegistry(inner)
+	return NewToolRegistry(inner), nil
 }

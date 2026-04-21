@@ -11,7 +11,8 @@ import (
 )
 
 func TestDefaultRegistry(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 	tools := reg.List()
 
 	// Phase A1 registered exactly 18 tools.
@@ -25,7 +26,8 @@ func TestDefaultRegistry(t *testing.T) {
 }
 
 func TestRegistryGet(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 
 	tool := reg.Get("ai.face_swap")
 	require.NotNil(t, tool)
@@ -37,7 +39,8 @@ func TestRegistryGet(t *testing.T) {
 }
 
 func TestRegistryHasHandler(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 
 	assert.True(t, reg.HasHandler("media.download"))
 	assert.True(t, reg.HasHandler("quality.face_check"))
@@ -45,7 +48,8 @@ func TestRegistryHasHandler(t *testing.T) {
 }
 
 func TestRegistryList(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 
 	// Verify all 18 expected handler names are present.
 	expected := []string{
@@ -66,7 +70,8 @@ func TestRegistryList(t *testing.T) {
 }
 
 func TestFormatForPrompt(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 	prompt := reg.FormatForPrompt()
 
 	// Should contain all handler names.
@@ -86,7 +91,8 @@ func TestFormatForPrompt(t *testing.T) {
 }
 
 func TestFindSimilar(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 
 	tests := []struct {
 		input    string
@@ -110,7 +116,8 @@ func TestFindSimilar(t *testing.T) {
 }
 
 func TestFormatForPromptStructure(t *testing.T) {
-	reg := DefaultRegistry()
+	reg, err := DefaultRegistry()
+	require.NoError(t, err)
 	prompt := reg.FormatForPrompt()
 
 	// Each tool block should start with "### handler.name"

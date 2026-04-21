@@ -127,7 +127,8 @@ tasks:
 }
 
 func TestDAGValidatorFullPipeline(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	yamlStr := `name: valid-pipeline
@@ -163,7 +164,8 @@ tasks:
 }
 
 func TestDAGValidatorL3UnknownHandler(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	yamlStr := `name: bad-handler
@@ -193,7 +195,8 @@ tasks:
 }
 
 func TestDAGValidatorL3CycleDetection(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	yamlStr := `name: cycle-dag
@@ -229,7 +232,8 @@ tasks:
 }
 
 func TestDAGValidatorL4MissingRequiredParam(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	// media.download requires "url" param.
@@ -253,7 +257,8 @@ tasks:
 }
 
 func TestDAGValidatorL4UnknownParam(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	yamlStr := `name: unknown-param
@@ -278,7 +283,8 @@ tasks:
 }
 
 func TestDAGValidatorMarkdownWrapped(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	yamlStr := "```yaml\nname: wrapped\ntasks:\n  download:\n    handler: media.download\n    params:\n      url: \"test\"\n```"
@@ -290,7 +296,8 @@ func TestDAGValidatorMarkdownWrapped(t *testing.T) {
 }
 
 func TestValidateRaw(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
 	validYAML := `name: test

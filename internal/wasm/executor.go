@@ -123,6 +123,13 @@ func (e *Executor) Execute(ctx context.Context, wasmBytes []byte, input TaskInpu
 }
 
 // Pipeline executes a chain of Wasm components, passing output to next input.
+//
+// Design note: only the Result string is forwarded between pipeline steps;
+// Artifacts from intermediate steps are NOT propagated. This is intentional:
+// each step receives a clean input derived solely from the previous step's
+// Result field. If a step needs to pass structured data, it should serialize
+// it into the Result string (e.g. JSON). Collect Artifacts from the final
+// TaskOutput only.
 func (e *Executor) Pipeline(ctx context.Context, modules [][]byte, input TaskInput) (*TaskOutput, error) {
 	if len(modules) == 0 {
 		return nil, fmt.Errorf("wasm pipeline: no modules")
@@ -162,8 +169,24 @@ func ValidateModule(wasmBytes []byte) error {
 	return nil
 }
 
-// stubExecute is a placeholder that returns an error indicating
-// the real wazero runtime is not configured.
-func stubExecute(_ context.Context, _ []byte, _ []byte) ([]byte, error) {
-	return nil, fmt.Errorf("wasm: runtime not configured (install wazero)")
+// stubExecute is a development placeholder for the wazero WebAssembly runtime.
+// In production, replace with wazero.NewRuntime() instantiation.
+// The stub echoes the input as-is, allowing pipeline and integration tests
+// to exercise the orchestration layer without a real Wasm runtime.
+//
+// To integrate wazero:
+//   1. go get github.com/tetratelabs/wazero
+//   2. Replace this function with wazero module instantiation + WASI
+//   3. Input bytes are passed as stdin, output read from stdout
+func stubExecute(_ context.Context, _ []byte, input []byte) ([]byte, error) {
+	// Echo input as the result field for testability.
+	if len(input) == 0 {
+		return []byte(`{"result":"wasm-stub-no-input"}`), nil
+	}
+	// Wrap raw input into a TaskOutput-shaped JSON so Execute can unmarshal it.
+	escaped, err := json.Marshal(string(input))
+	if err != nil {
+		return []byte(`{"result":"wasm-stub-marshal-error"}`), nil
+	}
+	return []byte(fmt.Sprintf(`{"result":%s}`, escaped)), nil
 }

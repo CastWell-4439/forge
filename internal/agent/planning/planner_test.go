@@ -13,7 +13,8 @@ import (
 
 func TestTaskPlannerTemplateMatch(t *testing.T) {
 	mock := &mockLLMClient{fallback: "should not be called"}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
 	req := &core.VideoRequirement{
@@ -69,7 +70,8 @@ tasks:
       - trim`
 
 	mock := &mockLLMClient{fallback: llmDAG}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
 	req := &core.VideoRequirement{
@@ -89,7 +91,8 @@ func TestTaskPlannerLLMFallbackWithMarkdown(t *testing.T) {
 	llmDAG := "```yaml\nname: test-dag\ntasks:\n  t1:\n    handler: media.download\n    params:\n      url: test\n```"
 
 	mock := &mockLLMClient{fallback: llmDAG}
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
 	req := &core.VideoRequirement{Description: "just download"}
@@ -101,7 +104,8 @@ func TestTaskPlannerLLMFallbackWithMarkdown(t *testing.T) {
 }
 
 func TestSelectTools(t *testing.T) {
-	registry := tools.DefaultRegistry()
+	registry, err := tools.DefaultRegistry()
+	require.NoError(t, err)
 	planner := NewTaskPlanner(nil, registry)
 
 	tests := []struct {

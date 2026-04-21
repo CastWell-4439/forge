@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/castwell/forge/internal/discovery"
+	"github.com/castwell/forge/internal/saga"
 	"github.com/castwell/forge/internal/storage"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -269,13 +270,14 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 	allDone := true
 	for _, t := range tasks {
 		if t.ID == taskID {
+			// This is the task we just completed — treat as completed
+			// regardless of what the DB returned (avoid read-after-write race).
 			completedTasks[t.TaskName] = true
 			continue
 		}
-		if t.Status == storage.TaskStatusCompleted {
+		if t.Status == storage.TaskStatusCompleted || t.Status == storage.TaskStatusSkipped {
 			completedTasks[t.TaskName] = true
-		}
-		if t.Status != storage.TaskStatusCompleted && t.Status != storage.TaskStatusSkipped {
+		} else {
 			allDone = false
 		}
 	}
@@ -286,6 +288,7 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 			return fmt.Errorf("complete workflow %s: %w", task.WorkflowID, err)
 		}
 		c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowCompleted, nil)
+		c.evictDAGCache(task.WorkflowID)
 		return nil
 	}
 
@@ -345,6 +348,7 @@ func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg st
 		return fmt.Errorf("fail workflow %s: %w", task.WorkflowID, err)
 	}
 	c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowFailed, payload)
+	c.evictDAGCache(task.WorkflowID)
 	return nil
 }
 
@@ -511,6 +515,13 @@ func (c *Coordinator) GetDAG(workflowID string) *DAG {
 	return c.dagCache[workflowID]
 }
 
+// evictDAGCache removes a workflow's DAG from the cache (called on workflow completion/failure).
+func (c *Coordinator) evictDAGCache(workflowID string) {
+	c.dagCacheMu.Lock()
+	delete(c.dagCache, workflowID)
+	c.dagCacheMu.Unlock()
+}
+
 // shouldCompensate checks if the failed task's on_failure policy is COMPENSATE.
 func (c *Coordinator) shouldCompensate(workflowID, taskName string) bool {
 	c.dagCacheMu.RLock()
@@ -527,8 +538,7 @@ func (c *Coordinator) shouldCompensate(workflowID, taskName string) bool {
 }
 
 // runCompensation executes Saga compensation for a failed workflow.
-// It finds all completed tasks that have a compensate handler and executes
-// them in reverse topological order.
+// It delegates to saga.Compensator.BuildPlan + saga.Execute for a single source of truth.
 func (c *Coordinator) runCompensation(ctx context.Context, workflowID, failedTaskName string) {
 	c.dagCacheMu.RLock()
 	dag, ok := c.dagCache[workflowID]
@@ -538,93 +548,46 @@ func (c *Coordinator) runCompensation(ctx context.Context, workflowID, failedTas
 		return
 	}
 
-	// Get all tasks for this workflow.
-	tasks, err := c.store.ListTasksByWorkflow(ctx, workflowID)
+	compensator := saga.NewCompensator(c.store)
+	plan, err := compensator.BuildPlan(ctx, dag, workflowID, failedTaskName)
 	if err != nil {
-		log.Printf("ERROR: saga: list tasks for workflow %s: %v", workflowID, err)
+		log.Printf("ERROR: saga: build plan for workflow %s: %v", workflowID, err)
 		return
 	}
 
-	// Build a set of completed task names.
-	completedTaskNames := make(map[string]bool)
-	for _, t := range tasks {
-		if t.Status == storage.TaskStatusCompleted {
-			completedTaskNames[t.TaskName] = true
-		}
+	if len(plan.Steps) == 0 {
+		log.Printf("INFO: saga: no compensation steps for workflow %s", workflowID)
 	}
 
-	// Get topological order, then reverse it.
-	topoOrder, err := dag.TopologicalSort()
-	if err != nil {
-		log.Printf("ERROR: saga: topological sort for workflow %s: %v", workflowID, err)
-		return
-	}
-
-	// Reverse topological order for compensation.
-	reversed := make([]string, len(topoOrder))
-	for i, name := range topoOrder {
-		reversed[len(topoOrder)-1-i] = name
-	}
-
-	// Execute compensation in reverse order for completed tasks that have compensate handlers.
-	for _, taskName := range reversed {
-		if !completedTaskNames[taskName] {
-			continue
-		}
-		taskDef, ok := dag.Tasks[taskName]
-		if !ok || taskDef.Compensate == "" {
-			continue
-		}
-
-		// Find the original task to get its params.
-		var originalTask *storage.Task
-		for _, t := range tasks {
-			if t.TaskName == taskName {
-				originalTask = t
-				break
-			}
-		}
-
-		log.Printf("INFO: saga: compensating task %q with handler %q (workflow %s)",
-			taskName, taskDef.Compensate, workflowID)
-
-		// Record compensating event.
-		var compTaskID string
-		if originalTask != nil {
-			compTaskID = originalTask.ID
-		}
-		c.saveEvent(ctx, workflowID, compTaskID, storage.EventTaskCompensating, nil)
-
-		// Find a worker that can handle the compensation.
-		worker := c.findWorker(taskDef.Compensate)
+	results := saga.Execute(plan, func(step saga.CompensationStep) error {
+		worker := c.findWorker(step.CompensateHandler)
 		if worker == nil {
-			log.Printf("WARN: saga: no worker for compensate handler %q, skipping", taskDef.Compensate)
-			continue
+			return fmt.Errorf("no worker for handler %q", step.CompensateHandler)
 		}
 
-		// Execute compensation synchronously (in order).
-		var input json.RawMessage
-		if originalTask != nil {
-			input = originalTask.Input
-		}
+		c.saveEvent(ctx, workflowID, step.OriginalTaskID, storage.EventTaskCompensating, nil)
 
 		resp, err := worker.Client.ExecuteTask(ctx, &forgev1.TaskRequest{
-			TaskId:     compTaskID + "-compensate",
+			TaskId:     step.OriginalTaskID + "-compensate",
 			WorkflowId: workflowID,
-			TaskName:   taskName + ".compensate",
-			Handler:    taskDef.Compensate,
-			Input:      input,
+			TaskName:   step.TaskName + ".compensate",
+			Handler:    step.CompensateHandler,
+			Input:      step.OriginalInput,
 		})
 		if err != nil {
-			log.Printf("ERROR: saga: compensate task %q failed: %v", taskName, err)
-			continue
+			return err
 		}
 		if !resp.GetSuccess() {
-			log.Printf("ERROR: saga: compensate task %q returned failure: %s", taskName, resp.GetErrorMsg())
+			return fmt.Errorf("compensation returned failure: %s", resp.GetErrorMsg())
 		}
+		return nil
+	})
+
+	if !saga.AllSucceeded(results) {
+		log.Printf("WARN: saga: some compensation steps failed for workflow %s", workflowID)
 	}
 
-	// After all compensations, mark workflow as failed (compensation done).
+	// After all compensations, mark workflow as failed.
 	if err := c.store.UpdateWorkflowStatus(ctx, workflowID, storage.WorkflowStatusFailed); err != nil {
 		log.Printf("ERROR: saga: fail workflow %s after compensation: %v", workflowID, err)
 	}
@@ -632,6 +595,7 @@ func (c *Coordinator) runCompensation(ctx context.Context, workflowID, failedTas
 	c.saveEvent(ctx, workflowID, "", storage.EventWorkflowFailed, payload)
 
 	log.Printf("INFO: saga: compensation complete for workflow %s", workflowID)
+	c.evictDAGCache(workflowID)
 }
 
 // workflowStatusToProto converts internal status to proto enum.

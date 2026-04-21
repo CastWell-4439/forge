@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	crand "crypto/rand"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -248,17 +249,13 @@ func hexDecode(s string) ([]byte, error) {
 
 func generateTraceID() TraceID {
 	var id TraceID
-	for i := range id {
-		id[i] = byte(rand.Intn(256))
-	}
+	_, _ = crand.Read(id[:])
 	return id
 }
 
 func generateSpanID() SpanID {
 	var id SpanID
-	for i := range id {
-		id[i] = byte(rand.Intn(256))
-	}
+	_, _ = crand.Read(id[:])
 	return id
 }
 

@@ -11,9 +11,18 @@ import (
 // PGCDCSource implements the Source interface for PostgreSQL
 // using logical replication (pgoutput protocol).
 //
-// In production, this would use pgx + pglogrepl for real WAL streaming.
-// Current implementation provides the full interface with a polling-based
-// fallback that can be swapped for real logical replication.
+// Current status: POLLING-BASED FALLBACK.
+// Production migration path to real WAL streaming:
+//   1. Add dependency: go get github.com/jackc/pglogrepl
+//   2. Replace pollChanges() with pglogrepl.StartReplication()
+//   3. Create a replication slot: SELECT pg_create_logical_replication_slot('forge_cdc', 'pgoutput')
+//   4. Parse pgoutput messages in a streaming loop (INSERT/UPDATE/DELETE → ChangeEvent)
+//   5. Track confirmed_flush_lsn for at-least-once delivery
+//   6. Remove the polling ticker and simulateChange helper
+//
+// The polling implementation exercises the full Source interface
+// (Subscribe, GetChanges, Commit, GetLag, Snapshot) so that
+// consumers don't need to change when WAL streaming is integrated.
 type PGCDCSource struct {
 	config   SourceConfig
 	connStr  string
