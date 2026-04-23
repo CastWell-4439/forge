@@ -191,6 +191,14 @@ func (m *mockCoordinatorClient) CancelWorkflow(_ context.Context, _ *forgev1.Can
 	return m.cancelResp, m.cancelErr
 }
 
+func (m *mockCoordinatorClient) GetOverview(_ context.Context, _ *forgev1.GetOverviewRequest, _ ...grpc.CallOption) (*forgev1.GetOverviewResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCoordinatorClient) ListWorkers(_ context.Context, _ *forgev1.ListWorkersRequest, _ ...grpc.CallOption) (*forgev1.ListWorkersResponse, error) {
+	return nil, nil
+}
+
 func TestForgeClientSubmit(t *testing.T) {
 	mock := &mockCoordinatorClient{
 		submitResp: &forgev1.SubmitWorkflowResponse{WorkflowId: "wf-abc-123"},

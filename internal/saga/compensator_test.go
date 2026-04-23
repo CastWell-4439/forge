@@ -49,6 +49,7 @@ func (m *mockStorage) CompleteTask(_ context.Context, _ string, _ json.RawMessag
 func (m *mockStorage) FailTask(_ context.Context, _ string, _ string) error { return nil }
 func (m *mockStorage) SaveEvent(_ context.Context, _ *storage.Event) error { return nil }
 func (m *mockStorage) GetWorkflowHistory(_ context.Context, _ string) ([]*storage.Event, error) { return nil, nil }
+func (m *mockStorage) CountWorkflows(_ context.Context) (map[storage.WorkflowStatus]int32, error) { return nil, nil }
 func (m *mockStorage) Close() error { return nil }
 
 func TestBuildCompensationPlan(t *testing.T) {

@@ -143,6 +143,11 @@ type Storage interface {
 	SaveEvent(ctx context.Context, event *Event) error
 	GetWorkflowHistory(ctx context.Context, workflowID string) ([]*Event, error)
 
+	// CountWorkflows returns the number of workflows grouped by status.
+	// Returns a map of WorkflowStatus → count. Implementations should use
+	// an efficient COUNT query rather than loading full rows.
+	CountWorkflows(ctx context.Context) (map[WorkflowStatus]int32, error)
+
 	// Lifecycle
 	Close() error
 }

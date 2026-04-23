@@ -479,6 +479,26 @@ func (s *BoltStorage) Close() error {
 	return s.db.Close()
 }
 
+// CountWorkflows returns a count of workflows grouped by status.
+// Scans all workflows in BoltDB (fine for dev/standalone; PG uses SQL COUNT).
+func (s *BoltStorage) CountWorkflows(_ context.Context) (map[WorkflowStatus]int32, error) {
+	counts := make(map[WorkflowStatus]int32)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketWorkflows).ForEach(func(_, v []byte) error {
+			var wf Workflow
+			if err := json.Unmarshal(v, &wf); err != nil {
+				return err
+			}
+			counts[wf.Status]++
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("count workflows: %w", err)
+	}
+	return counts, nil
+}
+
 // addToIndex appends a value to a list stored under a key in an index bucket.
 func (s *BoltStorage) addToIndex(tx *bolt.Tx, bucket []byte, key, value string) error {
 	b := tx.Bucket(bucket)

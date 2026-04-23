@@ -395,6 +395,28 @@ func (s *PGStorage) Close() error {
 	return nil
 }
 
+// CountWorkflows returns a count of workflows grouped by status using an
+// efficient SQL GROUP BY instead of loading all rows.
+func (s *PGStorage) CountWorkflows(ctx context.Context) (map[WorkflowStatus]int32, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT status, COUNT(*)::int FROM workflow_instances GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("count workflows: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[WorkflowStatus]int32)
+	for rows.Next() {
+		var status string
+		var count int32
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("scan workflow count: %w", err)
+		}
+		counts[WorkflowStatus(status)] = count
+	}
+	return counts, rows.Err()
+}
+
 // nullableJSON returns nil if the JSON is empty or null.
 func nullableJSON(data json.RawMessage) interface{} {
 	if len(data) == 0 {
