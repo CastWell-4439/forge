@@ -1,6 +1,9 @@
 version: v2
 managed:
   enabled: true
+  disable:
+    - file_option: go_package_prefix
+      module: buf.build/googleapis/googleapis
   override:
     - file_option: go_package_prefix
       value: github.com/castwell/forge/api/proto/gen
@@ -12,6 +15,11 @@ plugins:
   - remote: buf.build/grpc/go
     out: api/proto/gen
     opt: paths=source_relative
+  # gRPC-Gateway plugin
+  - remote: buf.build/grpc-ecosystem/gateway
+    out: api/proto/gen
+    opt:
+      - paths=source_relative
   # Python plugins
   - remote: buf.build/protocolbuffers/python
     out: sdk/python/forge_sdk/generated

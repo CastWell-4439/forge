@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from . import coordinator_pb2 as coordinator__pb2
+import coordinator_pb2 as coordinator__pb2
 
 
 class CoordinatorServiceStub(object):
@@ -34,6 +34,16 @@ class CoordinatorServiceStub(object):
                 '/forge.v1.CoordinatorService/CancelWorkflow',
                 request_serializer=coordinator__pb2.CancelWorkflowRequest.SerializeToString,
                 response_deserializer=coordinator__pb2.CancelWorkflowResponse.FromString,
+                _registered_method=True)
+        self.GetOverview = channel.unary_unary(
+                '/forge.v1.CoordinatorService/GetOverview',
+                request_serializer=coordinator__pb2.GetOverviewRequest.SerializeToString,
+                response_deserializer=coordinator__pb2.GetOverviewResponse.FromString,
+                _registered_method=True)
+        self.ListWorkers = channel.unary_unary(
+                '/forge.v1.CoordinatorService/ListWorkers',
+                request_serializer=coordinator__pb2.ListWorkersRequest.SerializeToString,
+                response_deserializer=coordinator__pb2.ListWorkersResponse.FromString,
                 _registered_method=True)
 
 
@@ -69,6 +79,20 @@ class CoordinatorServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetOverview(self, request, context):
+        """GetOverview returns aggregated dashboard statistics.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListWorkers(self, request, context):
+        """ListWorkers returns a paginated list of registered workers.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CoordinatorServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -91,6 +115,16 @@ def add_CoordinatorServiceServicer_to_server(servicer, server):
                     servicer.CancelWorkflow,
                     request_deserializer=coordinator__pb2.CancelWorkflowRequest.FromString,
                     response_serializer=coordinator__pb2.CancelWorkflowResponse.SerializeToString,
+            ),
+            'GetOverview': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetOverview,
+                    request_deserializer=coordinator__pb2.GetOverviewRequest.FromString,
+                    response_serializer=coordinator__pb2.GetOverviewResponse.SerializeToString,
+            ),
+            'ListWorkers': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListWorkers,
+                    request_deserializer=coordinator__pb2.ListWorkersRequest.FromString,
+                    response_serializer=coordinator__pb2.ListWorkersResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -202,6 +236,60 @@ class CoordinatorService(object):
             '/forge.v1.CoordinatorService/CancelWorkflow',
             coordinator__pb2.CancelWorkflowRequest.SerializeToString,
             coordinator__pb2.CancelWorkflowResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetOverview(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/forge.v1.CoordinatorService/GetOverview',
+            coordinator__pb2.GetOverviewRequest.SerializeToString,
+            coordinator__pb2.GetOverviewResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListWorkers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/forge.v1.CoordinatorService/ListWorkers',
+            coordinator__pb2.ListWorkersRequest.SerializeToString,
+            coordinator__pb2.ListWorkersResponse.FromString,
             options,
             channel_credentials,
             insecure,

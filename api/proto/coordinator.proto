@@ -6,20 +6,39 @@ option go_package = "github.com/castwell/forge/api/proto/gen/forgepb";
 
 import "common.proto";
 import "google/protobuf/timestamp.proto";
+import "google/api/annotations.proto";
 
 // CoordinatorService manages workflow lifecycle.
 service CoordinatorService {
   // SubmitWorkflow creates and starts a new workflow instance.
-  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowResponse);
+  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowResponse) {
+    option (google.api.http) = { post: "/api/v1/workflows" body: "*" };
+  }
 
   // GetWorkflow retrieves the current state of a workflow instance.
-  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse) {
+    option (google.api.http) = { get: "/api/v1/workflows/{workflow_id}" };
+  }
 
   // ListWorkflows returns a paginated list of workflow instances.
-  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse) {
+    option (google.api.http) = { get: "/api/v1/workflows" };
+  }
 
   // CancelWorkflow cancels a running workflow.
-  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowResponse);
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowResponse) {
+    option (google.api.http) = { post: "/api/v1/workflows/{workflow_id}/cancel" body: "*" };
+  }
+
+  // GetOverview returns aggregated dashboard statistics.
+  rpc GetOverview(GetOverviewRequest) returns (GetOverviewResponse) {
+    option (google.api.http) = { get: "/api/v1/overview" };
+  }
+
+  // ListWorkers returns a paginated list of registered workers.
+  rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse) {
+    option (google.api.http) = { get: "/api/v1/workers" };
+  }
 }
 
 // SubmitWorkflowRequest contains the workflow definition to execute.
@@ -66,6 +85,44 @@ message CancelWorkflowRequest {
 
 // CancelWorkflowResponse confirms cancellation.
 message CancelWorkflowResponse {}
+
+// GetOverviewRequest is empty — no parameters needed.
+message GetOverviewRequest {}
+
+// GetOverviewResponse returns aggregated dashboard statistics.
+message GetOverviewResponse {
+  int32  active_workflows  = 1; // RUNNING workflows count
+  int32  total_workflows   = 2; // Total workflow count
+  int32  total_workers     = 3; // Registered worker count
+  int32  healthy_workers   = 4; // Healthy worker count
+  double success_rate      = 5; // Success rate (0.0-1.0)
+  int32  queue_depth       = 6; // READY tasks count
+  int32  failed_workflows  = 7; // FAILED workflows count
+}
+
+// ListWorkersRequest provides filtering and pagination for workers.
+message ListWorkersRequest {
+  string language_filter = 1; // Filter by language (go/python/cpp, empty = all)
+  int32  page_size       = 2;
+  string page_token      = 3;
+}
+
+// ListWorkersResponse returns a page of workers.
+message ListWorkersResponse {
+  repeated DashboardWorkerInfo workers        = 1;
+  string                       next_page_token = 2;
+}
+
+// DashboardWorkerInfo describes a worker for the admin dashboard.
+message DashboardWorkerInfo {
+  string              id           = 1;
+  string              addr         = 2;
+  map<string, string> labels       = 3;
+  int32               capacity     = 4;
+  int32               active_tasks = 5;
+  string              status       = 6; // "healthy" / "unhealthy" / "offline"
+  repeated string     handlers     = 7;
+}
 
 // WorkflowInstance represents a single execution of a workflow.
 message WorkflowInstance {

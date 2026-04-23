@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from . import worker_pb2 as worker__pb2
+import worker_pb2 as worker__pb2
 
 
 class WorkerServiceStub(object):

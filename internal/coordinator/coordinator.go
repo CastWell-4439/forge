@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -501,6 +502,159 @@ func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, 
 	}); err != nil {
 		log.Printf("ERROR: save event %s for workflow %s: %v", eventType, workflowID, err)
 	}
+}
+
+// GetOverview implements the CoordinatorService GetOverview RPC.
+// It aggregates workflow and worker statistics for the admin dashboard.
+func (c *Coordinator) GetOverview(ctx context.Context, _ *forgev1.GetOverviewRequest) (*forgev1.GetOverviewResponse, error) {
+	// Use efficient COUNT query instead of loading all workflow rows.
+	counts, err := c.store.CountWorkflows(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "count workflows: %v", err)
+	}
+
+	var total int32
+	for _, cnt := range counts {
+		total += cnt
+	}
+	active := counts[storage.WorkflowStatusRunning]
+	completed := counts[storage.WorkflowStatusCompleted]
+	failed := counts[storage.WorkflowStatusFailed]
+
+	var successRate float64
+	if completed+failed > 0 {
+		successRate = float64(completed) / float64(completed+failed)
+	}
+
+	var totalWorkers, healthyWorkers int32
+	if c.workerMgr != nil {
+		for _, w := range c.workerMgr.AllWorkers() {
+			totalWorkers++
+			if w.Status == WorkerStatusActive {
+				healthyWorkers++
+			}
+		}
+	} else {
+		c.mu.RLock()
+		totalWorkers = int32(len(c.workers))
+		healthyWorkers = totalWorkers
+		c.mu.RUnlock()
+	}
+
+	// Queue depth: count READY tasks across RUNNING workflows.
+	// Only load the running workflows (bounded by active count).
+	var queueDepth int32
+	if active > 0 {
+		runningWFs, err := c.store.ListWorkflows(ctx, storage.WorkflowStatusRunning, int(active), 0)
+		if err == nil {
+			for _, wf := range runningWFs {
+				tasks, err := c.store.ListTasksByWorkflow(ctx, wf.ID)
+				if err != nil {
+					continue
+				}
+				for _, t := range tasks {
+					if t.Status == storage.TaskStatusReady {
+						queueDepth++
+					}
+				}
+			}
+		}
+	}
+
+	return &forgev1.GetOverviewResponse{
+		ActiveWorkflows: active,
+		TotalWorkflows:  total,
+		TotalWorkers:    totalWorkers,
+		HealthyWorkers:  healthyWorkers,
+		SuccessRate:     successRate,
+		QueueDepth:      queueDepth,
+		FailedWorkflows: failed,
+	}, nil
+}
+
+// ListWorkers implements the CoordinatorService ListWorkers RPC.
+// It returns the current set of registered workers with health status.
+// Supports offset-based pagination via page_token (stringified integer offset).
+func (c *Coordinator) ListWorkers(ctx context.Context, req *forgev1.ListWorkersRequest) (*forgev1.ListWorkersResponse, error) {
+	langFilter := req.GetLanguageFilter()
+	pageSize := int(req.GetPageSize())
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+
+	// Parse offset from page_token (empty = 0).
+	offset := 0
+	if pt := req.GetPageToken(); pt != "" {
+		if n, err := strconv.Atoi(pt); err == nil && n > 0 {
+			offset = n
+		}
+	}
+
+	var all []*forgev1.DashboardWorkerInfo
+
+	if c.workerMgr != nil {
+		for _, w := range c.workerMgr.AllWorkers() {
+			lang := ""
+			if w.Registration.Metadata != nil {
+				lang = w.Registration.Metadata["language"]
+			}
+			if langFilter != "" && lang != langFilter {
+				continue
+			}
+
+			wStatus := "healthy"
+			switch w.Status {
+			case WorkerStatusSuspect:
+				wStatus = "unhealthy"
+			case WorkerStatusDead:
+				wStatus = "offline"
+			}
+
+			labels := make(map[string]string)
+			if w.Registration.Metadata != nil {
+				for k, v := range w.Registration.Metadata {
+					labels[k] = v
+				}
+			}
+
+			all = append(all, &forgev1.DashboardWorkerInfo{
+				Id:          w.Registration.ID,
+				Addr:        w.Registration.Addr,
+				Labels:      labels,
+				Capacity:    int32(w.Capacity),
+				ActiveTasks: int32(w.ActiveTasks),
+				Status:      wStatus,
+				Handlers:    w.Handlers,
+			})
+		}
+	} else {
+		c.mu.RLock()
+		for _, w := range c.workers {
+			all = append(all, &forgev1.DashboardWorkerInfo{
+				Id:          w.ID,
+				Addr:        w.Addr,
+				Capacity:    int32(w.Capacity),
+				ActiveTasks: int32(w.Active),
+				Status:      "healthy",
+				Handlers:    w.Handlers,
+			})
+		}
+		c.mu.RUnlock()
+	}
+
+	// Apply offset-based pagination.
+	var nextPageToken string
+	if offset >= len(all) {
+		all = nil
+	} else {
+		all = all[offset:]
+		if len(all) > pageSize {
+			all = all[:pageSize]
+			nextPageToken = strconv.Itoa(offset + pageSize)
+		}
+	}
+
+	return &forgev1.ListWorkersResponse{Workers: all, NextPageToken: nextPageToken}, nil
 }
 
 // Storage returns the coordinator's storage backend (used by tests).

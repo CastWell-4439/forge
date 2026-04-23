@@ -32,7 +32,7 @@ require (
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.0.1 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.1.0 // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pglogrepl v0.0.0-20260401131349-e37c41485510 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -81,10 +81,10 @@ require (
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260120221211-b8f7ae30c516 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260420184626-e10c466a9529 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	sigs.k8s.io/json v0.0.0-20211020170558-c049b76a60c6 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect

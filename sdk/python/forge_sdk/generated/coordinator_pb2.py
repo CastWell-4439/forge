@@ -22,11 +22,12 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-from . import common_pb2 as common__pb2
+import common_pb2 as common__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
+from google.api import annotations_pb2 as google_dot_api_dot_annotations__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11\x63oordinator.proto\x12\x08\x66orge.v1\x1a\x0c\x63ommon.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"v\n\x15SubmitWorkflowRequest\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n\x07version\x18\x02 \x01(\x05R\x07version\x12\x19\n\x08\x64\x61g_yaml\x18\x03 \x01(\tR\x07\x64\x61gYaml\x12\x14\n\x05input\x18\x04 \x01(\x0cR\x05input\"9\n\x16SubmitWorkflowResponse\x12\x1f\n\x0bworkflow_id\x18\x01 \x01(\tR\nworkflowId\"5\n\x12GetWorkflowRequest\x12\x1f\n\x0bworkflow_id\x18\x01 \x01(\tR\nworkflowId\"M\n\x13GetWorkflowResponse\x12\x36\n\x08workflow\x18\x01 \x01(\x0b\x32\x1a.forge.v1.WorkflowInstanceR\x08workflow\"\x84\x01\n\x14ListWorkflowsRequest\x12\x30\n\x06status\x18\x01 \x01(\x0e\x32\x18.forge.v1.WorkflowStatusR\x06status\x12\x1b\n\tpage_size\x18\x02 \x01(\x05R\x08pageSize\x12\x1d\n\npage_token\x18\x03 \x01(\tR\tpageToken\"y\n\x15ListWorkflowsResponse\x12\x38\n\tworkflows\x18\x01 \x03(\x0b\x32\x1a.forge.v1.WorkflowInstanceR\tworkflows\x12&\n\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"P\n\x15\x43\x61ncelWorkflowRequest\x12\x1f\n\x0bworkflow_id\x18\x01 \x01(\tR\nworkflowId\x12\x16\n\x06reason\x18\x02 \x01(\tR\x06reason\"\x18\n\x16\x43\x61ncelWorkflowResponse\"\xae\x03\n\x10WorkflowInstance\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n\x07version\x18\x03 \x01(\x05R\x07version\x12\x30\n\x06status\x18\x04 \x01(\x0e\x32\x18.forge.v1.WorkflowStatusR\x06status\x12\x14\n\x05input\x18\x05 \x01(\x0cR\x05input\x12\x16\n\x06output\x18\x06 \x01(\x0cR\x06output\x12\x1b\n\terror_msg\x18\x07 \x01(\tR\x08\x65rrorMsg\x12,\n\x05tasks\x18\x08 \x03(\x0b\x32\x16.forge.v1.TaskInstanceR\x05tasks\x12\x39\n\nstarted_at\x18\t \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n\x0b\x66inished_at\x18\n \x01(\x0b\x32\x1a.google.protobuf.TimestampR\nfinishedAt\x12\x39\n\ncreated_at\x18\x0b \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tcreatedAt\"\x9a\x04\n\x0cTaskInstance\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n\ttask_name\x18\x02 \x01(\tR\x08taskName\x12\x18\n\x07handler\x18\x03 \x01(\tR\x07handler\x12,\n\x06status\x18\x04 \x01(\x0e\x32\x14.forge.v1.TaskStatusR\x06status\x12\x1b\n\tworker_id\x18\x05 \x01(\tR\x08workerId\x12\x14\n\x05input\x18\x06 \x01(\x0cR\x05input\x12\x16\n\x06output\x18\x07 \x01(\x0cR\x06output\x12\x1b\n\terror_msg\x18\x08 \x01(\tR\x08\x65rrorMsg\x12\x18\n\x07\x61ttempt\x18\t \x01(\x05R\x07\x61ttempt\x12!\n\x0cmax_attempts\x18\n \x01(\x05R\x0bmaxAttempts\x12=\n\x0cscheduled_at\x18\x0b \x01(\x0b\x32\x1a.google.protobuf.TimestampR\x0bscheduledAt\x12\x39\n\nstarted_at\x18\x0c \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n\x0b\x66inished_at\x18\r \x01(\x0b\x32\x1a.google.protobuf.TimestampR\nfinishedAt\x12\x39\n\ncreated_at\x18\x0e \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tcreatedAt2\xdc\x02\n\x12\x43oordinatorService\x12S\n\x0eSubmitWorkflow\x12\x1f.forge.v1.SubmitWorkflowRequest\x1a .forge.v1.SubmitWorkflowResponse\x12J\n\x0bGetWorkflow\x12\x1c.forge.v1.GetWorkflowRequest\x1a\x1d.forge.v1.GetWorkflowResponse\x12P\n\rListWorkflows\x12\x1e.forge.v1.ListWorkflowsRequest\x1a\x1f.forge.v1.ListWorkflowsResponse\x12S\n\x0e\x43\x61ncelWorkflow\x12\x1f.forge.v1.CancelWorkflowRequest\x1a .forge.v1.CancelWorkflowResponseB\x92\x01\n\x0c\x63om.forge.v1B\x10\x43oordinatorProtoP\x01Z/github.com/castwell/forge/api/proto/gen;forgev1\xa2\x02\x03\x46XX\xaa\x02\x08\x46orge.V1\xca\x02\x08\x46orge\\V1\xe2\x02\x14\x46orge\\V1\\GPBMetadata\xea\x02\tForge::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11\x63oordinator.proto\x12\x08\x66orge.v1\x1a\x0c\x63ommon.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/api/annotations.proto\"v\n\x15SubmitWorkflowRequest\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n\x07version\x18\x02 \x01(\x05R\x07version\x12\x19\n\x08\x64\x61g_yaml\x18\x03 \x01(\tR\x07\x64\x61gYaml\x12\x14\n\x05input\x18\x04 \x01(\x0cR\x05input\"9\n\x16SubmitWorkflowResponse\x12\x1f\n\x0bworkflow_id\x18\x01 \x01(\tR\nworkflowId\"5\n\x12GetWorkflowRequest\x12\x1f\n\x0bworkflow_id\x18\x01 \x01(\tR\nworkflowId\"M\n\x13GetWorkflowResponse\x12\x36\n\x08workflow\x18\x01 \x01(\x0b\x32\x1a.forge.v1.WorkflowInstanceR\x08workflow\"\x84\x01\n\x14ListWorkflowsRequest\x12\x30\n\x06status\x18\x01 \x01(\x0e\x32\x18.forge.v1.WorkflowStatusR\x06status\x12\x1b\n\tpage_size\x18\x02 \x01(\x05R\x08pageSize\x12\x1d\n\npage_token\x18\x03 \x01(\tR\tpageToken\"y\n\x15ListWorkflowsResponse\x12\x38\n\tworkflows\x18\x01 \x03(\x0b\x32\x1a.forge.v1.WorkflowInstanceR\tworkflows\x12&\n\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"P\n\x15\x43\x61ncelWorkflowRequest\x12\x1f\n\x0bworkflow_id\x18\x01 \x01(\tR\nworkflowId\x12\x16\n\x06reason\x18\x02 \x01(\tR\x06reason\"\x18\n\x16\x43\x61ncelWorkflowResponse\"\x14\n\x12GetOverviewRequest\"\xa6\x02\n\x13GetOverviewResponse\x12)\n\x10\x61\x63tive_workflows\x18\x01 \x01(\x05R\x0f\x61\x63tiveWorkflows\x12\'\n\x0ftotal_workflows\x18\x02 \x01(\x05R\x0etotalWorkflows\x12#\n\rtotal_workers\x18\x03 \x01(\x05R\x0ctotalWorkers\x12\'\n\x0fhealthy_workers\x18\x04 \x01(\x05R\x0ehealthyWorkers\x12!\n\x0csuccess_rate\x18\x05 \x01(\x01R\x0bsuccessRate\x12\x1f\n\x0bqueue_depth\x18\x06 \x01(\x05R\nqueueDepth\x12)\n\x10\x66\x61iled_workflows\x18\x07 \x01(\x05R\x0f\x66\x61iledWorkflows\"y\n\x12ListWorkersRequest\x12\'\n\x0flanguage_filter\x18\x01 \x01(\tR\x0elanguageFilter\x12\x1b\n\tpage_size\x18\x02 \x01(\x05R\x08pageSize\x12\x1d\n\npage_token\x18\x03 \x01(\tR\tpageToken\"v\n\x13ListWorkersResponse\x12\x37\n\x07workers\x18\x01 \x03(\x0b\x32\x1d.forge.v1.DashboardWorkerInfoR\x07workers\x12&\n\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xaa\x02\n\x13\x44\x61shboardWorkerInfo\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n\x04\x61\x64\x64r\x18\x02 \x01(\tR\x04\x61\x64\x64r\x12\x41\n\x06labels\x18\x03 \x03(\x0b\x32).forge.v1.DashboardWorkerInfo.LabelsEntryR\x06labels\x12\x1a\n\x08\x63\x61pacity\x18\x04 \x01(\x05R\x08\x63\x61pacity\x12!\n\x0c\x61\x63tive_tasks\x18\x05 \x01(\x05R\x0b\x61\x63tiveTasks\x12\x16\n\x06status\x18\x06 \x01(\tR\x06status\x12\x1a\n\x08handlers\x18\x07 \x03(\tR\x08handlers\x1a\x39\n\x0bLabelsEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\"\xae\x03\n\x10WorkflowInstance\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n\x07version\x18\x03 \x01(\x05R\x07version\x12\x30\n\x06status\x18\x04 \x01(\x0e\x32\x18.forge.v1.WorkflowStatusR\x06status\x12\x14\n\x05input\x18\x05 \x01(\x0cR\x05input\x12\x16\n\x06output\x18\x06 \x01(\x0cR\x06output\x12\x1b\n\terror_msg\x18\x07 \x01(\tR\x08\x65rrorMsg\x12,\n\x05tasks\x18\x08 \x03(\x0b\x32\x16.forge.v1.TaskInstanceR\x05tasks\x12\x39\n\nstarted_at\x18\t \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n\x0b\x66inished_at\x18\n \x01(\x0b\x32\x1a.google.protobuf.TimestampR\nfinishedAt\x12\x39\n\ncreated_at\x18\x0b \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tcreatedAt\"\x9a\x04\n\x0cTaskInstance\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n\ttask_name\x18\x02 \x01(\tR\x08taskName\x12\x18\n\x07handler\x18\x03 \x01(\tR\x07handler\x12,\n\x06status\x18\x04 \x01(\x0e\x32\x14.forge.v1.TaskStatusR\x06status\x12\x1b\n\tworker_id\x18\x05 \x01(\tR\x08workerId\x12\x14\n\x05input\x18\x06 \x01(\x0cR\x05input\x12\x16\n\x06output\x18\x07 \x01(\x0cR\x06output\x12\x1b\n\terror_msg\x18\x08 \x01(\tR\x08\x65rrorMsg\x12\x18\n\x07\x61ttempt\x18\t \x01(\x05R\x07\x61ttempt\x12!\n\x0cmax_attempts\x18\n \x01(\x05R\x0bmaxAttempts\x12=\n\x0cscheduled_at\x18\x0b \x01(\x0b\x32\x1a.google.protobuf.TimestampR\x0bscheduledAt\x12\x39\n\nstarted_at\x18\x0c \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n\x0b\x66inished_at\x18\r \x01(\x0b\x32\x1a.google.protobuf.TimestampR\nfinishedAt\x12\x39\n\ncreated_at\x18\x0e \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tcreatedAt2\xbd\x05\n\x12\x43oordinatorService\x12q\n\x0eSubmitWorkflow\x12\x1f.forge.v1.SubmitWorkflowRequest\x1a .forge.v1.SubmitWorkflowResponse\"\x1c\x82\xd3\xe4\x93\x02\x16\"\x11/api/v1/workflows:\x01*\x12s\n\x0bGetWorkflow\x12\x1c.forge.v1.GetWorkflowRequest\x1a\x1d.forge.v1.GetWorkflowResponse\"\'\x82\xd3\xe4\x93\x02!\x12\x1f/api/v1/workflows/{workflow_id}\x12k\n\rListWorkflows\x12\x1e.forge.v1.ListWorkflowsRequest\x1a\x1f.forge.v1.ListWorkflowsResponse\"\x19\x82\xd3\xe4\x93\x02\x13\x12\x11/api/v1/workflows\x12\x86\x01\n\x0e\x43\x61ncelWorkflow\x12\x1f.forge.v1.CancelWorkflowRequest\x1a .forge.v1.CancelWorkflowResponse\"1\x82\xd3\xe4\x93\x02+\"&/api/v1/workflows/{workflow_id}/cancel:\x01*\x12\x64\n\x0bGetOverview\x12\x1c.forge.v1.GetOverviewRequest\x1a\x1d.forge.v1.GetOverviewResponse\"\x18\x82\xd3\xe4\x93\x02\x12\x12\x10/api/v1/overview\x12\x63\n\x0bListWorkers\x12\x1c.forge.v1.ListWorkersRequest\x1a\x1d.forge.v1.ListWorkersResponse\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/api/v1/workersB\x92\x01\n\x0c\x63om.forge.v1B\x10\x43oordinatorProtoP\x01Z/github.com/castwell/forge/api/proto/gen;forgev1\xa2\x02\x03\x46XX\xaa\x02\x08\x46orge.V1\xca\x02\x08\x46orge\\V1\xe2\x02\x14\x46orge\\V1\\GPBMetadata\xea\x02\tForge::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,26 +35,52 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'coordinator_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\014com.forge.v1B\020CoordinatorProtoP\001Z/github.com/castwell/forge/api/proto/gen;forgev1\242\002\003FXX\252\002\010Forge.V1\312\002\010Forge\\V1\342\002\024Forge\\V1\\GPBMetadata\352\002\tForge::V1'
-  _globals['_SUBMITWORKFLOWREQUEST']._serialized_start=78
-  _globals['_SUBMITWORKFLOWREQUEST']._serialized_end=196
-  _globals['_SUBMITWORKFLOWRESPONSE']._serialized_start=198
-  _globals['_SUBMITWORKFLOWRESPONSE']._serialized_end=255
-  _globals['_GETWORKFLOWREQUEST']._serialized_start=257
-  _globals['_GETWORKFLOWREQUEST']._serialized_end=310
-  _globals['_GETWORKFLOWRESPONSE']._serialized_start=312
-  _globals['_GETWORKFLOWRESPONSE']._serialized_end=389
-  _globals['_LISTWORKFLOWSREQUEST']._serialized_start=392
-  _globals['_LISTWORKFLOWSREQUEST']._serialized_end=524
-  _globals['_LISTWORKFLOWSRESPONSE']._serialized_start=526
-  _globals['_LISTWORKFLOWSRESPONSE']._serialized_end=647
-  _globals['_CANCELWORKFLOWREQUEST']._serialized_start=649
-  _globals['_CANCELWORKFLOWREQUEST']._serialized_end=729
-  _globals['_CANCELWORKFLOWRESPONSE']._serialized_start=731
-  _globals['_CANCELWORKFLOWRESPONSE']._serialized_end=755
-  _globals['_WORKFLOWINSTANCE']._serialized_start=758
-  _globals['_WORKFLOWINSTANCE']._serialized_end=1188
-  _globals['_TASKINSTANCE']._serialized_start=1191
-  _globals['_TASKINSTANCE']._serialized_end=1729
-  _globals['_COORDINATORSERVICE']._serialized_start=1732
-  _globals['_COORDINATORSERVICE']._serialized_end=2080
+  _globals['_DASHBOARDWORKERINFO_LABELSENTRY']._loaded_options = None
+  _globals['_DASHBOARDWORKERINFO_LABELSENTRY']._serialized_options = b'8\001'
+  _globals['_COORDINATORSERVICE'].methods_by_name['SubmitWorkflow']._loaded_options = None
+  _globals['_COORDINATORSERVICE'].methods_by_name['SubmitWorkflow']._serialized_options = b'\202\323\344\223\002\026\"\021/api/v1/workflows:\001*'
+  _globals['_COORDINATORSERVICE'].methods_by_name['GetWorkflow']._loaded_options = None
+  _globals['_COORDINATORSERVICE'].methods_by_name['GetWorkflow']._serialized_options = b'\202\323\344\223\002!\022\037/api/v1/workflows/{workflow_id}'
+  _globals['_COORDINATORSERVICE'].methods_by_name['ListWorkflows']._loaded_options = None
+  _globals['_COORDINATORSERVICE'].methods_by_name['ListWorkflows']._serialized_options = b'\202\323\344\223\002\023\022\021/api/v1/workflows'
+  _globals['_COORDINATORSERVICE'].methods_by_name['CancelWorkflow']._loaded_options = None
+  _globals['_COORDINATORSERVICE'].methods_by_name['CancelWorkflow']._serialized_options = b'\202\323\344\223\002+\"&/api/v1/workflows/{workflow_id}/cancel:\001*'
+  _globals['_COORDINATORSERVICE'].methods_by_name['GetOverview']._loaded_options = None
+  _globals['_COORDINATORSERVICE'].methods_by_name['GetOverview']._serialized_options = b'\202\323\344\223\002\022\022\020/api/v1/overview'
+  _globals['_COORDINATORSERVICE'].methods_by_name['ListWorkers']._loaded_options = None
+  _globals['_COORDINATORSERVICE'].methods_by_name['ListWorkers']._serialized_options = b'\202\323\344\223\002\021\022\017/api/v1/workers'
+  _globals['_SUBMITWORKFLOWREQUEST']._serialized_start=108
+  _globals['_SUBMITWORKFLOWREQUEST']._serialized_end=226
+  _globals['_SUBMITWORKFLOWRESPONSE']._serialized_start=228
+  _globals['_SUBMITWORKFLOWRESPONSE']._serialized_end=285
+  _globals['_GETWORKFLOWREQUEST']._serialized_start=287
+  _globals['_GETWORKFLOWREQUEST']._serialized_end=340
+  _globals['_GETWORKFLOWRESPONSE']._serialized_start=342
+  _globals['_GETWORKFLOWRESPONSE']._serialized_end=419
+  _globals['_LISTWORKFLOWSREQUEST']._serialized_start=422
+  _globals['_LISTWORKFLOWSREQUEST']._serialized_end=554
+  _globals['_LISTWORKFLOWSRESPONSE']._serialized_start=556
+  _globals['_LISTWORKFLOWSRESPONSE']._serialized_end=677
+  _globals['_CANCELWORKFLOWREQUEST']._serialized_start=679
+  _globals['_CANCELWORKFLOWREQUEST']._serialized_end=759
+  _globals['_CANCELWORKFLOWRESPONSE']._serialized_start=761
+  _globals['_CANCELWORKFLOWRESPONSE']._serialized_end=785
+  _globals['_GETOVERVIEWREQUEST']._serialized_start=787
+  _globals['_GETOVERVIEWREQUEST']._serialized_end=807
+  _globals['_GETOVERVIEWRESPONSE']._serialized_start=810
+  _globals['_GETOVERVIEWRESPONSE']._serialized_end=1104
+  _globals['_LISTWORKERSREQUEST']._serialized_start=1106
+  _globals['_LISTWORKERSREQUEST']._serialized_end=1227
+  _globals['_LISTWORKERSRESPONSE']._serialized_start=1229
+  _globals['_LISTWORKERSRESPONSE']._serialized_end=1347
+  _globals['_DASHBOARDWORKERINFO']._serialized_start=1350
+  _globals['_DASHBOARDWORKERINFO']._serialized_end=1648
+  _globals['_DASHBOARDWORKERINFO_LABELSENTRY']._serialized_start=1591
+  _globals['_DASHBOARDWORKERINFO_LABELSENTRY']._serialized_end=1648
+  _globals['_WORKFLOWINSTANCE']._serialized_start=1651
+  _globals['_WORKFLOWINSTANCE']._serialized_end=2081
+  _globals['_TASKINSTANCE']._serialized_start=2084
+  _globals['_TASKINSTANCE']._serialized_end=2622
+  _globals['_COORDINATORSERVICE']._serialized_start=2625
+  _globals['_COORDINATORSERVICE']._serialized_end=3326
 # @@protoc_insertion_point(module_scope)
