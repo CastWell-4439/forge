@@ -1,11 +1,10 @@
-package planning
+﻿package planning
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/castwell/forge/internal/agent/tools"
 	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/castwell/forge/internal/coordinator"
 	"gopkg.in/yaml.v3"
@@ -65,11 +64,11 @@ func (r *ValidationResult) ErrorSummary() string {
 // L1: Format extraction, L2: Schema validation, L3: Semantic validation,
 // L4: Parameter validation. From agent-tech-spec 3.3.1.
 type DAGValidator struct {
-	registry *tools.ToolRegistry
+	registry *workers.ToolRegistry
 }
 
 // NewDAGValidator creates a new DAGValidator.
-func NewDAGValidator(registry *tools.ToolRegistry) *DAGValidator {
+func NewDAGValidator(registry *workers.ToolRegistry) *DAGValidator {
 	return &DAGValidator{registry: registry}
 }
 
@@ -89,7 +88,7 @@ func (v *DAGValidator) Validate(rawYAML string) *ValidationResult {
 		return result
 	}
 
-	// L2: Schema validation — parse and check required fields.
+	// L2: Schema validation �?parse and check required fields.
 	dag, issues := validateSchema(cleanYAML)
 	result.Issues = append(result.Issues, issues...)
 	if dag == nil {
@@ -98,11 +97,11 @@ func (v *DAGValidator) Validate(rawYAML string) *ValidationResult {
 	}
 	result.DAG = dag
 
-	// L3: Semantic validation — handlers exist, no cycles, deps exist.
+	// L3: Semantic validation �?handlers exist, no cycles, deps exist.
 	l3Issues := v.validateSemantic(dag)
 	result.Issues = append(result.Issues, l3Issues...)
 
-	// L4: Parameter validation — params match InputSchema.
+	// L4: Parameter validation �?params match InputSchema.
 	l4Issues := v.validateParams(dag)
 	result.Issues = append(result.Issues, l4Issues...)
 
@@ -230,9 +229,9 @@ func (v *DAGValidator) validateParams(dag *coordinator.DAG) []ValidationIssue {
 	var issues []ValidationIssue
 
 	for name, task := range dag.Tasks {
-		toolDef := v.registry.Get(task.Handler)
+		toolDef := v.registry.GetTool(task.Handler)
 		if toolDef == nil {
-			// Handler doesn't exist — already reported in L3.
+			// Handler doesn't exist �?already reported in L3.
 			continue
 		}
 
@@ -295,7 +294,7 @@ func (v *DAGValidator) checkParamTypes(taskName string, task *coordinator.TaskDe
 	for paramName, paramVal := range task.Params {
 		schemaDef, ok := toolDef.InputSchema[paramName]
 		if !ok {
-			// Unknown parameter — warning, not error.
+			// Unknown parameter �?warning, not error.
 			*issues = append(*issues, ValidationIssue{
 				Level:    "L4",
 				Severity: SeverityWarning,
@@ -345,7 +344,7 @@ func checkType(val interface{}, expectedType string) bool {
 		_, ok := val.(map[string]interface{})
 		return ok
 	default:
-		return true // unknown type — allow
+		return true // unknown type �?allow
 	}
 }
 

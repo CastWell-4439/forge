@@ -1,4 +1,4 @@
-package planning
+﻿package planning
 
 import (
 	"context"
@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/tools"
+	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTaskPlannerTemplateMatch(t *testing.T) {
 	mock := &mockLLMClient{fallback: "should not be called"}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
@@ -70,7 +70,7 @@ tasks:
       - trim`
 
 	mock := &mockLLMClient{fallback: llmDAG}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
@@ -91,7 +91,7 @@ func TestTaskPlannerLLMFallbackWithMarkdown(t *testing.T) {
 	llmDAG := "```yaml\nname: test-dag\ntasks:\n  t1:\n    handler: media.download\n    params:\n      url: test\n```"
 
 	mock := &mockLLMClient{fallback: llmDAG}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
@@ -104,7 +104,7 @@ func TestTaskPlannerLLMFallbackWithMarkdown(t *testing.T) {
 }
 
 func TestSelectTools(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	planner := NewTaskPlanner(nil, registry)
 

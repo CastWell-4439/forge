@@ -2,6 +2,8 @@ package workers
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -107,4 +109,122 @@ func (r *ToolRegistry) ListHandlerNames() []string {
 // Count returns the number of registered tools.
 func (r *ToolRegistry) Count() int {
 	return len(r.tools)
+}
+
+// List returns all registered tool definitions sorted by name.
+func (r *ToolRegistry) List() []*ToolDef {
+	result := make([]*ToolDef, 0, len(r.tools))
+	for _, t := range r.tools {
+		result = append(result, t)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+// FormatForPrompt formats all registered tools as text suitable for inclusion
+// in an LLM prompt. Each tool is described with its handler name, display name,
+// category, description, input parameters, and constraints.
+func (r *ToolRegistry) FormatForPrompt() string {
+	tools := r.List()
+	var sb strings.Builder
+
+	for i, tool := range tools {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(fmt.Sprintf("### %s (%s)\n", tool.Name, tool.DisplayName))
+		sb.WriteString(fmt.Sprintf("Category: %s\n", tool.Category))
+		sb.WriteString(fmt.Sprintf("Description: %s\n", tool.Description))
+
+		if tool.RequiresGPU {
+			sb.WriteString("Requires GPU: yes\n")
+		}
+		if tool.EstimatedTime > 0 {
+			sb.WriteString(fmt.Sprintf("Estimated time: %s\n", tool.EstimatedTime))
+		}
+
+		if len(tool.InputSchema) > 0 {
+			sb.WriteString("Input parameters:\n")
+			paramNames := make([]string, 0, len(tool.InputSchema))
+			for pn := range tool.InputSchema {
+				paramNames = append(paramNames, pn)
+			}
+			sort.Strings(paramNames)
+
+			requiredSet := make(map[string]bool, len(tool.RequiredParams))
+			for _, rp := range tool.RequiredParams {
+				requiredSet[rp] = true
+			}
+
+			for _, pn := range paramNames {
+				p := tool.InputSchema[pn]
+				reqLabel := ""
+				if requiredSet[pn] || p.Required {
+					reqLabel = " (required)"
+				}
+				sb.WriteString(fmt.Sprintf("  - %s: %s — %s%s\n", pn, p.Type, p.Description, reqLabel))
+			}
+		}
+
+		if len(tool.TypicalPredecessors) > 0 {
+			sb.WriteString(fmt.Sprintf("Typical predecessors: %s\n", strings.Join(tool.TypicalPredecessors, ", ")))
+		}
+		if len(tool.TypicalSuccessors) > 0 {
+			sb.WriteString(fmt.Sprintf("Typical successors: %s\n", strings.Join(tool.TypicalSuccessors, ", ")))
+		}
+	}
+
+	return sb.String()
+}
+
+// FindSimilar returns the most similar registered handler name for the given
+// unknown handler name using prefix/contains matching.
+func (r *ToolRegistry) FindSimilar(name string) string {
+	tools := r.ListTools()
+	if len(tools) == 0 {
+		return ""
+	}
+
+	nameLower := strings.ToLower(name)
+	best := ""
+	bestScore := -1
+
+	for _, t := range tools {
+		tLower := strings.ToLower(t.Name)
+		score := 0
+
+		if strings.HasPrefix(tLower, nameLower) || strings.HasPrefix(nameLower, tLower) {
+			score = 100
+		}
+		parts := strings.SplitN(nameLower, ".", 2)
+		tParts := strings.SplitN(tLower, ".", 2)
+		if len(parts) > 0 && len(tParts) > 0 && parts[0] == tParts[0] {
+			score += 50
+		}
+		if strings.Contains(tLower, nameLower) || strings.Contains(nameLower, tLower) {
+			score += 25
+		}
+
+		if score > bestScore {
+			bestScore = score
+			best = t.Name
+		}
+	}
+
+	return best
+}
+
+// DefaultRegistry creates a ToolRegistry pre-loaded with all tools in mock mode.
+func DefaultRegistry() (*ToolRegistry, error) {
+	reg := NewToolRegistry()
+	cfg := HandlerConfig{
+		Mode:      HandlerModeMock,
+		Workspace: "/tmp/forge",
+	}
+	if err := RegisterAll(reg, cfg); err != nil {
+		return nil, fmt.Errorf("default registry: %w", err)
+	}
+	return reg, nil
 }

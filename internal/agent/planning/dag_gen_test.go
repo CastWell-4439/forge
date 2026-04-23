@@ -1,18 +1,18 @@
-package planning
+﻿package planning
 
 import (
 	"context"
 	"testing"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/tools"
+	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDAGGeneratorTemplateStrategy(t *testing.T) {
 	mock := &mockLLMClient{fallback: "should not be called"}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
@@ -65,11 +65,11 @@ tasks:
     timeout: 120s`
 
 	mock := &mockLLMClient{fallback: validDAG}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
-	// No template match — will use LLM.
+	// No template match �?will use LLM.
 	req := &core.VideoRequirement{
 		Description: "trim a video",
 		SourceVideos: []core.MediaRef{
@@ -90,7 +90,7 @@ func TestDAGGeneratorLLMRetry(t *testing.T) {
 	callCount := 0
 	mock := &countingMockLLM{
 		responses: []string{
-			// First attempt: invalid — missing handler.
+			// First attempt: invalid �?missing handler.
 			`name: bad
 tasks:
   t1:
@@ -106,7 +106,7 @@ tasks:
 		callCount: &callCount,
 	}
 
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
@@ -123,7 +123,7 @@ tasks:
 func TestDAGGeneratorFallbackStrategy(t *testing.T) {
 	// LLM always returns invalid DAG.
 	mock := &mockLLMClient{fallback: "this is not yaml"}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
@@ -146,7 +146,7 @@ func TestDAGGeneratorFallbackStrategy(t *testing.T) {
 
 func TestDAGGeneratorFallbackUsesReqParams(t *testing.T) {
 	mock := &mockLLMClient{fallback: "invalid"}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 

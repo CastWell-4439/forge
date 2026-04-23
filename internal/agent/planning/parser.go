@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/structured"
 )
 
 // RequirementParser uses an LLM to parse natural language into a VideoRequirement.
@@ -57,8 +58,8 @@ func (p *RequirementParser) Parse(ctx context.Context, userText string) (*core.V
 		return nil, fmt.Errorf("parse requirement: LLM call failed: %w", err)
 	}
 
-	// Extract JSON from the response (strip markdown if needed).
-	jsonStr := extractJSON(raw)
+	// Extract JSON from the response (handles markdown fences, string escapes, etc.).
+	jsonStr := structured.ExtractJSONObject(raw)
 
 	var req core.VideoRequirement
 	if err := json.Unmarshal([]byte(jsonStr), &req); err != nil {
@@ -87,36 +88,4 @@ func (p *RequirementParser) Parse(ctx context.Context, userText string) (*core.V
 	}
 
 	return &req, nil
-}
-
-// extractJSON attempts to extract a JSON object from a potentially
-// markdown-wrapped LLM response.
-func extractJSON(raw string) string {
-	// Try to find JSON block in markdown.
-	start := -1
-	for i, ch := range raw {
-		if ch == '{' {
-			start = i
-			break
-		}
-	}
-	if start == -1 {
-		return raw
-	}
-
-	// Find the matching closing brace.
-	depth := 0
-	for i := start; i < len(raw); i++ {
-		switch raw[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return raw[start : i+1]
-			}
-		}
-	}
-
-	return raw[start:]
 }

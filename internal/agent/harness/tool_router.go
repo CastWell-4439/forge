@@ -41,6 +41,10 @@ func (r *ToolRouter) Call(ctx context.Context, name string, params map[string]in
 		return &core.ToolResult{Error: fmt.Sprintf("tool %q has no handler registered", name)}
 	}
 
+	// Adapt parameter types: JSON unmarshaling turns all numbers into float64,
+	// but handlers expect int/int64 for "integer" schema fields.
+	adaptParams(params, toolDef.InputSchema)
+
 	// Execute the handler (HandlerFunc signature: func(ctx, params map) (map, error)).
 	result, err := handler(ctx, params)
 	if err != nil {
@@ -100,4 +104,25 @@ func commonPrefixLen(a, b string) int {
 		}
 	}
 	return n
+}
+
+// adaptParams converts JSON-deserialized float64 values to int64 where the
+// tool's InputSchema declares an "integer" type. Without this, handler code
+// doing params["x"].(int) would panic because json.Unmarshal always produces float64.
+func adaptParams(params map[string]interface{}, schema map[string]workers.ParamDef) {
+	if params == nil || schema == nil {
+		return
+	}
+	for key, val := range params {
+		def, ok := schema[key]
+		if !ok {
+			continue
+		}
+		switch def.Type {
+		case "integer":
+			if f, ok := val.(float64); ok {
+				params[key] = int64(f)
+			}
+		}
+	}
 }

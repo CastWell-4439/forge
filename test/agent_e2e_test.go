@@ -1,4 +1,4 @@
-package test
+﻿package test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/planning"
 	"github.com/castwell/forge/internal/agent/session"
-	"github.com/castwell/forge/internal/agent/tools"
+	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +80,7 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	}`
 
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 
 	parser := planning.NewRequirementParser(mock)
@@ -226,7 +226,7 @@ tasks:
 		parserResponse:  parserJSON,
 		plannerResponse: llmDAG,
 	}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 
 	parser := planning.NewRequirementParser(mock)
@@ -284,7 +284,7 @@ func TestAgentE2ESessionFlow(t *testing.T) {
 
 	require.NoError(t, sess.Transition(session.StatePlanning))
 
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	gen := planning.NewDAGGenerator(mock, registry)
 	result, err := gen.Generate(context.Background(), req)
@@ -326,7 +326,7 @@ func TestAgentE2EValidationRoundtrip(t *testing.T) {
 	}`
 
 	mock := &mockLLMForE2E{parserResponse: parserJSON}
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 
 	parser := planning.NewRequirementParser(mock)

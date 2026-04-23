@@ -1,10 +1,11 @@
-package planning
+﻿package planning
 
 import (
 	"context"
 	"testing"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/structured"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,6 +128,7 @@ func TestRequirementParserMarkdownWrapped(t *testing.T) {
 }
 
 func TestExtractJSON(t *testing.T) {
+	// Tests now use structured.ExtractJSONObject (shared implementation).
 	tests := []struct {
 		name     string
 		input    string
@@ -151,7 +153,7 @@ func TestExtractJSON(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := extractJSON(tc.input)
+			result := structured.ExtractJSONObject(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

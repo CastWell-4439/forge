@@ -1,9 +1,9 @@
-package planning
+﻿package planning
 
 import (
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/tools"
+	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,7 +127,7 @@ tasks:
 }
 
 func TestDAGValidatorFullPipeline(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
@@ -164,7 +164,7 @@ tasks:
 }
 
 func TestDAGValidatorL3UnknownHandler(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
@@ -195,7 +195,7 @@ tasks:
 }
 
 func TestDAGValidatorL3CycleDetection(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
@@ -232,7 +232,7 @@ tasks:
 }
 
 func TestDAGValidatorL4MissingRequiredParam(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
@@ -257,7 +257,7 @@ tasks:
 }
 
 func TestDAGValidatorL4UnknownParam(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
@@ -283,7 +283,7 @@ tasks:
 }
 
 func TestDAGValidatorMarkdownWrapped(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
@@ -296,7 +296,7 @@ func TestDAGValidatorMarkdownWrapped(t *testing.T) {
 }
 
 func TestValidateRaw(t *testing.T) {
-	registry, err := tools.DefaultRegistry()
+	registry, err := workers.DefaultRegistry()
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 

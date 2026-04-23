@@ -15,7 +15,7 @@ const (
 // ParseResponse attempts to parse a raw LLM output string into an AgentResponse.
 // It handles common LLM quirks: markdown code fences, leading/trailing text.
 func ParseResponse(raw string) (*AgentResponse, error) {
-	jsonStr := extractJSONObject(raw)
+	jsonStr := ExtractJSONObject(raw)
 	if jsonStr == "" {
 		return nil, fmt.Errorf("no JSON object found in LLM output")
 	}
@@ -67,9 +67,9 @@ func ParseWithRetry(raw string, retryFn func(feedback string) (string, error)) (
 	return nil, fmt.Errorf("failed to parse after %d retries: %w", MaxParseRetries, err)
 }
 
-// extractJSONObject finds the first complete JSON object ({...}) in a string.
+// ExtractJSONObject finds the first complete JSON object ({...}) in a string.
 // Handles markdown code fences and leading/trailing text.
-func extractJSONObject(raw string) string {
+func ExtractJSONObject(raw string) string {
 	s := strings.TrimSpace(raw)
 
 	// Strip markdown code fences.

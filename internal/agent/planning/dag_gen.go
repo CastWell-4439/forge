@@ -1,11 +1,11 @@
-package planning
+﻿package planning
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/tools"
+	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/castwell/forge/internal/coordinator"
 )
 
@@ -22,12 +22,12 @@ const (
 type DAGGenerator struct {
 	planner   *TaskPlanner
 	validator *DAGValidator
-	registry  *tools.ToolRegistry
+	registry  *workers.ToolRegistry
 	llmClient core.LLMClient
 }
 
 // NewDAGGenerator creates a new DAGGenerator.
-func NewDAGGenerator(llm core.LLMClient, registry *tools.ToolRegistry) *DAGGenerator {
+func NewDAGGenerator(llm core.LLMClient, registry *workers.ToolRegistry) *DAGGenerator {
 	return &DAGGenerator{
 		planner:   NewTaskPlanner(llm, registry),
 		validator: NewDAGValidator(registry),

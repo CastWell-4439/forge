@@ -229,7 +229,7 @@ func TestExtractJSONObject(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := extractJSONObject(tc.input)
+			result := ExtractJSONObject(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
