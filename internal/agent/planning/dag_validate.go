@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/castwell/forge/internal/agent/workers"
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/coordinator"
 	"gopkg.in/yaml.v3"
 )
@@ -64,11 +64,11 @@ func (r *ValidationResult) ErrorSummary() string {
 // L1: Format extraction, L2: Schema validation, L3: Semantic validation,
 // L4: Parameter validation. From agent-tech-spec 3.3.1.
 type DAGValidator struct {
-	registry *workers.ToolRegistry
+	registry *core.ToolRegistry
 }
 
 // NewDAGValidator creates a new DAGValidator.
-func NewDAGValidator(registry *workers.ToolRegistry) *DAGValidator {
+func NewDAGValidator(registry *core.ToolRegistry) *DAGValidator {
 	return &DAGValidator{registry: registry}
 }
 
@@ -290,7 +290,7 @@ func (v *DAGValidator) validateParams(dag *coordinator.DAG) []ValidationIssue {
 }
 
 // checkParamTypes validates parameter types against the tool's InputSchema.
-func (v *DAGValidator) checkParamTypes(taskName string, task *coordinator.TaskDef, toolDef *workers.ToolDef, issues *[]ValidationIssue) {
+func (v *DAGValidator) checkParamTypes(taskName string, task *coordinator.TaskDef, toolDef *core.ToolDef, issues *[]ValidationIssue) {
 	for paramName, paramVal := range task.Params {
 		schemaDef, ok := toolDef.InputSchema[paramName]
 		if !ok {
@@ -417,3 +417,4 @@ func quickSchemaCheck(yamlStr string) error {
 	}
 	return nil
 }
+

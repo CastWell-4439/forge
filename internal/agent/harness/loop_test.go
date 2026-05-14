@@ -29,6 +29,11 @@ func (m *mockLLM) Chat(_ context.Context, _ []core.Message) (string, error) {
 	return resp, nil
 }
 
+func (m *mockLLM) ChatWithUsage(ctx context.Context, messages []core.Message) (core.ChatResult, error) {
+	content, err := m.Chat(ctx, messages)
+	return core.ChatResult{Content: content}, err
+}
+
 // helper: register tool into a new registry (handler must be non-nil for Register).
 func newRegistryWith(name, desc string, handler workers.HandlerFunc) *workers.ToolRegistry {
 	r := workers.NewToolRegistry()
@@ -286,4 +291,78 @@ func TestToolRouterCallSuccess(t *testing.T) {
 	err := json.Unmarshal([]byte(result.Output), &parsed)
 	require.NoError(t, err)
 	assert.Equal(t, float64(1920), parsed["width"])
+}
+
+// --- Verifier Tests (D5) ---
+
+// mockVerifier always rejects the first N calls, then accepts.
+type mockVerifier struct {
+	rejectCount int
+	callCount   int
+}
+
+func (v *mockVerifier) Verify(_ context.Context, _ core.ToolCall, _ *core.ToolResult) (bool, string, error) {
+	v.callCount++
+	if v.callCount <= v.rejectCount {
+		return false, fmt.Sprintf("rejection #%d: result quality too low", v.callCount), nil
+	}
+	return true, "", nil
+}
+
+func TestAgentLoopVerifierRejectsOnce(t *testing.T) {
+	// Step 1: LLM calls a tool → Verifier rejects → feedback appended
+	// Step 2: LLM retries (same or different) → Verifier accepts
+	// Step 3: LLM gives final answer
+	llm := &mockLLM{responses: []string{
+		`{"thought": "try the tool", "action": {"name": "test.echo", "params": {"msg": "first"}}}`,
+		`{"thought": "verifier said no, retrying", "action": {"name": "test.echo", "params": {"msg": "second"}}}`,
+		`{"thought": "got it now", "answer": "Done after retry"}`,
+	}}
+
+	registry := newRegistryWith("test.echo", "Echoes",
+		func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+			return map[string]interface{}{"echo": params["msg"]}, nil
+		},
+	)
+
+	router := NewToolRouter(registry)
+	loop := NewAgentLoop(llm, router, DefaultLoopConfig())
+
+	verifier := &mockVerifier{rejectCount: 1}
+	loop.SetVerifier(verifier)
+
+	result, err := loop.Run(context.Background(), "test-session", "do it")
+	require.NoError(t, err)
+	assert.Equal(t, "completed", result.Reason)
+	assert.Equal(t, "Done after retry", result.Answer)
+	assert.Len(t, result.Steps, 3)
+	// Verifier was called twice (once for each tool call).
+	assert.Equal(t, 2, verifier.callCount)
+}
+
+func TestAgentLoopVerifierAlwaysRejects(t *testing.T) {
+	// Verifier always rejects → agent hits maxSteps.
+	llm := &mockLLM{responses: []string{
+		`{"thought": "try", "action": {"name": "test.echo", "params": {"msg": "try"}}}`,
+	}}
+
+	registry := newRegistryWith("test.echo", "Echoes",
+		func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+			return map[string]interface{}{"echo": "ok"}, nil
+		},
+	)
+
+	router := NewToolRouter(registry)
+	config := DefaultLoopConfig()
+	config.MaxSteps = 3
+	loop := NewAgentLoop(llm, router, config)
+
+	verifier := &mockVerifier{rejectCount: 100} // never passes
+	loop.SetVerifier(verifier)
+
+	result, err := loop.Run(context.Background(), "test-session", "impossible")
+	require.NoError(t, err)
+	assert.Equal(t, "max_steps", result.Reason)
+	// All 3 steps should have been tool calls with verifier rejections.
+	assert.Equal(t, 3, verifier.callCount)
 }

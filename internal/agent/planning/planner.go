@@ -9,8 +9,31 @@ import (
 	"strings"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/workers"
+	"gopkg.in/yaml.v3"
 )
+
+// dagYAML is the top-level struct for generating DAG YAML via yaml.Marshal.
+// This replaces the unsafe fmt.Sprintf approach (#6).
+type dagYAML struct {
+	Name  string                   `yaml:"name"`
+	Tasks map[string]taskYAML      `yaml:"tasks"`
+}
+
+// taskYAML represents one task in the DAG template.
+type taskYAML struct {
+	Handler   string                 `yaml:"handler"`
+	Params    map[string]interface{} `yaml:"params"`
+	DependsOn []string               `yaml:"depends_on,omitempty"`
+	Timeout   string                 `yaml:"timeout,omitempty"`
+	Retry     *retryYAML             `yaml:"retry,omitempty"`
+}
+
+// retryYAML holds retry configuration for a task.
+type retryYAML struct {
+	MaxAttempts     int    `yaml:"max_attempts"`
+	Backoff         string `yaml:"backoff"`
+	InitialInterval string `yaml:"initial_interval"`
+}
 
 // DAGTemplate is a predefined DAG template for common video production
 // scenarios. Strategy A from agent-tech-spec 3.3.
@@ -29,12 +52,12 @@ type DAGTemplate struct {
 // It uses a two-strategy approach: template matching first, then LLM fallback.
 type TaskPlanner struct {
 	llmClient core.LLMClient
-	registry  *workers.ToolRegistry
+	registry  *core.ToolRegistry
 	templates []DAGTemplate
 }
 
 // NewTaskPlanner creates a new TaskPlanner.
-func NewTaskPlanner(llm core.LLMClient, registry *workers.ToolRegistry) *TaskPlanner {
+func NewTaskPlanner(llm core.LLMClient, registry *core.ToolRegistry) *TaskPlanner {
 	p := &TaskPlanner{
 		llmClient: llm,
 		registry:  registry,
@@ -192,165 +215,166 @@ func FaceSwapWithTTSTemplate() DAGTemplate {
 				req.Subtitles != nil &&
 				len(req.SourceVideos) > 0
 		},
-		Build: func(req *core.VideoRequirement) string {
-			sourceURL := ""
-			if len(req.SourceVideos) > 0 {
-				sourceURL = req.SourceVideos[0].URL
-			}
-			faceURL := ""
-			if req.FaceSwap != nil {
-				faceURL = req.FaceSwap.TargetFace.URL
-			}
-			ttsText := ""
-			ttsVoice := "zh-CN-XiaoxiaoNeural"
-			ttsLang := "zh-CN"
-			if req.TTS != nil {
-				ttsText = req.TTS.Text
-				if req.TTS.Voice != "" {
-					ttsVoice = req.TTS.Voice
-				}
-				if req.TTS.Language != "" {
-					ttsLang = req.TTS.Language
-				}
-			}
-			bgmStyle := "upbeat"
-			bgmVolume := "0.3"
-			if req.BGM != nil {
-				if req.BGM.Style != "" {
-					bgmStyle = req.BGM.Style
-				}
-				if req.BGM.Volume > 0 {
-					bgmVolume = fmt.Sprintf("%.1f", req.BGM.Volume)
-				}
-			}
-			resolution := req.Resolution
-			if resolution == "" {
-				resolution = "1080p"
-			}
-
-			return fmt.Sprintf(`name: face-swap-with-tts
-tasks:
-  download-source-video:
-    handler: media.download
-    params:
-      url: "%s"
-    timeout: 60s
-  download-face-image:
-    handler: media.download
-    params:
-      url: "%s"
-    timeout: 60s
-  probe-video:
-    handler: video.probe
-    params:
-      video_path: "${download-source-video.output_path}"
-    depends_on:
-      - download-source-video
-    timeout: 10s
-  preprocess-video:
-    handler: video.preprocess
-    params:
-      video_path: "${probe-video.video_path}"
-    depends_on:
-      - probe-video
-    timeout: 300s
-  face-swap:
-    handler: ai.face_swap
-    params:
-      video_path: "${preprocess-video.output_path}"
-      face_image_path: "${download-face-image.output_path}"
-      face_index: 0
-    depends_on:
-      - preprocess-video
-      - download-face-image
-    timeout: 600s
-    retry:
-      max_attempts: 2
-      backoff: exponential
-      initial_interval: 10s
-  generate-tts:
-    handler: ai.tts
-    params:
-      text: "%s"
-      voice: "%s"
-      language: "%s"
-    timeout: 60s
-  select-bgm:
-    handler: audio.bgm_select
-    params:
-      style: "%s"
-    timeout: 30s
-  mix-audio:
-    handler: audio.mix
-    params:
-      audio_paths: ["${generate-tts.output_path}", "${select-bgm.output_path}"]
-      bgm_volume: %s
-    depends_on:
-      - generate-tts
-      - select-bgm
-    timeout: 60s
-  lip-sync:
-    handler: ai.lip_sync
-    params:
-      video_path: "${face-swap.output_path}"
-      audio_path: "${mix-audio.output_path}"
-    depends_on:
-      - face-swap
-      - mix-audio
-    timeout: 300s
-  generate-subtitles:
-    handler: ai.subtitle_gen
-    params:
-      media_path: "${mix-audio.output_path}"
-    depends_on:
-      - mix-audio
-    timeout: 120s
-  add-subtitles:
-    handler: video.subtitles
-    params:
-      video_path: "${lip-sync.output_path}"
-      subtitle_path: "${generate-subtitles.output_path}"
-    depends_on:
-      - lip-sync
-      - generate-subtitles
-    timeout: 60s
-  encode-output:
-    handler: video.encode
-    params:
-      video_path: "${add-subtitles.output_path}"
-      resolution: "%s"
-      codec: h264
-      format: mp4
-    depends_on:
-      - add-subtitles
-    timeout: 300s
-  check-quality:
-    handler: quality.video_check
-    params:
-      video_path: "${encode-output.output_path}"
-    depends_on:
-      - encode-output
-    timeout: 30s
-  check-face:
-    handler: quality.face_check
-    params:
-      video_path: "${encode-output.output_path}"
-      face_image_path: "${download-face-image.output_path}"
-    depends_on:
-      - encode-output
-      - download-face-image
-    timeout: 30s
-  upload:
-    handler: media.upload
-    params:
-      file_path: "${encode-output.output_path}"
-    depends_on:
-      - check-quality
-      - check-face
-    timeout: 120s`, sourceURL, faceURL,
-				ttsText, ttsVoice, ttsLang,
-				bgmStyle, bgmVolume,
-				resolution)
-		},
+		Build: buildFaceSwapWithTTS,
 	}
 }
+
+// buildFaceSwapWithTTS generates DAG YAML using struct + yaml.Marshal (#6 fix).
+func buildFaceSwapWithTTS(req *core.VideoRequirement) string {
+	sourceURL := ""
+	if len(req.SourceVideos) > 0 {
+		sourceURL = req.SourceVideos[0].URL
+	}
+	faceURL := ""
+	if req.FaceSwap != nil {
+		faceURL = req.FaceSwap.TargetFace.URL
+	}
+	ttsText := ""
+	ttsVoice := "zh-CN-XiaoxiaoNeural"
+	ttsLang := "zh-CN"
+	if req.TTS != nil {
+		ttsText = req.TTS.Text
+		if req.TTS.Voice != "" {
+			ttsVoice = req.TTS.Voice
+		}
+		if req.TTS.Language != "" {
+			ttsLang = req.TTS.Language
+		}
+	}
+	bgmStyle := "upbeat"
+	bgmVolume := 0.3
+	if req.BGM != nil {
+		if req.BGM.Style != "" {
+			bgmStyle = req.BGM.Style
+		}
+		if req.BGM.Volume > 0 {
+			bgmVolume = req.BGM.Volume
+		}
+	}
+	resolution := req.Resolution
+	if resolution == "" {
+		resolution = "1080p"
+	}
+
+	dag := dagYAML{
+		Name: "face-swap-with-tts",
+		Tasks: map[string]taskYAML{
+			"download-source-video": {
+				Handler: "media.download",
+				Params:  map[string]interface{}{"url": sourceURL},
+				Timeout: "60s",
+			},
+			"download-face-image": {
+				Handler: "media.download",
+				Params:  map[string]interface{}{"url": faceURL},
+				Timeout: "60s",
+			},
+			"probe-video": {
+				Handler:   "video.probe",
+				Params:    map[string]interface{}{"video_path": "${download-source-video.output_path}"},
+				DependsOn: []string{"download-source-video"},
+				Timeout:   "10s",
+			},
+			"preprocess-video": {
+				Handler:   "video.preprocess",
+				Params:    map[string]interface{}{"video_path": "${probe-video.video_path}"},
+				DependsOn: []string{"probe-video"},
+				Timeout:   "300s",
+			},
+			"face-swap": {
+				Handler: "ai.face_swap",
+				Params: map[string]interface{}{
+					"video_path":      "${preprocess-video.output_path}",
+					"face_image_path": "${download-face-image.output_path}",
+					"face_index":      0,
+				},
+				DependsOn: []string{"preprocess-video", "download-face-image"},
+				Timeout:   "600s",
+				Retry:     &retryYAML{MaxAttempts: 2, Backoff: "exponential", InitialInterval: "10s"},
+			},
+			"generate-tts": {
+				Handler: "ai.tts",
+				Params:  map[string]interface{}{"text": ttsText, "voice": ttsVoice, "language": ttsLang},
+				Timeout: "60s",
+			},
+			"select-bgm": {
+				Handler: "audio.bgm_select",
+				Params:  map[string]interface{}{"style": bgmStyle},
+				Timeout: "30s",
+			},
+			"mix-audio": {
+				Handler: "audio.mix",
+				Params: map[string]interface{}{
+					"audio_paths": []string{"${generate-tts.output_path}", "${select-bgm.output_path}"},
+					"bgm_volume":  bgmVolume,
+				},
+				DependsOn: []string{"generate-tts", "select-bgm"},
+				Timeout:   "60s",
+			},
+			"lip-sync": {
+				Handler: "ai.lip_sync",
+				Params: map[string]interface{}{
+					"video_path": "${face-swap.output_path}",
+					"audio_path": "${mix-audio.output_path}",
+				},
+				DependsOn: []string{"face-swap", "mix-audio"},
+				Timeout:   "300s",
+			},
+			"generate-subtitles": {
+				Handler:   "ai.subtitle_gen",
+				Params:    map[string]interface{}{"media_path": "${mix-audio.output_path}"},
+				DependsOn: []string{"mix-audio"},
+				Timeout:   "120s",
+			},
+			"add-subtitles": {
+				Handler: "video.subtitles",
+				Params: map[string]interface{}{
+					"video_path":    "${lip-sync.output_path}",
+					"subtitle_path": "${generate-subtitles.output_path}",
+				},
+				DependsOn: []string{"lip-sync", "generate-subtitles"},
+				Timeout:   "60s",
+			},
+			"encode-output": {
+				Handler: "video.encode",
+				Params: map[string]interface{}{
+					"video_path": "${add-subtitles.output_path}",
+					"resolution": resolution,
+					"codec":      "h264",
+					"format":     "mp4",
+				},
+				DependsOn: []string{"add-subtitles"},
+				Timeout:   "300s",
+			},
+			"check-quality": {
+				Handler:   "quality.video_check",
+				Params:    map[string]interface{}{"video_path": "${encode-output.output_path}"},
+				DependsOn: []string{"encode-output"},
+				Timeout:   "30s",
+			},
+			"check-face": {
+				Handler: "quality.face_check",
+				Params: map[string]interface{}{
+					"video_path":      "${encode-output.output_path}",
+					"face_image_path": "${download-face-image.output_path}",
+				},
+				DependsOn: []string{"encode-output", "download-face-image"},
+				Timeout:   "30s",
+			},
+			"upload": {
+				Handler:   "media.upload",
+				Params:    map[string]interface{}{"file_path": "${encode-output.output_path}"},
+				DependsOn: []string{"check-quality", "check-face"},
+				Timeout:   "120s",
+			},
+		},
+	}
+
+	data, err := yaml.Marshal(dag)
+	if err != nil {
+		// Should never happen with well-formed structs.
+		return fmt.Sprintf("# yaml.Marshal error: %v", err)
+	}
+	return string(data)
+}
+

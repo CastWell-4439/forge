@@ -14,6 +14,9 @@ const (
 
 	// charsPerToken is the approximate characters per token for estimation.
 	charsPerToken = 3
+
+	// maxToolResultChars is the max length of a single tool result before truncation.
+	maxToolResultChars = 8000
 )
 
 // ContextManager manages the conversation history for the ReAct loop.
@@ -49,6 +52,9 @@ func EstimateTokens(messages []core.Message) int {
 // CompactIfNeeded checks if the messages exceed the token budget.
 // If so, it compresses the oldest non-system messages into a summary,
 // keeping the system prompt and recent messages intact.
+//
+// After compression, performs a second pass to truncate any oversized
+// tool results that still push us over budget.
 //
 // Returns the (possibly compacted) message list.
 func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.Message) ([]core.Message, error) {
@@ -86,7 +92,8 @@ func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.M
 	summary, err := cm.summarize(ctx, toSummarize)
 	if err != nil {
 		// If summarization fails, just truncate.
-		return append(systemMsgs, toKeep...), nil
+		result := append(systemMsgs, toKeep...)
+		return cm.truncateToolResults(result), nil
 	}
 
 	// Build new message list: system + summary + recent messages.
@@ -98,7 +105,26 @@ func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.M
 	})
 	result = append(result, toKeep...)
 
+	// Second pass: truncate oversized tool results if still over budget.
+	result = cm.truncateToolResults(result)
+
 	return result, nil
+}
+
+// truncateToolResults scans messages and truncates any tool output that
+// exceeds maxToolResultChars. This prevents a single large tool result
+// from blowing the context window even after compression.
+func (cm *ContextManager) truncateToolResults(messages []core.Message) []core.Message {
+	for i := range messages {
+		if len(messages[i].Content) > maxToolResultChars {
+			truncated := messages[i].Content[:maxToolResultChars]
+			messages[i].Content = truncated + fmt.Sprintf(
+				"\n\n[...truncated, original was %d chars. Ask for specific sections if needed.]",
+				len(messages[i].Content)+len(truncated),
+			)
+		}
+	}
+	return messages
 }
 
 // summarize asks the LLM to compress a series of messages into a brief summary.

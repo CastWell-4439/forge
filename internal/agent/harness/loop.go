@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/structured"
@@ -51,6 +52,7 @@ type AgentLoop struct {
 	budget      core.BudgetChecker
 	checkpoint  core.CheckpointStore
 	memory      core.MemoryStore
+	verifier    core.Verifier
 }
 
 // NewAgentLoop creates a new ReAct loop.
@@ -77,6 +79,9 @@ func (l *AgentLoop) SetCheckpoint(c core.CheckpointStore) { l.checkpoint = c }
 
 // SetMemory enables M5 memory.
 func (l *AgentLoop) SetMemory(m core.MemoryStore) { l.memory = m }
+
+// SetVerifier enables D5 self-verification loop.
+func (l *AgentLoop) SetVerifier(v core.Verifier) { l.verifier = v }
 
 // StepRecord captures one iteration of the ReAct loop for observability.
 type StepRecord struct {
@@ -213,6 +218,34 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 				Content: observation,
 			})
 
+			// --- Reflexion (AE-4): on tool failure, ask LLM to reflect before retrying ---
+			if toolResult.Error != "" {
+				reflection := l.reflect(ctx, messages, agentResp.Action, toolResult.Error)
+				if reflection != "" {
+					messages = append(messages, core.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("[Reflection]: %s", reflection),
+					})
+				}
+			}
+
+			// --- Verify (D5, optional) ---
+			if l.verifier != nil {
+				verifyAction := core.ToolCall{
+					Name:   agentResp.Action.Name,
+					Params: fmt.Sprintf("%v", agentResp.Action.Params),
+				}
+				ok, feedback, verifyErr := l.verifier.Verify(ctx, verifyAction, toolResult)
+				if verifyErr != nil {
+					log.Printf("[harness] verifier error: %v", verifyErr)
+				} else if !ok {
+					messages = append(messages, core.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("[Verification failed]: %s\nPlease try a different approach.", feedback),
+					})
+				}
+			}
+
 			// Save checkpoint (M12, optional).
 			if l.checkpoint != nil {
 				cp := &core.Checkpoint{
@@ -278,22 +311,18 @@ func formatObservation(toolName string, result *core.ToolResult) string {
 }
 
 // saveMemory extracts a lesson from the run and saves to long-term memory.
+// Uses LLM to distill the experience if available, otherwise falls back to a simple summary.
 func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string, result *RunResult) {
 	if l.memory == nil {
 		return
 	}
 
-	// Build a brief summary of what happened.
-	summary := fmt.Sprintf("Task: %s | Steps: %d | Result: %s",
-		truncate(userInput, 100),
-		len(result.Steps),
-		truncate(result.Answer, 200),
-	)
+	lesson := l.extractLesson(ctx, userInput, result)
 
 	entry := core.MemoryEntry{
-		ID:       sessionID,
-		Content:  summary,
-		Category: "agent_run",
+		ID:       fmt.Sprintf("%s_%d", sessionID, time.Now().UnixNano()),
+		Content:  lesson,
+		Category: "experience",
 	}
 
 	if err := l.memory.SaveLongTerm(ctx, entry); err != nil {
@@ -301,9 +330,95 @@ func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string,
 	}
 }
 
+// extractLesson uses the LLM to distill a reusable lesson from the completed run.
+// Falls back to a simple summary if LLM is unavailable or fails.
+func (l *AgentLoop) extractLesson(ctx context.Context, userInput string, result *RunResult) string {
+	fallback := fmt.Sprintf("Task: %s | Steps: %d | Result: %s",
+		truncate(userInput, 100),
+		len(result.Steps),
+		truncate(result.Answer, 200),
+	)
+
+	if l.llm == nil {
+		return fallback
+	}
+
+	// Build step log for the LLM.
+	var stepLog string
+	for i, step := range result.Steps {
+		if i >= 5 {
+			stepLog += fmt.Sprintf("... and %d more steps\n", len(result.Steps)-5)
+			break
+		}
+		detail := step.Thought
+		if step.Action != nil {
+			detail = fmt.Sprintf("called %s", step.Action.Name)
+		}
+		if step.Answer != "" {
+			detail = fmt.Sprintf("answered: %s", truncate(step.Answer, 100))
+		}
+		stepLog += fmt.Sprintf("Step %d: %s\n", i+1, truncate(detail, 150))
+	}
+
+	extractMsgs := []core.Message{
+		{
+			Role: "system",
+			Content: "You are reviewing a completed agent task. Extract a concise lesson (1-2 sentences) " +
+				"that would help with similar future tasks. Focus on: what worked, what failed, " +
+				"any tricks or prerequisites discovered. Be specific and actionable.",
+		},
+		{
+			Role: "user",
+			Content: fmt.Sprintf("Task: %s\n\nSteps:\n%s\nFinal answer: %s",
+				truncate(userInput, 200), stepLog, truncate(result.Answer, 300)),
+		},
+	}
+
+	lesson, err := l.llm.Chat(ctx, extractMsgs)
+	if err != nil {
+		log.Printf("[harness] extractLesson LLM call failed, using fallback: %v", err)
+		return fallback
+	}
+	return lesson
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// reflect asks the LLM to analyze a tool failure and suggest a revised approach.
+// Returns the reflection text, or empty string if LLM is unavailable or fails.
+func (l *AgentLoop) reflect(ctx context.Context, messages []core.Message,
+	action *structured.ToolCallRequest, toolError string) string {
+
+	if l.llm == nil {
+		return ""
+	}
+
+	reflectPrompt := fmt.Sprintf(
+		`The tool call "%s" failed with error: %s
+
+Reflect on why this failed. Consider:
+1. Were the parameters correct?
+2. Is there a prerequisite step that was missed?
+3. Should a different tool be used instead?
+4. What specific changes would fix this?
+
+Provide a brief analysis and revised plan (2-3 sentences).`,
+		action.Name, toolError)
+
+	reflectMsgs := append(messages, core.Message{
+		Role:    "user",
+		Content: reflectPrompt,
+	})
+
+	reflection, err := l.llm.Chat(ctx, reflectMsgs)
+	if err != nil {
+		log.Printf("[harness] reflect LLM call failed: %v", err)
+		return ""
+	}
+	return reflection
 }

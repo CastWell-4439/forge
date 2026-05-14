@@ -55,6 +55,14 @@ type MCPManager interface {
 	CallTool(ctx context.Context, name string, params json.RawMessage) (*ToolResult, error)
 }
 
+// Verifier checks tool execution results for correctness. (D5 Self-Verification)
+// After a tool call, Verify inspects the action and result.
+// Returns ok=true if the result is satisfactory.
+// If ok=false, feedback is added to the conversation as extra context for retry.
+type Verifier interface {
+	Verify(ctx context.Context, action ToolCall, result *ToolResult) (ok bool, feedback string, err error)
+}
+
 // MCPToolDef describes a tool discovered via MCP protocol.
 type MCPToolDef struct {
 	Name        string `json:"name"`

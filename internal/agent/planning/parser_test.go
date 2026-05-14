@@ -27,6 +27,11 @@ func (m *mockLLMClient) Chat(_ context.Context, messages []core.Message) (string
 	return m.fallback, nil
 }
 
+func (m *mockLLMClient) ChatWithUsage(ctx context.Context, msgs []core.Message) (core.ChatResult, error) {
+	content, err := m.Chat(ctx, msgs)
+	return core.ChatResult{Content: content}, err
+}
+
 func newMockLLMForParser() *mockLLMClient {
 	return &mockLLMClient{
 		fallback: `{

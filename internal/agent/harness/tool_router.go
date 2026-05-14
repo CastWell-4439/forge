@@ -1,4 +1,4 @@
-package harness
+﻿package harness
 
 import (
 	"context"
@@ -6,18 +6,17 @@ import (
 	"fmt"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/workers"
 )
 
 // ToolRouter bridges the Agent Harness with the ToolRegistry from Phase A1/A2.
 // It looks up tools by name and invokes their handlers, returning results
 // in a format the ReAct loop can feed back to the LLM.
 type ToolRouter struct {
-	registry *workers.ToolRegistry
+	registry *core.ToolRegistry
 }
 
 // NewToolRouter creates a ToolRouter wrapping the given worker ToolRegistry.
-func NewToolRouter(registry *workers.ToolRegistry) *ToolRouter {
+func NewToolRouter(registry *core.ToolRegistry) *ToolRouter {
 	return &ToolRouter{registry: registry}
 }
 
@@ -109,7 +108,7 @@ func commonPrefixLen(a, b string) int {
 // adaptParams converts JSON-deserialized float64 values to int64 where the
 // tool's InputSchema declares an "integer" type. Without this, handler code
 // doing params["x"].(int) would panic because json.Unmarshal always produces float64.
-func adaptParams(params map[string]interface{}, schema map[string]workers.ParamDef) {
+func adaptParams(params map[string]interface{}, schema map[string]core.ParamDef) {
 	if params == nil || schema == nil {
 		return
 	}
@@ -126,3 +125,4 @@ func adaptParams(params map[string]interface{}, schema map[string]workers.ParamD
 		}
 	}
 }
+

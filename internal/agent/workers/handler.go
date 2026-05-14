@@ -4,13 +4,11 @@
 package workers
 
 import (
-	"context"
 	"fmt"
 )
 
-// HandlerFunc is the function signature for agent tool handlers.
-// It receives context and input parameters, and returns output or an error.
-type HandlerFunc func(ctx context.Context, params map[string]interface{}) (map[string]interface{}, error)
+// HandlerFunc is now defined in core/tools.go for dependency direction compliance.
+// It is re-exported via registry.go type alias.
 
 // HandlerMode defines the execution mode for handlers.
 type HandlerMode string

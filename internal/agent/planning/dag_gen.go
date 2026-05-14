@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/castwell/forge/internal/coordinator"
 )
 
@@ -22,12 +21,12 @@ const (
 type DAGGenerator struct {
 	planner   *TaskPlanner
 	validator *DAGValidator
-	registry  *workers.ToolRegistry
+	registry  *core.ToolRegistry
 	llmClient core.LLMClient
 }
 
 // NewDAGGenerator creates a new DAGGenerator.
-func NewDAGGenerator(llm core.LLMClient, registry *workers.ToolRegistry) *DAGGenerator {
+func NewDAGGenerator(llm core.LLMClient, registry *core.ToolRegistry) *DAGGenerator {
 	return &DAGGenerator{
 		planner:   NewTaskPlanner(llm, registry),
 		validator: NewDAGValidator(registry),
@@ -187,3 +186,4 @@ tasks:
       - encode
     timeout: 120s`, sourceURL, resolution)
 }
+

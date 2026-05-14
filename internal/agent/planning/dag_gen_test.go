@@ -178,3 +178,8 @@ func (m *countingMockLLM) Chat(_ context.Context, _ []core.Message) (string, err
 	}
 	return m.responses[len(m.responses)-1], nil
 }
+
+func (m *countingMockLLM) ChatWithUsage(ctx context.Context, msgs []core.Message) (core.ChatResult, error) {
+	content, err := m.Chat(ctx, msgs)
+	return core.ChatResult{Content: content}, err
+}
