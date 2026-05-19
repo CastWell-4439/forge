@@ -18,7 +18,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// TestAgentToolRegistry verifies that all 18 handlers are registered in mock mode.
+// TestAgentToolRegistry verifies that all 27 handlers are registered in mock mode.
+// 18 original domain handlers + 9 general-purpose tools (AE-2).
 func TestAgentToolRegistry(t *testing.T) {
 	registry := agentworkers.NewToolRegistry()
 	cfg := agentworkers.HandlerConfig{
@@ -29,7 +30,7 @@ func TestAgentToolRegistry(t *testing.T) {
 	err := agentworkers.RegisterAll(registry, cfg)
 	require.NoError(t, err)
 
-	assert.Equal(t, 18, registry.Count(), "should have 18 registered tools")
+	assert.Equal(t, 27, registry.Count(), "should have 27 registered tools (18 domain + 9 general)")
 
 	// Verify all expected handler names are present
 	expectedHandlers := []string{

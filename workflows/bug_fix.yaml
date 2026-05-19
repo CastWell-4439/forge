@@ -1,0 +1,111 @@
+apiVersion: forge/v1
+kind: Workflow
+metadata:
+  name: bug_fix
+  version: "1.0"
+  description: "自动修复 Bug 工作流"
+
+triggers:
+  - type: poll
+    source: feishu_mcp
+    interval: 2m
+    query: "status = '待处理' AND type = 'bug'"
+    dedup_key: "{{.event.work_item_id}}"
+
+config:
+  timeout: 30m
+  max_retries: 2
+  hitl:
+    auto_pause_on:
+      - "plan.confidence < 0.7"
+      - "plan.affects_other_modules"
+
+inputs:
+  work_item_id: "{{.event.work_item_id}}"
+  project: "{{.event.project_key}}"
+
+stages:
+  - name: investigate
+    parallel: true
+    tasks:
+      - worker: mcp
+        action: get_workitem
+        params:
+          id: "{{.inputs.work_item_id}}"
+        output: bug_info
+      - worker: git
+        action: search
+        params:
+          query: "{{.bug_info.keywords}}"
+          path: "{{.project.local_path}}"
+        output: related_code
+      - worker: database
+        action: query_pg
+        params:
+          sql: "SELECT * FROM errors WHERE id = '{{.inputs.work_item_id}}'"
+        output: db_context
+
+  - name: analyze
+    tasks:
+      - worker: ai
+        action: analyze
+        params:
+          prompt: "分析 Bug 根因，给出修复建议"
+          context:
+            - "{{.bug_info}}"
+            - "{{.related_code}}"
+            - "{{.db_context}}"
+        output: analysis
+
+  - name: plan
+    tasks:
+      - worker: ai
+        action: generate_code_plan
+        params:
+          analysis: "{{.analysis}}"
+          rules: "{{.project.rules}}"
+        output: plan
+
+  - name: approve
+    tasks:
+      - worker: hitl
+        action: request_approval
+        params:
+          message: "修复方案：{{.plan.summary}}"
+          options:
+            - approve
+            - reject
+            - modify
+        condition: "plan.confidence < 0.95 || plan.affects_other_modules"
+      - worker: review
+        action: review_plan
+        params:
+          plan: "{{.plan}}"
+
+  - name: execute
+    tasks:
+      - worker: git
+        action: create_branch
+        params:
+          name: "fix/{{.inputs.work_item_id}}"
+      - worker: claude_code
+        action: implement
+        params:
+          plan: "{{.plan}}"
+          workspace: "{{.project.local_path}}"
+      - worker: shell
+        action: run_test
+        params:
+          command: "{{.project.tech_stack.test}}"
+
+  - name: deliver
+    tasks:
+      - worker: git
+        action: push_and_mr
+        params:
+          target: "{{.project.branching.test_target}}"
+      - worker: mcp
+        action: add_comment
+        params:
+          id: "{{.inputs.work_item_id}}"
+          content: "已提交 MR: {{.mr_url}}"

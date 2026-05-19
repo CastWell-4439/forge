@@ -32,6 +32,11 @@ func (m *mockLLMForE2E) Chat(_ context.Context, messages []core.Message) (string
 	return m.parserResponse, nil
 }
 
+func (m *mockLLMForE2E) ChatWithUsage(ctx context.Context, messages []core.Message) (core.ChatResult, error) {
+	resp, err := m.Chat(ctx, messages)
+	return core.ChatResult{Content: resp}, err
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstring(s, substr)
 }
