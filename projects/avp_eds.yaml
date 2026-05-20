@@ -1,0 +1,107 @@
+# AVP External Data Server Project Configuration
+# Used by Forge to manage the avp_external_data_manage_server codebase
+
+project:
+  name: avp_external_data_manage_server
+  description: 飞书多维表格数据管理 gRPC 微服务
+  language: go
+  repo: git@git.domob-inc.cn:blueai/avp_external_data_manage_server.git
+  local_path: D:\avp\avp_external_data_manage_server
+  default_branch: develop
+
+# Git workflow
+git:
+  flow: gitflow
+  branches:
+    production: master
+    staging: develop
+    testing: dev-offline
+  feature_prefix: feature/
+  fix_prefix: fix/
+
+# Database connections (read-only for Forge)
+databases:
+  primary:
+    type: postgres
+    host: vlc-hb-blueai-xy-test.pgdb.domob-inc.com
+    port: 5432
+    database: ai_video_producer
+    user: xxh
+    password_env: FORGE_PG_PASSWORD_AVP
+    max_rows: 100
+    timeout: 30s
+
+  dynamic:
+    type: postgres
+    host: vlc-hb-blueai-xy-test.pgdb.domob-inc.com
+    port: 5432
+    database: ai_video_producer_external_data_test
+    user: xxh
+    password_env: FORGE_PG_PASSWORD_AVP
+    max_rows: 100
+    timeout: 30s
+
+  redis:
+    type: redis
+    host: vlc-hb-blueai.redis.in.domob-inc.com
+    port: 6379
+    db: 14
+    password_env: FORGE_REDIS_PASSWORD
+    allowed_commands: [GET, KEYS]
+
+# Build & Test
+build:
+  command: go build ./...
+  test_command: go test ./...
+  grpc_port: 20035
+
+# Code conventions
+conventions:
+  # Shell commands allowed by Forge
+  allowed_shell_commands:
+    - go build
+    - go test
+    - go vet
+    - go fmt
+    - git status
+    - git diff
+    - git log
+    - grpcurl
+
+  # Files Forge should never modify
+  protected_files:
+    - conf/*.toml
+    - .gitignore
+    - go.sum
+
+  # Review checklist
+  review_checklist:
+    - "No hardcoded credentials"
+    - "Error handling present for all DB calls"
+    - "gRPC errors use proper status codes"
+    - "Tests cover happy path + error cases"
+
+# HITL settings
+hitl:
+  # Who to notify for approvals
+  approvers:
+    - channel: feishu
+      session_key: main
+  
+  # Default timeout for approval requests
+  default_timeout: 4h
+  
+  # Auto-approve low-risk changes (risk_level == "low")
+  auto_approve_low_risk: true
+
+# Trigger configuration
+triggers:
+  feishu_project:
+    type: cron
+    schedule: "*/2 * * * *"
+    source: feishu_mcp
+    mcp_endpoint: https://project.feishu.cn/mcp_server/v1
+    filter:
+      work_item_type: issue
+      status: open
+      priority: [P0, P1]
