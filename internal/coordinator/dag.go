@@ -62,6 +62,9 @@ type TaskDef struct {
 	Retry      RetryPolicy            `yaml:"-"`
 	OnFailure  FailureAction          `yaml:"on_failure"`
 	Compensate string                 `yaml:"compensate"` // Saga: handler to call for rollback
+	Condition  string                 `yaml:"condition"`  // CEL expression; false = skip task
+	OnResult   OnResult               `yaml:"-"`          // Result-based routing
+	Loop       *LoopConfig            `yaml:"loop"`       // Loop/iteration config
 }
 
 // rawTaskDef is the YAML-friendly representation for task definitions.
@@ -73,6 +76,9 @@ type rawTaskDef struct {
 	Retry      *rawRetryPolicy        `yaml:"retry"`
 	OnFailure  FailureAction          `yaml:"on_failure"`
 	Compensate string                 `yaml:"compensate"`
+	Condition  string                 `yaml:"condition"`
+	OnResult   map[string]any         `yaml:"on_result"`
+	Loop       *LoopConfig            `yaml:"loop"`
 }
 
 // RetryPolicy defines the retry behavior for a task.
@@ -127,6 +133,17 @@ func ParseDAG(data []byte) (*DAG, error) {
 			DependsOn:  rawTask.DependsOn,
 			OnFailure:  rawTask.OnFailure,
 			Compensate: rawTask.Compensate,
+			Condition:  rawTask.Condition,
+			Loop:       rawTask.Loop,
+		}
+
+		// Parse on_result routing
+		if rawTask.OnResult != nil {
+			onResult, err := ParseOnResult(rawTask.OnResult)
+			if err != nil {
+				return nil, fmt.Errorf("parse task %s: %w", name, err)
+			}
+			taskDef.OnResult = onResult
 		}
 
 		if rawTask.Timeout != "" {
