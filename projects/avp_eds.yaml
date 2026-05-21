@@ -1,12 +1,12 @@
-# AVP External Data Server Project Configuration
-# Used by Forge to manage the avp_external_data_manage_server codebase
+# Example Project Configuration
+# Copy this template and adapt for your own project.
 
 project:
-  name: avp_external_data_manage_server
-  description: 飞书多维表格数据管理 gRPC 微服务
+  name: my-go-service
+  description: Example gRPC microservice
   language: go
-  repo: git@git.domob-inc.cn:blueai/avp_external_data_manage_server.git
-  local_path: D:\avp\avp_external_data_manage_server
+  repo: git@github.com:your-org/your-service.git
+  local_path: /path/to/your/service
   default_branch: develop
 
 # Git workflow
@@ -23,29 +23,19 @@ git:
 databases:
   primary:
     type: postgres
-    host: vlc-hb-blueai-xy-test.pgdb.domob-inc.com
+    host: localhost
     port: 5432
-    database: ai_video_producer
-    user: xxh
-    password_env: FORGE_PG_PASSWORD_AVP
-    max_rows: 100
-    timeout: 30s
-
-  dynamic:
-    type: postgres
-    host: vlc-hb-blueai-xy-test.pgdb.domob-inc.com
-    port: 5432
-    database: ai_video_producer_external_data_test
-    user: xxh
-    password_env: FORGE_PG_PASSWORD_AVP
+    database: my_database
+    user: forge
+    password_env: FORGE_PG_PASSWORD  # set via environment variable
     max_rows: 100
     timeout: 30s
 
   redis:
     type: redis
-    host: vlc-hb-blueai.redis.in.domob-inc.com
+    host: localhost
     port: 6379
-    db: 14
+    db: 0
     password_env: FORGE_REDIS_PASSWORD
     allowed_commands: [GET, KEYS]
 
@@ -53,11 +43,10 @@ databases:
 build:
   command: go build ./...
   test_command: go test ./...
-  grpc_port: 20035
+  grpc_port: 50051
 
 # Code conventions
 conventions:
-  # Shell commands allowed by Forge
   allowed_shell_commands:
     - go build
     - go test
@@ -66,15 +55,12 @@ conventions:
     - git status
     - git diff
     - git log
-    - grpcurl
 
-  # Files Forge should never modify
   protected_files:
     - conf/*.toml
     - .gitignore
     - go.sum
 
-  # Review checklist
   review_checklist:
     - "No hardcoded credentials"
     - "Error handling present for all DB calls"
@@ -83,15 +69,10 @@ conventions:
 
 # HITL settings
 hitl:
-  # Who to notify for approvals
   approvers:
     - channel: feishu
       session_key: main
-  
-  # Default timeout for approval requests
   default_timeout: 4h
-  
-  # Auto-approve low-risk changes (risk_level == "low")
   auto_approve_low_risk: true
 
 # Trigger configuration

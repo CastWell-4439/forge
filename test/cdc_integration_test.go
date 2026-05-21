@@ -17,9 +17,11 @@ import (
 
 const (
 	// Standard connection for DML operations.
-	testDSN = "postgres://xxh:781103@localhost:5432/ai_video_producer"
+	// Override with FORGE_TEST_DSN env var for your environment.
+	testDSN = "postgres://forge:forge@localhost:5432/forge_test"
 	// Replication connection for WAL streaming.
-	testReplDSN = "postgres://xxh:781103@localhost:5432/ai_video_producer?replication=database"
+	// Override with FORGE_TEST_REPL_DSN env var for your environment.
+	testReplDSN = "postgres://forge:forge@localhost:5432/forge_test?replication=database"
 	testTable   = "forge_cdc_test"
 	testPub     = "forge_pub"
 	testSlot    = "forge_cdc_integration_test"
