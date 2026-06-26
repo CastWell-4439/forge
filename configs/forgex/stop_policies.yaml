@@ -1,0 +1,26 @@
+version: 1
+retry_budget:
+  default_max_retries: 2
+  by_category:
+    transient_timeout: 3
+    tool_contract_violation: 0
+
+policies:
+  - id: STOP_ON_TOOL_CONTRACT_VIOLATION
+    when:
+      category: tool_contract_violation
+    action: stop
+    reason: Tool contract violation is not retryable without changing inputs.
+
+  - id: RETRY_ON_TRANSIENT_TIMEOUT
+    when:
+      category: transient_timeout
+    action: retry
+    reason: Transient timeout can be retried within budget.
+
+  - id: ESCALATE_ON_UNKNOWN_HIGH
+    when:
+      category: unknown
+      severity: high
+    action: escalate
+    reason: Unknown high severity failure requires human inspection.

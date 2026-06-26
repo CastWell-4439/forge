@@ -1,0 +1,23 @@
+version: 1
+rules:
+  - id: AIHOOK_EMPTY_IMAGES_REFS
+    category: tool_contract_violation
+    severity: high
+    retryable: false
+    source: real_badcase
+    match:
+      message_contains:
+        - images_refs
+        - empty
+      operation_contains: vidu
+    recommendation: Vidu reference2video must provide non-empty images_refs. Stop and ask upstream to provide real character reference frames.
+
+  - id: TOOL_TIMEOUT
+    category: transient_timeout
+    severity: medium
+    retryable: true
+    source: builtin
+    match:
+      message_contains:
+        - timeout
+    recommendation: Retry with budget; escalate if retry budget is exhausted.
