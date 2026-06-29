@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"os"
+
+	"github.com/castwell/forge/internal/forgex/demo"
 )
 
 const version = "ForgeX v0.1.0"
@@ -19,6 +23,11 @@ func main() {
 		fmt.Println(version)
 	case "help", "--help", "-h":
 		printHelp()
+	case "run-demo":
+		if err := runDemo(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "run-demo: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 		printHelp()
@@ -26,8 +35,34 @@ func main() {
 	}
 }
 
+// runDemo parses run-demo flags and dispatches to the requested demo case.
+func runDemo(args []string) error {
+	fs := flag.NewFlagSet("run-demo", flag.ContinueOnError)
+	caseName := fs.String("case", "aihook-empty-images-refs", "demo case to run")
+	root := fs.String("root", ".forgex", "root directory for run artifacts")
+	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
+	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
+	packet := fs.String("packet", demo.DefaultPacketPath, "task packet YAML path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	switch *caseName {
+	case "aihook-empty-images-refs":
+		runID, err := demo.RunAIHookEmptyImagesRefsDemo(context.Background(), *root, *taxonomy, *policy, *packet)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("demo completed: run_id=%s\n", runID)
+		fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
+		return nil
+	default:
+		return fmt.Errorf("unknown demo case: %s (available: aihook-empty-images-refs)", *caseName)
+	}
+}
+
 func printHelp() {
-	fmt.Println(`ForgeX - Agent Harness Control Plane
+	fmt.Print(`ForgeX - Agent Harness Control Plane
 
 Usage:
   forgex <command>
@@ -35,8 +70,16 @@ Usage:
 Commands:
   version    Print ForgeX version
   help       Print this help message
+  run-demo   Run a local harness demo (no external API calls)
 
-Milestone:
-  M0/M1 only: project skeleton and model definitions.
+run-demo flags:
+  --case      Demo case to run (default: aihook-empty-images-refs)
+  --root      Root directory for run artifacts (default: .forgex)
+  --taxonomy  Failure taxonomy YAML path
+  --policy    Stop policy YAML path
+  --packet    Task packet YAML path
+
+Example:
+  forgex run-demo --case aihook-empty-images-refs --root .forgex
 `)
 }

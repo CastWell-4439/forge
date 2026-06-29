@@ -1,2 +1,3 @@
-// Package report will provide ForgeX Markdown reports and bad-case export in M6.
+// Package report provides ForgeX Markdown run reports and bad-case YAML export
+// for the M6 milestone.
 package report
