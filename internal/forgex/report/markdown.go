@@ -14,14 +14,16 @@ import (
 // Markdown report and the bad-case export. It bundles the run metadata together
 // with every append-only stream captured during the run.
 type RunSnapshot struct {
-	Run            model.Run
-	TaskPacket     model.TaskPacket
-	Events         []model.Event
-	ToolCalls      []model.ToolCall
-	Errors         []model.ErrorEnvelope
-	StopDecisions  []model.StopDecision
-	ProgressLedger *model.ProgressLedger
-	ContextPacks   []model.ContextPack
+	Run                 model.Run
+	TaskPacket          model.TaskPacket
+	Events              []model.Event
+	ToolCalls           []model.ToolCall
+	PolicyDecisions     []model.PolicyDecision
+	ContractValidations []model.ContractValidation
+	Errors              []model.ErrorEnvelope
+	StopDecisions       []model.StopDecision
+	ProgressLedger      *model.ProgressLedger
+	ContextPacks        []model.ContextPack
 }
 
 // GenerateMarkdown renders a human-readable Markdown report for a run snapshot.
@@ -40,6 +42,8 @@ func GenerateMarkdown(snapshot RunSnapshot) string {
 	writeContextPacks(&b, snapshot)
 	writeTimeline(&b, snapshot)
 	writeToolCalls(&b, snapshot)
+	writePolicyDecisions(&b, snapshot)
+	writeContractValidations(&b, snapshot)
 	writeErrors(&b, snapshot)
 	writeStopDecisions(&b, snapshot)
 	writeSuggestedFix(&b, snapshot)
@@ -159,6 +163,39 @@ func writeToolCalls(b *strings.Builder, snapshot RunSnapshot) {
 		}
 		if c.Error != "" {
 			b.WriteString(fmt.Sprintf("  - error: %s\n", c.Error))
+		}
+	}
+	b.WriteString("\n")
+}
+
+func writePolicyDecisions(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Policy Decisions\n\n")
+	if len(snapshot.PolicyDecisions) == 0 {
+		b.WriteString("_No policy decisions recorded._\n\n")
+		return
+	}
+	for _, d := range snapshot.PolicyDecisions {
+		b.WriteString(fmt.Sprintf("- **%s** action=%s authority=%s risk=%s side_effect=%s\n", orPlaceholder(d.ToolName), orPlaceholder(d.Action), orPlaceholder(d.Authority), orPlaceholder(d.RiskLevel), orPlaceholder(d.SideEffect)))
+		if d.Reason != "" {
+			b.WriteString(fmt.Sprintf("  - reason: %s\n", d.Reason))
+		}
+		if d.RequiresHITL {
+			b.WriteString("  - requires_hitl: true\n")
+		}
+	}
+	b.WriteString("\n")
+}
+
+func writeContractValidations(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Contract Validations\n\n")
+	if len(snapshot.ContractValidations) == 0 {
+		b.WriteString("_No contract validations recorded._\n\n")
+		return
+	}
+	for _, v := range snapshot.ContractValidations {
+		b.WriteString(fmt.Sprintf("- **%s** validator=%s status=%s\n", orPlaceholder(v.ToolName), orPlaceholder(v.Validator), orPlaceholder(v.Status)))
+		if v.Message != "" {
+			b.WriteString(fmt.Sprintf("  - message: %s\n", v.Message))
 		}
 	}
 	b.WriteString("\n")

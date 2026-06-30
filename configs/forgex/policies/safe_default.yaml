@@ -1,0 +1,34 @@
+version: 1
+profile: safe_default
+rules:
+  - id: ALLOW_SIMULATED_AIHOOK_VIDU_REFERENCE2VIDEO
+    when:
+      tool_name: vidu.reference2video
+    action: allow
+    reason: Simulated AIhook demo tool call is allowed so contract validation can gate external execution.
+
+  - id: DENY_EXTERNAL_WRITE_BELOW_L3
+    when:
+      side_effect: external_write
+      authority_below: L3
+    action: deny
+    reason: External writes require at least L3 authority.
+
+  - id: DENY_PAID_CALL_BELOW_L3
+    when:
+      side_effect: paid_call
+      authority_below: L3
+    action: deny
+    reason: Paid calls require at least L3 authority.
+
+  - id: REQUIRE_APPROVAL_FOR_APPROVAL_REQUIRED_TOOLS
+    when:
+      approval_required: true
+    action: require_approval
+    reason: Tool contract explicitly requires human approval.
+
+  - id: REQUIRE_APPROVAL_FOR_CRITICAL_RISK
+    when:
+      risk_level: critical
+    action: require_approval
+    reason: Critical-risk tools require human approval.

@@ -97,6 +97,22 @@ func (s *FileStore) AppendContextPack(ctx context.Context, pack model.ContextPac
 	return AppendJSONL(s.layout.ContextPacksFile(pack.RunID), pack)
 }
 
+// AppendPolicyDecision appends one policy decision to policy_decisions.jsonl.
+func (s *FileStore) AppendPolicyDecision(ctx context.Context, decision model.PolicyDecision) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.PolicyDecisionsFile(decision.RunID), decision)
+}
+
+// AppendContractValidation appends one validation result to contract_validations.jsonl.
+func (s *FileStore) AppendContractValidation(ctx context.Context, validation model.ContractValidation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.ContractValidationsFile(validation.RunID), validation)
+}
+
 // WriteReport writes the Markdown report for a run.
 func (s *FileStore) WriteReport(ctx context.Context, runID string, markdown string) error {
 	return writeBytesFile(ctx, s.layout.ReportFile(runID), []byte(markdown))

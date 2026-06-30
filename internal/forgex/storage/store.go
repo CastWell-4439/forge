@@ -17,6 +17,8 @@ type Store interface {
 	AppendStopDecision(ctx context.Context, decision model.StopDecision) error
 	SaveProgressLedger(ctx context.Context, ledger model.ProgressLedger) error
 	AppendContextPack(ctx context.Context, pack model.ContextPack) error
+	AppendPolicyDecision(ctx context.Context, decision model.PolicyDecision) error
+	AppendContractValidation(ctx context.Context, validation model.ContractValidation) error
 	WriteReport(ctx context.Context, runID string, markdown string) error
 	WriteBadCase(ctx context.Context, runID string, yamlBytes []byte) error
 }

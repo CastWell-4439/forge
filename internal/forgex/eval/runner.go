@@ -18,12 +18,14 @@ import (
 
 // RunArtifacts contains the minimal run data needed by eval assertions.
 type RunArtifacts struct {
-	Run           model.Run             `json:"run"`
-	TaskPacket    model.TaskPacket      `json:"task_packet"`
-	Events        []model.Event         `json:"events"`
-	ToolCalls     []model.ToolCall      `json:"tool_calls"`
-	Errors        []model.ErrorEnvelope `json:"errors"`
-	StopDecisions []model.StopDecision  `json:"stop_decisions"`
+	Run                 model.Run                  `json:"run"`
+	TaskPacket          model.TaskPacket           `json:"task_packet"`
+	Events              []model.Event              `json:"events"`
+	ToolCalls           []model.ToolCall           `json:"tool_calls"`
+	PolicyDecisions     []model.PolicyDecision     `json:"policy_decisions"`
+	ContractValidations []model.ContractValidation `json:"contract_validations"`
+	Errors              []model.ErrorEnvelope      `json:"errors"`
+	StopDecisions       []model.StopDecision       `json:"stop_decisions"`
 }
 
 // Run evaluates one suite against a run directory and writes eval_result.json.
@@ -80,6 +82,12 @@ func LoadRunArtifacts(runDir string) (RunArtifacts, error) {
 		return RunArtifacts{}, err
 	}
 	if err := readJSONL(filepath.Join(runDir, "tool_calls.jsonl"), &artifacts.ToolCalls); err != nil {
+		return RunArtifacts{}, err
+	}
+	if err := readJSONL(filepath.Join(runDir, "policy_decisions.jsonl"), &artifacts.PolicyDecisions); err != nil {
+		return RunArtifacts{}, err
+	}
+	if err := readJSONL(filepath.Join(runDir, "contract_validations.jsonl"), &artifacts.ContractValidations); err != nil {
 		return RunArtifacts{}, err
 	}
 	if err := readJSONL(filepath.Join(runDir, "errors.jsonl"), &artifacts.Errors); err != nil {

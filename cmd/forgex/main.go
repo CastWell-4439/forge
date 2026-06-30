@@ -67,13 +67,16 @@ func runDemo(args []string) error {
 	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
 	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
 	packet := fs.String("packet", demo.DefaultPacketPath, "task packet YAML path")
+	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
+	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
+	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level for tool policy decisions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	switch *caseName {
 	case "aihook-empty-images-refs":
-		runID, err := demo.RunAIHookEmptyImagesRefsDemo(context.Background(), *root, *taxonomy, *policy, *packet)
+		runID, err := demo.RunAIHookEmptyImagesRefsDemoWithControl(context.Background(), *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
 		if err != nil {
 			return err
 		}
@@ -211,8 +214,11 @@ run-demo flags:
   --case      Demo case to run (default: aihook-empty-images-refs)
   --root      Root directory for run artifacts (default: .forgex)
   --taxonomy  Failure taxonomy YAML path
-  --policy    Stop policy YAML path
-  --packet    Task packet YAML path
+  --policy       Stop policy YAML path
+  --packet       Task packet YAML path
+  --contracts    Tool contracts YAML path
+  --tool-policy  Tool policy YAML path
+  --authority    Authority level for policy decisions (default: L2)
 
 eval flags:
   --run    ForgeX run directory to evaluate, e.g. .forgex/runs/<run_id>

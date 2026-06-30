@@ -70,6 +70,16 @@ func (l Layout) ContextPacksFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "context_packs.jsonl")
 }
 
+// PolicyDecisionsFile returns the policy decisions JSONL file path.
+func (l Layout) PolicyDecisionsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "policy_decisions.jsonl")
+}
+
+// ContractValidationsFile returns the contract validations JSONL file path.
+func (l Layout) ContractValidationsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "contract_validations.jsonl")
+}
+
 // ReportFile returns the Markdown report file path.
 func (l Layout) ReportFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "report.md")

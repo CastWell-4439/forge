@@ -1,0 +1,25 @@
+version: 1
+tools:
+  - name: vidu.reference2video
+    capability: video_generation.reference_to_video
+    description: Generate a video from prompt and non-empty character reference frames through the AIhook Vidu adapter.
+    required_inputs:
+      - prompt
+      - images_refs
+    required_outputs:
+      - video_url
+    validators:
+      - required_inputs_present
+      - prompt_not_empty
+      - images_refs_not_empty
+      - required_outputs_present
+    risk_level: high
+    side_effect: external_api_call
+    idempotent: false
+    timeout_seconds: 120
+    retry_policy: no_retry_on_contract_violation
+    required_authority_level: L2
+    approval_required: false
+    metadata:
+      source: real_badcase_aihook_empty_images_refs
+      owner: blueai
