@@ -1,0 +1,12 @@
+version: 1
+suites:
+  - id: aihook_regression_v1
+    cases:
+      - id: AIHOOK_EMPTY_IMAGES_REFS
+        assertions:
+          - path: errors[0].category
+            op: eq
+            value: tool_contract_violation
+          - path: stop_decisions[0].action
+            op: eq
+            value: stop
