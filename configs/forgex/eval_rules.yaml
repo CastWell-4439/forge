@@ -22,6 +22,12 @@ suites:
           - path: errors[0].category
             op: eq
             value: tool_contract_violation
+          - path: stop_signals[0].source
+            op: eq
+            value: contract_validation
           - path: stop_decisions[0].action
             op: eq
             value: stop
+          - path: stop_decisions[0].reason
+            op: contains
+            value: arbiter selected

@@ -227,11 +227,19 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		return "", fmt.Errorf("record error: %w", err)
 	}
 
-	// 9b. Decide with the StopConditionEngine.
+	// 9b. Convert validation failure into a termination signal and arbitrate.
 	engine := stop.NewEngine(policy)
-	decision := engine.Decide(runID, envelope)
+	engineDecision := engine.Decide(runID, envelope)
+	contractSignal := stop.NewSignal(runID, stop.SignalSourceContractValidation, stop.SignalSeverityHigh, engineDecision.Action, "contract validation failed: images_refs_not_empty", []string{contractValidations[len(contractValidations)-1].ID, envelope.ID})
+	modelStopSignal := toModelStopSignal(contractSignal)
+	if err := store.AppendStopSignal(ctx, modelStopSignal); err != nil {
+		return "", fmt.Errorf("append stop signal: %w", err)
+	}
+	decision := stop.NewArbiter().Decide(runID, []stop.StopSignal{contractSignal})
+	decision.ErrorID = envelope.ID
+	decision.Signals = stop.EvidenceSummary([]stop.StopSignal{contractSignal})
 
-	// 9c. Persist the stop decision (also emits a stop_decided event).
+	// 9c. Persist the arbiter stop decision (also emits a stop_decided event).
 	if err := recorder.StopDecision(ctx, decision); err != nil {
 		return "", fmt.Errorf("record stop decision: %w", err)
 	}
@@ -278,6 +286,7 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		StateClaims:         []model.StateClaim{claim},
 		Artifacts:           []model.ArtifactRecord{missingReferenceArtifact},
 		Errors:              []model.ErrorEnvelope{envelope},
+		StopSignals:         []model.StopSignalRecord{modelStopSignal},
 		StopDecisions:       []model.StopDecision{decision},
 		ProgressLedger:      &ledger,
 		ContextPacks:        []model.ContextPack{contextPack},
@@ -323,6 +332,19 @@ func toModelPolicyDecision(decision forgexpolicy.Decision) model.PolicyDecision 
 		Authority:    string(decision.Authority),
 		RequiresHITL: decision.RequiresHITL,
 		CreatedAt:    decision.CreatedAt,
+	}
+}
+
+func toModelStopSignal(signal stop.StopSignal) model.StopSignalRecord {
+	return model.StopSignalRecord{
+		ID:        signal.ID,
+		RunID:     signal.RunID,
+		Source:    string(signal.Source),
+		Severity:  string(signal.Severity),
+		Suggested: signal.Suggested,
+		Reason:    signal.Reason,
+		Evidence:  append([]string(nil), signal.Evidence...),
+		CreatedAt: signal.CreatedAt,
 	}
 }
 

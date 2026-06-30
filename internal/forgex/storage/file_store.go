@@ -84,6 +84,14 @@ func (s *FileStore) AppendStopDecision(ctx context.Context, decision model.StopD
 	return AppendJSONL(s.layout.StopDecisionsFile(decision.RunID), decision)
 }
 
+// AppendStopSignal appends one termination signal to stop_signals.jsonl.
+func (s *FileStore) AppendStopSignal(ctx context.Context, signal model.StopSignalRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.StopSignalsFile(signal.RunID), signal)
+}
+
 // SaveProgressLedger writes the latest progress ledger as YAML.
 func (s *FileStore) SaveProgressLedger(ctx context.Context, ledger model.ProgressLedger) error {
 	return writeYAMLFile(ctx, s.layout.ProgressLedgerFile(ledger.RunID), ledger)

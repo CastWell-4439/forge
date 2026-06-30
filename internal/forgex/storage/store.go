@@ -15,6 +15,7 @@ type Store interface {
 	AppendToolCall(ctx context.Context, call model.ToolCall) error
 	AppendError(ctx context.Context, envelope model.ErrorEnvelope) error
 	AppendStopDecision(ctx context.Context, decision model.StopDecision) error
+	AppendStopSignal(ctx context.Context, signal model.StopSignalRecord) error
 	SaveProgressLedger(ctx context.Context, ledger model.ProgressLedger) error
 	AppendContextPack(ctx context.Context, pack model.ContextPack) error
 	AppendPolicyDecision(ctx context.Context, decision model.PolicyDecision) error

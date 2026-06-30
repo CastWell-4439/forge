@@ -28,6 +28,7 @@ type RunArtifacts struct {
 	StateClaims         []model.StateClaim         `json:"state_claims"`
 	Artifacts           []model.ArtifactRecord     `json:"artifacts"`
 	Errors              []model.ErrorEnvelope      `json:"errors"`
+	StopSignals         []model.StopSignalRecord   `json:"stop_signals"`
 	StopDecisions       []model.StopDecision       `json:"stop_decisions"`
 }
 
@@ -103,6 +104,9 @@ func LoadRunArtifacts(runDir string) (RunArtifacts, error) {
 		return RunArtifacts{}, err
 	}
 	if err := readJSONL(filepath.Join(runDir, "errors.jsonl"), &artifacts.Errors); err != nil {
+		return RunArtifacts{}, err
+	}
+	if err := readJSONL(filepath.Join(runDir, "stop_signals.jsonl"), &artifacts.StopSignals); err != nil {
 		return RunArtifacts{}, err
 	}
 	if err := readJSONL(filepath.Join(runDir, "stop_decisions.jsonl"), &artifacts.StopDecisions); err != nil {

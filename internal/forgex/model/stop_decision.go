@@ -21,5 +21,6 @@ type StopDecision struct {
 	Action     StopAction `json:"action" yaml:"action"`
 	Reason     string     `json:"reason" yaml:"reason"`
 	RetryAfter string     `json:"retry_after,omitempty" yaml:"retry_after,omitempty"`
+	Signals    []string   `json:"signals,omitempty" yaml:"signals,omitempty"`
 	DecidedAt  time.Time  `json:"decided_at" yaml:"decided_at"`
 }

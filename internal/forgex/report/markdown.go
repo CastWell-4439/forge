@@ -24,6 +24,7 @@ type RunSnapshot struct {
 	StateClaims         []model.StateClaim
 	Artifacts           []model.ArtifactRecord
 	Errors              []model.ErrorEnvelope
+	StopSignals         []model.StopSignalRecord
 	StopDecisions       []model.StopDecision
 	ProgressLedger      *model.ProgressLedger
 	ContextPacks        []model.ContextPack
@@ -50,6 +51,7 @@ func GenerateMarkdown(snapshot RunSnapshot) string {
 	writeWorldState(&b, snapshot)
 	writeArtifacts(&b, snapshot)
 	writeErrors(&b, snapshot)
+	writeStopSignals(&b, snapshot)
 	writeStopDecisions(&b, snapshot)
 	writeSuggestedFix(&b, snapshot)
 
@@ -269,6 +271,24 @@ func writeErrors(b *strings.Builder, snapshot RunSnapshot) {
 		}
 		if rec := recommendation(e); rec != "" {
 			b.WriteString(fmt.Sprintf("  - Recommendation: %s\n", rec))
+		}
+	}
+	b.WriteString("\n")
+}
+
+func writeStopSignals(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Stop Signals\n\n")
+	if len(snapshot.StopSignals) == 0 {
+		b.WriteString("_No stop signals recorded._\n\n")
+		return
+	}
+	for _, signal := range snapshot.StopSignals {
+		b.WriteString(fmt.Sprintf("- **%s** source=%s severity=%s suggested=%s\n", orPlaceholder(signal.ID), orPlaceholder(signal.Source), orPlaceholder(signal.Severity), signal.Suggested))
+		if signal.Reason != "" {
+			b.WriteString(fmt.Sprintf("  - reason: %s\n", signal.Reason))
+		}
+		for _, evidence := range signal.Evidence {
+			b.WriteString(fmt.Sprintf("  - evidence: %s\n", evidence))
 		}
 	}
 	b.WriteString("\n")
