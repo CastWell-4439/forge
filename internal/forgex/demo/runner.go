@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
@@ -13,9 +12,9 @@ import (
 	"github.com/castwell/forge/internal/forgex/report"
 	"github.com/castwell/forge/internal/forgex/stop"
 	"github.com/castwell/forge/internal/forgex/storage"
+	forgextask "github.com/castwell/forge/internal/forgex/task"
 	"github.com/castwell/forge/internal/forgex/trace"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 )
 
 // Default paths used when the caller does not override them.
@@ -49,10 +48,12 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 	}
 
 	// 1. Read TaskPacket.
-	packet, err := loadTaskPacket(packetPath)
+	packet, err := forgextask.LoadPacket(packetPath)
 	if err != nil {
 		return "", err
 	}
+
+	suitability := forgextask.EvaluatePacket(packet)
 
 	// Load classification taxonomy and stop policies up front so a config error
 	// fails the demo before any artifacts are written.
@@ -91,7 +92,7 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 			{ID: "validate_vidu_refs", Title: "Validate Vidu reference images", Status: model.ProgressFailed, Evidence: "images_refs is empty"},
 			{ID: "generate_report", Title: "Generate report and badcase", Status: model.ProgressInProgress},
 		},
-		Decisions:   []string{"Stop before paid Vidu generation when images_refs is empty."},
+		Decisions:   []string{fmt.Sprintf("AgentSuitabilityGate=%s controls=%v", suitability.Decision, suitability.RequiredControls), "Stop before paid Vidu generation when images_refs is empty."},
 		NextActions: []string{"Ask upstream to provide non-empty character reference frames."},
 		UpdatedAt:   now,
 	}
@@ -106,8 +107,10 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 
 	// 4. Record run_started.
 	if err := recorder.Event(ctx, model.EventRunStarted, "run started", map[string]any{
-		"task_id": packet.ID,
-		"goal":    packet.Goal,
+		"task_id":              packet.ID,
+		"goal":                 packet.Goal,
+		"suitability_decision": suitability.Decision,
+		"required_controls":    suitability.RequiredControls,
 	}); err != nil {
 		return "", fmt.Errorf("record run_started: %w", err)
 	}
@@ -221,19 +224,6 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 	return runID, nil
 }
 
-// loadTaskPacket reads and parses a TaskPacket YAML file.
-func loadTaskPacket(path string) (model.TaskPacket, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return model.TaskPacket{}, fmt.Errorf("read task packet %s: %w", path, err)
-	}
-	var packet model.TaskPacket
-	if err := yaml.Unmarshal(data, &packet); err != nil {
-		return model.TaskPacket{}, fmt.Errorf("parse task packet %s: %w", path, err)
-	}
-	return packet, nil
-}
-
 // statusForAction maps a stop action to the terminal run status it implies.
 func statusForAction(action model.StopAction) model.RunStatus {
 	switch action {
@@ -241,6 +231,8 @@ func statusForAction(action model.StopAction) model.RunStatus {
 		return model.RunStopped
 	case model.StopActionEscalate:
 		return model.RunEscalated
+	case model.StopActionPause:
+		return model.RunPaused
 	case model.StopActionContinue, model.StopActionRetry:
 		return model.RunRunning
 	default:

@@ -93,6 +93,59 @@ func (e *Engine) Decide(runID string, envelope model.ErrorEnvelope) model.StopDe
 	return decision
 }
 
+// DecideContextBudget evaluates context budget pressure as a run-level stop policy.
+func (e *Engine) DecideContextBudget(runID string, totalTokens, budgetTokens int) model.StopDecision {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	decision := model.StopDecision{
+		ID:        e.newID(runID),
+		RunID:     runID,
+		DecidedAt: e.now().UTC(),
+	}
+	if budgetTokens <= 0 || totalTokens <= budgetTokens {
+		decision.Action = model.StopActionContinue
+		decision.Reason = fmt.Sprintf("context budget within limit (%d/%d)", totalTokens, budgetTokens)
+		return decision
+	}
+	if policy, ok := e.matchPolicy("context_budget_exceeded", "high"); ok {
+		decision.Action = policy.StopAction()
+		decision.Reason = policyReason(policy)
+		return decision
+	}
+	decision.Action = model.StopActionPause
+	decision.Reason = fmt.Sprintf("context budget exceeded (%d/%d); snapshot and pause", totalTokens, budgetTokens)
+	return decision
+}
+
+// DecideProgressNoChange evaluates stagnant progress as a run-level stop policy.
+func (e *Engine) DecideProgressNoChange(runID string, noChangeTurns, threshold int) model.StopDecision {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	decision := model.StopDecision{
+		ID:        e.newID(runID),
+		RunID:     runID,
+		DecidedAt: e.now().UTC(),
+	}
+	if threshold <= 0 {
+		threshold = 5
+	}
+	if noChangeTurns < threshold {
+		decision.Action = model.StopActionContinue
+		decision.Reason = fmt.Sprintf("progress still changing (%d/%d no-change turns)", noChangeTurns, threshold)
+		return decision
+	}
+	if policy, ok := e.matchPolicy("progress_no_change", "medium"); ok {
+		decision.Action = policy.StopAction()
+		decision.Reason = policyReason(policy)
+		return decision
+	}
+	decision.Action = model.StopActionPause
+	decision.Reason = fmt.Sprintf("progress did not change for %d turns; pause for human review", noChangeTurns)
+	return decision
+}
+
 // decideRetry applies the retry budget for a matched retry policy, mutating the
 // decision into a retry (within budget) or an escalate (budget exhausted).
 func (e *Engine) decideRetry(

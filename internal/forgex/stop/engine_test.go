@@ -34,6 +34,8 @@ func TestLoadPolicyContents(t *testing.T) {
 	assert.Equal(t, 2, cfg.RetryBudget.DefaultMaxRetries)
 	assert.Equal(t, 3, cfg.RetryBudget.ByCategory["transient_timeout"])
 	assert.Equal(t, 0, cfg.RetryBudget.ByCategory["tool_contract_violation"])
+	assertPolicyAction(t, cfg, "PAUSE_ON_CONTEXT_BUDGET_EXCEEDED", model.StopActionPause)
+	assertPolicyAction(t, cfg, "PAUSE_ON_PROGRESS_NO_CHANGE", model.StopActionPause)
 }
 
 func TestDecideContractViolationStops(t *testing.T) {
@@ -143,7 +145,55 @@ func TestDecisionIDsAreUnique(t *testing.T) {
 	assert.NotEqual(t, first.ID, second.ID)
 }
 
+func TestDecideContextBudgetExceededPauses(t *testing.T) {
+	e := newTestEngine(t)
+
+	got := e.DecideContextBudget("run-context", 200, 128)
+
+	assert.Equal(t, model.StopActionPause, got.Action)
+	assert.Contains(t, got.Reason, "Context budget exceeded")
+	assert.NotEmpty(t, got.ID)
+}
+
+func TestDecideContextBudgetWithinLimitContinues(t *testing.T) {
+	e := newTestEngine(t)
+
+	got := e.DecideContextBudget("run-context", 64, 128)
+
+	assert.Equal(t, model.StopActionContinue, got.Action)
+	assert.Contains(t, got.Reason, "within limit")
+}
+
+func TestDecideProgressNoChangePausesAtThreshold(t *testing.T) {
+	e := newTestEngine(t)
+
+	got := e.DecideProgressNoChange("run-progress", 5, 5)
+
+	assert.Equal(t, model.StopActionPause, got.Action)
+	assert.Contains(t, got.Reason, "Progress did not change")
+}
+
+func TestDecideProgressNoChangeContinuesBeforeThreshold(t *testing.T) {
+	e := newTestEngine(t)
+
+	got := e.DecideProgressNoChange("run-progress", 4, 5)
+
+	assert.Equal(t, model.StopActionContinue, got.Action)
+	assert.Contains(t, got.Reason, "still changing")
+}
+
 // timeoutEnvelope is a classified transient timeout failure used by retry tests.
+func assertPolicyAction(t *testing.T, cfg *PolicyConfig, id string, want model.StopAction) {
+	t.Helper()
+	for _, policy := range cfg.Policies {
+		if policy.ID == id {
+			assert.Equal(t, want, policy.StopAction())
+			return
+		}
+	}
+	t.Fatalf("policy %s not found", id)
+}
+
 func timeoutEnvelope() model.ErrorEnvelope {
 	return model.ErrorEnvelope{
 		ID:        "err-timeout",

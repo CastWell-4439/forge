@@ -10,6 +10,7 @@ const (
 	StopActionRetry    StopAction = "retry"
 	StopActionStop     StopAction = "stop"
 	StopActionEscalate StopAction = "escalate"
+	StopActionPause    StopAction = "pause"
 )
 
 // StopDecision records a stop-condition decision for one error or run state.

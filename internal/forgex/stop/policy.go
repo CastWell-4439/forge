@@ -81,6 +81,8 @@ func parseAction(action string) model.StopAction {
 		return model.StopActionStop
 	case model.StopActionEscalate:
 		return model.StopActionEscalate
+	case model.StopActionPause:
+		return model.StopActionPause
 	default:
 		return model.StopActionStop
 	}

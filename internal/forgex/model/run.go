@@ -12,6 +12,7 @@ const (
 	RunFailed    RunStatus = "failed"
 	RunStopped   RunStatus = "stopped"
 	RunEscalated RunStatus = "escalated"
+	RunPaused    RunStatus = "paused"
 )
 
 // Run is the top-level execution record for one ForgeX harness run.

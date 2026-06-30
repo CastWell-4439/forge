@@ -24,3 +24,15 @@ policies:
       severity: high
     action: escalate
     reason: Unknown high severity failure requires human inspection.
+
+  - id: PAUSE_ON_CONTEXT_BUDGET_EXCEEDED
+    when:
+      category: context_budget_exceeded
+    action: pause
+    reason: Context budget exceeded; snapshot current state and pause for review.
+
+  - id: PAUSE_ON_PROGRESS_NO_CHANGE
+    when:
+      category: progress_no_change
+    action: pause
+    reason: Progress did not change across the configured threshold; pause for human review.
