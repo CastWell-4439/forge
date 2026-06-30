@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/failure"
 	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/castwell/forge/internal/forgex/report"
@@ -82,6 +83,27 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 	}
 	recorder := trace.NewRecorder(store, runID)
 
+	ledger := model.ProgressLedger{
+		RunID:        runID,
+		CurrentPhase: "aihook_contract_validation",
+		Checklist: []model.ProgressItem{
+			{ID: "load_packet", Title: "Load AIhook task packet", Status: model.ProgressDone, Evidence: packetPath},
+			{ID: "validate_vidu_refs", Title: "Validate Vidu reference images", Status: model.ProgressFailed, Evidence: "images_refs is empty"},
+			{ID: "generate_report", Title: "Generate report and badcase", Status: model.ProgressInProgress},
+		},
+		Decisions:   []string{"Stop before paid Vidu generation when images_refs is empty."},
+		NextActions: []string{"Ask upstream to provide non-empty character reference frames."},
+		UpdatedAt:   now,
+	}
+	if err := store.SaveProgressLedger(ctx, ledger); err != nil {
+		return "", fmt.Errorf("save progress ledger: %w", err)
+	}
+
+	contextPack := forgexcontext.NewBudgetManager(128).Build(runID, "tool_contract_check", packet.Goal+"\nconstraints: "+fmt.Sprint(packet.Constraints), []string{"task_packet.yaml"})
+	if err := store.AppendContextPack(ctx, contextPack); err != nil {
+		return "", fmt.Errorf("append context pack: %w", err)
+	}
+
 	// 4. Record run_started.
 	if err := recorder.Event(ctx, model.EventRunStarted, "run started", map[string]any{
 		"task_id": packet.ID,
@@ -137,6 +159,13 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 		return "", fmt.Errorf("save run: %w", err)
 	}
 
+	ledger.Checklist[2].Status = model.ProgressDone
+	ledger.Checklist[2].Evidence = "report.md and badcase.yaml"
+	ledger.UpdatedAt = run.EndedAt
+	if err := store.SaveProgressLedger(ctx, ledger); err != nil {
+		return "", fmt.Errorf("update progress ledger: %w", err)
+	}
+
 	// Build the snapshot from the in-memory objects we recorded.
 	snapshot := report.RunSnapshot{
 		Run:        run,
@@ -158,8 +187,10 @@ func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, polic
 				EndedAt:   run.EndedAt,
 			},
 		},
-		Errors:        []model.ErrorEnvelope{envelope},
-		StopDecisions: []model.StopDecision{decision},
+		Errors:         []model.ErrorEnvelope{envelope},
+		StopDecisions:  []model.StopDecision{decision},
+		ProgressLedger: &ledger,
+		ContextPacks:   []model.ContextPack{contextPack},
 	}
 
 	// 10. Generate the Markdown report.

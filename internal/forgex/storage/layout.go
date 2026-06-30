@@ -60,6 +60,16 @@ func (l Layout) StopDecisionsFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "stop_decisions.jsonl")
 }
 
+// ProgressLedgerFile returns the progress ledger YAML file path.
+func (l Layout) ProgressLedgerFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "progress_ledger.yaml")
+}
+
+// ContextPacksFile returns the context packs JSONL file path.
+func (l Layout) ContextPacksFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "context_packs.jsonl")
+}
+
 // ReportFile returns the Markdown report file path.
 func (l Layout) ReportFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "report.md")

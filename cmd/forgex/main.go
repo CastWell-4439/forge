@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/demo"
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/storage"
@@ -44,6 +45,11 @@ func main() {
 	case "runs":
 		if err := listRuns(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "runs: %v\n", err)
+			os.Exit(1)
+		}
+	case "context":
+		if err := runContext(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "context: %v\n", err)
 			os.Exit(1)
 		}
 	default:
@@ -157,6 +163,35 @@ func listRuns(args []string) error {
 	return nil
 }
 
+func runContext(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("context subcommand required (available: inspect)")
+	}
+	switch args[0] {
+	case "inspect":
+		return inspectContext(args[1:])
+	default:
+		return fmt.Errorf("unknown context subcommand: %s", args[0])
+	}
+}
+
+func inspectContext(args []string) error {
+	fs := flag.NewFlagSet("context inspect", flag.ContinueOnError)
+	runDir := fs.String("run", "", "ForgeX run directory to inspect")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *runDir == "" {
+		return fmt.Errorf("--run is required")
+	}
+	state, err := forgexcontext.LoadRunContext(*runDir)
+	if err != nil {
+		return err
+	}
+	fmt.Print(forgexcontext.FormatInspect(state))
+	return nil
+}
+
 func printHelp() {
 	fmt.Print(`ForgeX - Agent Harness Control Plane
 
@@ -170,6 +205,7 @@ Commands:
   eval       Evaluate a run directory against eval rules
   index-run  Index one run directory into .forgex/index.db
   runs       List indexed runs
+  context    Inspect run context/progress state
 
 run-demo flags:
   --case      Demo case to run (default: aihook-empty-images-refs)
@@ -188,10 +224,14 @@ index flags:
   --root   ForgeX root directory (default: .forgex)
   --index  SQLite index path (default: <root>/index.db)
 
+context flags:
+  context inspect --run .forgex/runs/<run_id>
+
 Examples:
   forgex run-demo --case aihook-empty-images-refs --root .forgex
   forgex eval --run .forgex/runs/<run_id> --suite aihook_regression_v1
   forgex index-run --run .forgex/runs/<run_id>
   forgex runs --limit 10
+  forgex context inspect --run .forgex/runs/<run_id>
 `)
 }

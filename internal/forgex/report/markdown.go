@@ -14,12 +14,14 @@ import (
 // Markdown report and the bad-case export. It bundles the run metadata together
 // with every append-only stream captured during the run.
 type RunSnapshot struct {
-	Run           model.Run
-	TaskPacket    model.TaskPacket
-	Events        []model.Event
-	ToolCalls     []model.ToolCall
-	Errors        []model.ErrorEnvelope
-	StopDecisions []model.StopDecision
+	Run            model.Run
+	TaskPacket     model.TaskPacket
+	Events         []model.Event
+	ToolCalls      []model.ToolCall
+	Errors         []model.ErrorEnvelope
+	StopDecisions  []model.StopDecision
+	ProgressLedger *model.ProgressLedger
+	ContextPacks   []model.ContextPack
 }
 
 // GenerateMarkdown renders a human-readable Markdown report for a run snapshot.
@@ -33,6 +35,9 @@ func GenerateMarkdown(snapshot RunSnapshot) string {
 	b.WriteString("# ForgeX Run Report\n\n")
 
 	writeSummary(&b, snapshot)
+	writeTaskPacket(&b, snapshot)
+	writeProgress(&b, snapshot)
+	writeContextPacks(&b, snapshot)
 	writeTimeline(&b, snapshot)
 	writeToolCalls(&b, snapshot)
 	writeErrors(&b, snapshot)
@@ -57,6 +62,68 @@ func writeSummary(b *strings.Builder, snapshot RunSnapshot) {
 	b.WriteString(fmt.Sprintf("- **Task**: %s\n", task))
 	b.WriteString(fmt.Sprintf("- **Status**: %s\n", orPlaceholder(string(snapshot.Run.Status))))
 	b.WriteString(fmt.Sprintf("- **Final Decision**: %s\n", finalDecision(snapshot)))
+	b.WriteString("\n")
+}
+
+func writeTaskPacket(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Task Packet\n\n")
+	packet := snapshot.TaskPacket
+	if packet.ID == "" && packet.Name == "" && packet.Goal == "" {
+		b.WriteString("_No task packet recorded._\n\n")
+		return
+	}
+	b.WriteString(fmt.Sprintf("- **ID**: %s\n", orPlaceholder(packet.ID)))
+	b.WriteString(fmt.Sprintf("- **Name**: %s\n", orPlaceholder(packet.Name)))
+	b.WriteString(fmt.Sprintf("- **Goal**: %s\n", orPlaceholder(packet.Goal)))
+	for _, c := range packet.Constraints {
+		b.WriteString(fmt.Sprintf("- Constraint: %s\n", c))
+	}
+	for _, s := range packet.Success {
+		b.WriteString(fmt.Sprintf("- Success: %s\n", s))
+	}
+	b.WriteString("\n")
+}
+
+func writeProgress(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Progress Ledger\n\n")
+	if snapshot.ProgressLedger == nil {
+		b.WriteString("_No progress ledger recorded._\n\n")
+		return
+	}
+	ledger := snapshot.ProgressLedger
+	b.WriteString(fmt.Sprintf("- **Current Phase**: %s\n", orPlaceholder(ledger.CurrentPhase)))
+	b.WriteString(fmt.Sprintf("- **Completion**: %.0f%%\n", ledger.CompletionRatio()*100))
+	for _, item := range ledger.Checklist {
+		b.WriteString(fmt.Sprintf("- [%s] %s", item.Status, item.Title))
+		if item.Evidence != "" {
+			b.WriteString(fmt.Sprintf(" — %s", item.Evidence))
+		}
+		b.WriteString("\n")
+	}
+	for _, blocker := range ledger.Blockers {
+		b.WriteString(fmt.Sprintf("- Blocker: %s\n", blocker))
+	}
+	for _, action := range ledger.NextActions {
+		b.WriteString(fmt.Sprintf("- Next: %s\n", action))
+	}
+	b.WriteString("\n")
+}
+
+func writeContextPacks(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Context Packs\n\n")
+	if len(snapshot.ContextPacks) == 0 {
+		b.WriteString("_No context packs recorded._\n\n")
+		return
+	}
+	for _, pack := range snapshot.ContextPacks {
+		b.WriteString(fmt.Sprintf("- **%s** purpose=%s tokens=%d/%d truncated=%t exceeded=%t\n", orPlaceholder(pack.ID), orPlaceholder(pack.Purpose), pack.EstimatedTokens, pack.BudgetTokens, pack.Truncated, pack.BudgetExceeded))
+		if pack.Summary != "" {
+			b.WriteString(fmt.Sprintf("  - summary: %s\n", strings.ReplaceAll(pack.Summary, "\n", " ")))
+		}
+		for _, ref := range pack.ArtifactRefs {
+			b.WriteString(fmt.Sprintf("  - artifact: %s\n", ref))
+		}
+	}
 	b.WriteString("\n")
 }
 

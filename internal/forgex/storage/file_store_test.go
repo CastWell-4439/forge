@@ -118,6 +118,29 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 	}
 	assertJSONLLines(t, layout.StopDecisionsFile(run.ID), 1)
 
+	if err := store.SaveProgressLedger(ctx, model.ProgressLedger{
+		RunID:        run.ID,
+		CurrentPhase: "validation",
+		Checklist:    []model.ProgressItem{{ID: "step_1", Title: "validate", Status: model.ProgressDone}},
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("SaveProgressLedger: %v", err)
+	}
+	assertFileExists(t, layout.ProgressLedgerFile(run.ID))
+
+	if err := store.AppendContextPack(ctx, model.ContextPack{
+		ID:              "ctx_001",
+		RunID:           run.ID,
+		Purpose:         "tool_contract_check",
+		Summary:         "short context",
+		EstimatedTokens: 3,
+		BudgetTokens:    128,
+		CreatedAt:       now,
+	}); err != nil {
+		t.Fatalf("AppendContextPack: %v", err)
+	}
+	assertJSONLLines(t, layout.ContextPacksFile(run.ID), 1)
+
 	if err := store.WriteReport(ctx, run.ID, "# ForgeX Run Report\n"); err != nil {
 		t.Fatalf("WriteReport: %v", err)
 	}

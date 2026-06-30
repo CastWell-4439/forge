@@ -84,6 +84,19 @@ func (s *FileStore) AppendStopDecision(ctx context.Context, decision model.StopD
 	return AppendJSONL(s.layout.StopDecisionsFile(decision.RunID), decision)
 }
 
+// SaveProgressLedger writes the latest progress ledger as YAML.
+func (s *FileStore) SaveProgressLedger(ctx context.Context, ledger model.ProgressLedger) error {
+	return writeYAMLFile(ctx, s.layout.ProgressLedgerFile(ledger.RunID), ledger)
+}
+
+// AppendContextPack appends one context pack to context_packs.jsonl.
+func (s *FileStore) AppendContextPack(ctx context.Context, pack model.ContextPack) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.ContextPacksFile(pack.RunID), pack)
+}
+
 // WriteReport writes the Markdown report for a run.
 func (s *FileStore) WriteReport(ctx context.Context, runID string, markdown string) error {
 	return writeBytesFile(ctx, s.layout.ReportFile(runID), []byte(markdown))

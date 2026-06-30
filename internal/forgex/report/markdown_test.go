@@ -76,6 +76,9 @@ func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
 	wants := []string{
 		"# ForgeX Run Report",
 		"## Summary",
+		"## Task Packet",
+		"## Progress Ledger",
+		"## Context Packs",
 		"## Timeline",
 		"## Tool Calls",
 		"## Errors",
