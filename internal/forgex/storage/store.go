@@ -19,6 +19,9 @@ type Store interface {
 	AppendContextPack(ctx context.Context, pack model.ContextPack) error
 	AppendPolicyDecision(ctx context.Context, decision model.PolicyDecision) error
 	AppendContractValidation(ctx context.Context, validation model.ContractValidation) error
+	SaveWorldState(ctx context.Context, state model.WorldState) error
+	AppendStateClaim(ctx context.Context, claim model.StateClaim) error
+	AppendArtifact(ctx context.Context, artifact model.ArtifactRecord) error
 	WriteReport(ctx context.Context, runID string, markdown string) error
 	WriteBadCase(ctx context.Context, runID string, yamlBytes []byte) error
 }

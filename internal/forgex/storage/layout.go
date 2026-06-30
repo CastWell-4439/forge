@@ -80,6 +80,21 @@ func (l Layout) ContractValidationsFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "contract_validations.jsonl")
 }
 
+// WorldStateFile returns the world state YAML file path.
+func (l Layout) WorldStateFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "world_state.yaml")
+}
+
+// StateClaimsFile returns the state claims JSONL file path.
+func (l Layout) StateClaimsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "state_claims.jsonl")
+}
+
+// ArtifactsFile returns the artifact index JSONL file path.
+func (l Layout) ArtifactsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "artifacts.jsonl")
+}
+
 // ReportFile returns the Markdown report file path.
 func (l Layout) ReportFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "report.md")

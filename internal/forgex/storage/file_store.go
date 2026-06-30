@@ -113,6 +113,27 @@ func (s *FileStore) AppendContractValidation(ctx context.Context, validation mod
 	return AppendJSONL(s.layout.ContractValidationsFile(validation.RunID), validation)
 }
 
+// SaveWorldState writes the latest world state as YAML.
+func (s *FileStore) SaveWorldState(ctx context.Context, state model.WorldState) error {
+	return writeYAMLFile(ctx, s.layout.WorldStateFile(state.RunID), state)
+}
+
+// AppendStateClaim appends one state claim to state_claims.jsonl.
+func (s *FileStore) AppendStateClaim(ctx context.Context, claim model.StateClaim) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.StateClaimsFile(claim.RunID), claim)
+}
+
+// AppendArtifact appends one artifact record to artifacts.jsonl.
+func (s *FileStore) AppendArtifact(ctx context.Context, artifact model.ArtifactRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.ArtifactsFile(artifact.RunID), artifact)
+}
+
 // WriteReport writes the Markdown report for a run.
 func (s *FileStore) WriteReport(ctx context.Context, runID string, markdown string) error {
 	return writeBytesFile(ctx, s.layout.ReportFile(runID), []byte(markdown))

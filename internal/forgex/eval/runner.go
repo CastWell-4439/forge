@@ -24,6 +24,9 @@ type RunArtifacts struct {
 	ToolCalls           []model.ToolCall           `json:"tool_calls"`
 	PolicyDecisions     []model.PolicyDecision     `json:"policy_decisions"`
 	ContractValidations []model.ContractValidation `json:"contract_validations"`
+	WorldState          model.WorldState           `json:"world_state"`
+	StateClaims         []model.StateClaim         `json:"state_claims"`
+	Artifacts           []model.ArtifactRecord     `json:"artifacts"`
 	Errors              []model.ErrorEnvelope      `json:"errors"`
 	StopDecisions       []model.StopDecision       `json:"stop_decisions"`
 }
@@ -88,6 +91,15 @@ func LoadRunArtifacts(runDir string) (RunArtifacts, error) {
 		return RunArtifacts{}, err
 	}
 	if err := readJSONL(filepath.Join(runDir, "contract_validations.jsonl"), &artifacts.ContractValidations); err != nil {
+		return RunArtifacts{}, err
+	}
+	if err := readOptionalYAML(filepath.Join(runDir, "world_state.yaml"), &artifacts.WorldState); err != nil {
+		return RunArtifacts{}, err
+	}
+	if err := readJSONL(filepath.Join(runDir, "state_claims.jsonl"), &artifacts.StateClaims); err != nil {
+		return RunArtifacts{}, err
+	}
+	if err := readJSONL(filepath.Join(runDir, "artifacts.jsonl"), &artifacts.Artifacts); err != nil {
 		return RunArtifacts{}, err
 	}
 	if err := readJSONL(filepath.Join(runDir, "errors.jsonl"), &artifacts.Errors); err != nil {
@@ -260,6 +272,17 @@ func readJSON(path string, target any) error {
 func readYAML(path string, target any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return err
+	}
+	return yaml.Unmarshal(data, target)
+}
+
+func readOptionalYAML(path string, target any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	return yaml.Unmarshal(data, target)

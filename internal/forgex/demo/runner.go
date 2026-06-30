@@ -11,6 +11,7 @@ import (
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
 	"github.com/castwell/forge/internal/forgex/report"
+	forgexstate "github.com/castwell/forge/internal/forgex/state"
 	"github.com/castwell/forge/internal/forgex/stop"
 	"github.com/castwell/forge/internal/forgex/storage"
 	forgextask "github.com/castwell/forge/internal/forgex/task"
@@ -180,6 +181,30 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		}
 	}
 
+	missingReferenceArtifact := forgexstate.NewArtifactRecord(runID, "reference_image", model.ArtifactMissing, "contract_validator", map[string]string{
+		"reason":      "images_refs is empty",
+		"tool":        defaultAIHookViduTool,
+		"input_key":   "images_refs",
+		"required":    "true",
+		"source_step": "contract_validation",
+	})
+	if err := store.AppendArtifact(ctx, missingReferenceArtifact); err != nil {
+		return "", fmt.Errorf("append artifact: %w", err)
+	}
+
+	claim := forgexstate.NewClaim(runID, "claim_"+uuid.NewString(), "reference_images.status", "contract_validator", map[string]any{
+		"status": "missing",
+		"reason": "images_refs is empty",
+		"tool":   defaultAIHookViduTool,
+	}, []string{missingReferenceArtifact.ID, "contract_validations.jsonl"})
+	if err := store.AppendStateClaim(ctx, claim); err != nil {
+		return "", fmt.Errorf("append state claim: %w", err)
+	}
+	worldState := forgexstate.AcceptClaim(model.WorldState{RunID: runID, Version: 1, UpdatedAt: now}, claim)
+	if err := store.SaveWorldState(ctx, worldState); err != nil {
+		return "", fmt.Errorf("save world state: %w", err)
+	}
+
 	// 7. Construct the ErrorEnvelope for the contract validation failure.
 	toolErr := errors.New(firstValidationFailureMessage(contractValidations, "images_refs is empty"))
 	if err := recorder.ToolCallFailed(ctx, callID, toolErr); err != nil {
@@ -249,6 +274,9 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		},
 		PolicyDecisions:     []model.PolicyDecision{modelPolicyDecision},
 		ContractValidations: contractValidations,
+		WorldState:          &worldState,
+		StateClaims:         []model.StateClaim{claim},
+		Artifacts:           []model.ArtifactRecord{missingReferenceArtifact},
 		Errors:              []model.ErrorEnvelope{envelope},
 		StopDecisions:       []model.StopDecision{decision},
 		ProgressLedger:      &ledger,

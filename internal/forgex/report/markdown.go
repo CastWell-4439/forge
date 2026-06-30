@@ -20,6 +20,9 @@ type RunSnapshot struct {
 	ToolCalls           []model.ToolCall
 	PolicyDecisions     []model.PolicyDecision
 	ContractValidations []model.ContractValidation
+	WorldState          *model.WorldState
+	StateClaims         []model.StateClaim
+	Artifacts           []model.ArtifactRecord
 	Errors              []model.ErrorEnvelope
 	StopDecisions       []model.StopDecision
 	ProgressLedger      *model.ProgressLedger
@@ -44,6 +47,8 @@ func GenerateMarkdown(snapshot RunSnapshot) string {
 	writeToolCalls(&b, snapshot)
 	writePolicyDecisions(&b, snapshot)
 	writeContractValidations(&b, snapshot)
+	writeWorldState(&b, snapshot)
+	writeArtifacts(&b, snapshot)
 	writeErrors(&b, snapshot)
 	writeStopDecisions(&b, snapshot)
 	writeSuggestedFix(&b, snapshot)
@@ -201,6 +206,49 @@ func writeContractValidations(b *strings.Builder, snapshot RunSnapshot) {
 	b.WriteString("\n")
 }
 
+func writeWorldState(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## World State\n\n")
+	if snapshot.WorldState == nil {
+		b.WriteString("_No world state recorded._\n\n")
+		return
+	}
+	ws := snapshot.WorldState
+	b.WriteString(fmt.Sprintf("- **Version**: %d\n", ws.Version))
+	if ws.UpdatedAt.IsZero() {
+		b.WriteString("- **Updated At**: --\n")
+	} else {
+		b.WriteString(fmt.Sprintf("- **Updated At**: %s\n", formatTime(ws.UpdatedAt)))
+	}
+	for _, entry := range ws.Entries {
+		b.WriteString(fmt.Sprintf("- **%s** status=%s version=%d producer=%s\n", orPlaceholder(entry.Key), entry.Status, entry.Version, orPlaceholder(entry.Producer)))
+		if len(entry.Value) > 0 {
+			b.WriteString(fmt.Sprintf("  - value: `%s`\n", compactJSON(entry.Value)))
+		}
+		for _, evidence := range entry.Evidence {
+			b.WriteString(fmt.Sprintf("  - evidence: %s\n", evidence))
+		}
+	}
+	b.WriteString("\n")
+}
+
+func writeArtifacts(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Artifacts\n\n")
+	if len(snapshot.Artifacts) == 0 {
+		b.WriteString("_No artifacts recorded._\n\n")
+		return
+	}
+	for _, artifact := range snapshot.Artifacts {
+		b.WriteString(fmt.Sprintf("- **%s** type=%s status=%s producer=%s\n", orPlaceholder(artifact.ID), orPlaceholder(artifact.Type), artifact.Status, orPlaceholder(artifact.Producer)))
+		if artifact.URI != "" {
+			b.WriteString(fmt.Sprintf("  - uri: %s\n", artifact.URI))
+		}
+		if len(artifact.Metadata) > 0 {
+			b.WriteString(fmt.Sprintf("  - metadata: `%s`\n", compactStringJSON(artifact.Metadata)))
+		}
+	}
+	b.WriteString("\n")
+}
+
 func writeErrors(b *strings.Builder, snapshot RunSnapshot) {
 	b.WriteString("## Errors\n\n")
 	if len(snapshot.Errors) == 0 {
@@ -298,6 +346,14 @@ func orPlaceholder(s string) string {
 
 // compactJSON renders a map as deterministic single-line JSON for inline display.
 // Keys are sorted so repeated runs produce identical output.
+func compactStringJSON(m map[string]string) string {
+	converted := make(map[string]any, len(m))
+	for k, v := range m {
+		converted[k] = v
+	}
+	return compactJSON(converted)
+}
+
 func compactJSON(m map[string]any) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
