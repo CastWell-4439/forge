@@ -134,10 +134,136 @@ func evaluateCase(artifacts RunArtifacts, evalCase Case) model.EvalCaseResult {
 		}
 		caseResult.Assertions = append(caseResult.Assertions, assertionResult)
 	}
+	for _, assertionResult := range evaluateTrajectory(artifacts, evalCase.Trajectory) {
+		if assertionResult.Status == model.EvalFailed {
+			caseResult.Status = model.EvalFailed
+		}
+		caseResult.Assertions = append(caseResult.Assertions, assertionResult)
+	}
 	if len(caseResult.Assertions) == 0 {
 		caseResult.Status = model.EvalSkipped
 	}
 	return caseResult
+}
+
+func evaluateTrajectory(artifacts RunArtifacts, trajectory Trajectory) []model.EvalAssertionResult {
+	var results []model.EvalAssertionResult
+	for _, eventType := range trajectory.RequiredEvents {
+		results = append(results, trajectoryResult("trajectory.required_events", eventType, hasEvent(artifacts, eventType), "missing required event"))
+	}
+	if len(trajectory.ExpectedToolCalls) > 0 {
+		actual := toolCallNames(artifacts)
+		results = append(results, trajectorySequenceResult("trajectory.expected_tool_calls", trajectory.ExpectedToolCalls, actual))
+	}
+	for _, toolName := range trajectory.ForbiddenTools {
+		results = append(results, trajectoryResult("trajectory.forbidden_tools", toolName, !hasToolCall(artifacts, toolName), "forbidden tool was called"))
+	}
+	if trajectory.MaxToolCalls != nil {
+		actual := len(uniqueToolCalls(artifacts))
+		passed := actual <= *trajectory.MaxToolCalls
+		result := model.EvalAssertionResult{
+			Path:     "trajectory.max_tool_calls",
+			Op:       "le",
+			Expected: strconv.Itoa(*trajectory.MaxToolCalls),
+			Actual:   strconv.Itoa(actual),
+			Status:   model.EvalPassed,
+		}
+		if !passed {
+			result.Status = model.EvalFailed
+			result.Message = fmt.Sprintf("expected at most %d tool calls, got %d", *trajectory.MaxToolCalls, actual)
+		}
+		results = append(results, result)
+	}
+	for _, action := range trajectory.RequiredStopActions {
+		results = append(results, trajectoryResult("trajectory.required_stop_actions", action, hasStopAction(artifacts, action), "missing required stop action"))
+	}
+	return results
+}
+
+func trajectoryResult(path, expected string, passed bool, failure string) model.EvalAssertionResult {
+	result := model.EvalAssertionResult{Path: path, Op: "contains", Expected: expected, Actual: expected, Status: model.EvalPassed}
+	if !passed {
+		result.Status = model.EvalFailed
+		result.Actual = ""
+		result.Message = fmt.Sprintf("%s: %s", failure, expected)
+	}
+	return result
+}
+
+func trajectorySequenceResult(path string, expected []string, actual []string) model.EvalAssertionResult {
+	result := model.EvalAssertionResult{
+		Path:     path,
+		Op:       "eq",
+		Expected: strings.Join(expected, ","),
+		Actual:   strings.Join(actual, ","),
+		Status:   model.EvalPassed,
+	}
+	if len(expected) != len(actual) {
+		result.Status = model.EvalFailed
+		result.Message = fmt.Sprintf("expected tool sequence %v, got %v", expected, actual)
+		return result
+	}
+	for i := range expected {
+		if expected[i] != actual[i] {
+			result.Status = model.EvalFailed
+			result.Message = fmt.Sprintf("expected tool sequence %v, got %v", expected, actual)
+			return result
+		}
+	}
+	return result
+}
+
+func hasEvent(artifacts RunArtifacts, eventType string) bool {
+	for _, event := range artifacts.Events {
+		if string(event.Type) == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func toolCallNames(artifacts RunArtifacts) []string {
+	calls := uniqueToolCalls(artifacts)
+	names := make([]string, 0, len(calls))
+	for _, call := range calls {
+		names = append(names, call.ToolName)
+	}
+	return names
+}
+
+func uniqueToolCalls(artifacts RunArtifacts) []model.ToolCall {
+	seen := make(map[string]struct{}, len(artifacts.ToolCalls))
+	calls := make([]model.ToolCall, 0, len(artifacts.ToolCalls))
+	for _, call := range artifacts.ToolCalls {
+		key := call.ID
+		if key == "" {
+			key = fmt.Sprintf("%s#%d", call.ToolName, len(calls))
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		calls = append(calls, call)
+	}
+	return calls
+}
+
+func hasToolCall(artifacts RunArtifacts, toolName string) bool {
+	for _, call := range uniqueToolCalls(artifacts) {
+		if call.ToolName == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStopAction(artifacts RunArtifacts, action string) bool {
+	for _, decision := range artifacts.StopDecisions {
+		if string(decision.Action) == action {
+			return true
+		}
+	}
+	return false
 }
 
 func evaluateAssertion(artifacts RunArtifacts, assertion Assertion) model.EvalAssertionResult {

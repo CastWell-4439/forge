@@ -23,6 +23,7 @@ type Suite struct {
 type Case struct {
 	ID         string      `yaml:"id"`
 	Assertions []Assertion `yaml:"assertions"`
+	Trajectory Trajectory  `yaml:"trajectory"`
 }
 
 // Assertion compares a value at path against an expected value.
@@ -30,6 +31,15 @@ type Assertion struct {
 	Path  string `yaml:"path"`
 	Op    string `yaml:"op"`
 	Value string `yaml:"value"`
+}
+
+// Trajectory contains process-level expectations for one run.
+type Trajectory struct {
+	RequiredEvents      []string `yaml:"required_events"`
+	ExpectedToolCalls   []string `yaml:"expected_tool_calls"`
+	ForbiddenTools      []string `yaml:"forbidden_tools"`
+	MaxToolCalls        *int     `yaml:"max_tool_calls"`
+	RequiredStopActions []string `yaml:"required_stop_actions"`
 }
 
 // LoadRules loads eval rules from YAML.

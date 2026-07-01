@@ -92,3 +92,82 @@ func TestRunFailsOnUnexpectedValue(t *testing.T) {
 		t.Fatalf("assertion status = %s", caseResult.Assertions[0].Status)
 	}
 }
+
+func TestEvaluateTrajectoryPasses(t *testing.T) {
+	maxToolCalls := 1
+	artifacts := RunArtifacts{
+		Events: []model.Event{
+			{Type: model.EventRunStarted},
+			{Type: model.EventToolCalled},
+			{Type: model.EventStopDecided},
+		},
+		ToolCalls:     []model.ToolCall{{ToolName: "demo.expensive_generation"}},
+		StopDecisions: []model.StopDecision{{Action: model.StopActionStop}},
+	}
+	caseResult := evaluateCase(artifacts, Case{
+		ID: "case_trajectory",
+		Trajectory: Trajectory{
+			RequiredEvents:      []string{"run_started", "tool_called", "stop_decided"},
+			ExpectedToolCalls:   []string{"demo.expensive_generation"},
+			ForbiddenTools:      []string{"demo.forbidden"},
+			MaxToolCalls:        &maxToolCalls,
+			RequiredStopActions: []string{"stop"},
+		},
+	})
+	if caseResult.Status != model.EvalPassed {
+		t.Fatalf("case status = %s, want passed; assertions=%+v", caseResult.Status, caseResult.Assertions)
+	}
+	if len(caseResult.Assertions) != 7 {
+		t.Fatalf("assertion count = %d, want 7", len(caseResult.Assertions))
+	}
+}
+
+func TestEvaluateTrajectoryFailsOnMissingEvent(t *testing.T) {
+	artifacts := RunArtifacts{Events: []model.Event{{Type: model.EventRunStarted}}}
+	caseResult := evaluateCase(artifacts, Case{
+		ID: "case_trajectory",
+		Trajectory: Trajectory{
+			RequiredEvents: []string{"run_started", "tool_called"},
+		},
+	})
+	if caseResult.Status != model.EvalFailed {
+		t.Fatalf("case status = %s, want failed", caseResult.Status)
+	}
+	if caseResult.Assertions[1].Status != model.EvalFailed {
+		t.Fatalf("missing event assertion status = %s, want failed", caseResult.Assertions[1].Status)
+	}
+}
+
+func TestEvaluateTrajectoryFailsOnToolSequence(t *testing.T) {
+	artifacts := RunArtifacts{ToolCalls: []model.ToolCall{{ToolName: "demo.other"}}}
+	caseResult := evaluateCase(artifacts, Case{
+		ID: "case_trajectory",
+		Trajectory: Trajectory{
+			ExpectedToolCalls: []string{"demo.expensive_generation"},
+		},
+	})
+	if caseResult.Status != model.EvalFailed {
+		t.Fatalf("case status = %s, want failed", caseResult.Status)
+	}
+	if caseResult.Assertions[0].Status != model.EvalFailed {
+		t.Fatalf("sequence assertion status = %s, want failed", caseResult.Assertions[0].Status)
+	}
+}
+
+func TestEvaluateTrajectoryDeduplicatesToolCallUpdates(t *testing.T) {
+	maxToolCalls := 1
+	artifacts := RunArtifacts{ToolCalls: []model.ToolCall{
+		{ID: "tool_1", ToolName: "demo.expensive_generation"},
+		{ID: "tool_1", ToolName: "demo.expensive_generation", Result: map[string]any{"ok": true}},
+	}}
+	caseResult := evaluateCase(artifacts, Case{
+		ID: "case_trajectory",
+		Trajectory: Trajectory{
+			ExpectedToolCalls: []string{"demo.expensive_generation"},
+			MaxToolCalls:      &maxToolCalls,
+		},
+	})
+	if caseResult.Status != model.EvalPassed {
+		t.Fatalf("case status = %s, want passed; assertions=%+v", caseResult.Status, caseResult.Assertions)
+	}
+}

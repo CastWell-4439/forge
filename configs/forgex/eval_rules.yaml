@@ -34,6 +34,18 @@ suites:
           - path: stop_decisions[0].reason
             op: contains
             value: arbiter selected
+        trajectory:
+          required_events:
+            - run_started
+            - tool_called
+            - tool_failed
+            - stop_decided
+          expected_tool_calls:
+            - demo.expensive_generation
+          forbidden_tools: []
+          max_tool_calls: 1
+          required_stop_actions:
+            - stop
 
   - id: generic_contract_happy_v1
     cases:
@@ -78,3 +90,15 @@ suites:
           - path: stop_decisions[0].reason
             op: contains
             value: arbiter selected
+        trajectory:
+          required_events:
+            - run_started
+            - tool_called
+            - tool_succeeded
+            - stop_decided
+          expected_tool_calls:
+            - demo.expensive_generation
+          forbidden_tools: []
+          max_tool_calls: 1
+          required_stop_actions:
+            - continue
