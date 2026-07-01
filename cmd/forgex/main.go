@@ -17,6 +17,7 @@ import (
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
+	"github.com/castwell/forge/internal/forgex/promotion"
 	"github.com/castwell/forge/internal/forgex/reliability"
 	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
@@ -50,6 +51,11 @@ func main() {
 	case "eval-repeat":
 		if err := runEvalRepeat(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "eval-repeat: %v\n", err)
+			os.Exit(1)
+		}
+	case "promote-badcase":
+		if err := promoteBadcase(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "promote-badcase: %v\n", err)
 			os.Exit(1)
 		}
 	case "index-run":
@@ -238,6 +244,30 @@ func runEvalRepeat(args []string) error {
 	if summary.Failed > 0 {
 		return fmt.Errorf("repeat eval failed")
 	}
+	return nil
+}
+
+func promoteBadcase(args []string) error {
+	fs := flag.NewFlagSet("promote-badcase", flag.ContinueOnError)
+	runDir := fs.String("run", "", "ForgeX run directory containing badcase.yaml")
+	out := fs.String("out", "", "output draft YAML path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *runDir == "" {
+		return fmt.Errorf("--run is required")
+	}
+	if *out == "" {
+		return fmt.Errorf("--out is required")
+	}
+	draft, err := promotion.Promote(*runDir, *out)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("badcase promoted as draft: %s\n", draft.ID)
+	fmt.Printf("review_required: %t\n", draft.ReviewRequired)
+	fmt.Printf("review_status: %s\n", draft.ReviewStatus)
+	fmt.Printf("out: %s\n", *out)
 	return nil
 }
 
@@ -573,6 +603,7 @@ Commands:
   run-demo   Run a local harness demo (no external API calls)
   eval       Evaluate a run directory against eval rules
   eval-repeat Repeat a registered case and summarize reliability
+  promote-badcase Promote a run badcase into a human-review draft
   index-run  Index one run directory into .forgex/index.db
   runs       List indexed runs
   context    Inspect run context/progress state
@@ -604,6 +635,10 @@ eval-repeat flags:
   --rules  Eval rules YAML path (default: configs/forgex/eval_rules.yaml)
   Writes repeat_result.json under --root.
 
+promote-badcase flags:
+  --run  ForgeX run directory containing badcase.yaml
+  --out  Output draft YAML path, e.g. examples/forgex/cases/<case_id>.yaml
+
 index flags:
   --run    ForgeX run directory to index, e.g. .forgex/runs/<run_id>
   --root   ForgeX root directory (default: .forgex)
@@ -628,6 +663,7 @@ Examples:
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_regression_v1
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_happy_v1
   forgex eval-repeat --case generic-contract-success --n 5 --root .forgex-repeat
+  forgex promote-badcase --run .forgex/runs/<run_id> --out examples/forgex/cases/draft.yaml
   forgex index-run --run .forgex/runs/<run_id>
   forgex runs --limit 10
   forgex context inspect --run .forgex/runs/<run_id>
