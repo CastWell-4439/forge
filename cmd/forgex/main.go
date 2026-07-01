@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/castwell/forge/internal/forgex/cases"
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/demo"
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
@@ -66,6 +67,11 @@ func main() {
 	case "lessons":
 		if err := runLessons(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "lessons: %v\n", err)
+			os.Exit(1)
+		}
+	case "cases":
+		if err := runCases(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "cases: %v\n", err)
 			os.Exit(1)
 		}
 	default:
@@ -347,6 +353,106 @@ func readLessonsFile(path string) ([]model.Lesson, error) {
 	return lessons, nil
 }
 
+func runCases(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("cases subcommand required (available: list, show)")
+	}
+	switch args[0] {
+	case "list":
+		return listCases(args[1:])
+	case "show":
+		return showCase(args[1:])
+	default:
+		return fmt.Errorf("unknown cases subcommand: %s", args[0])
+	}
+}
+
+func listCases(args []string) error {
+	fs := flag.NewFlagSet("cases list", flag.ContinueOnError)
+	casesPath := fs.String("cases", "configs/forgex/cases.yaml", "case registry YAML path")
+	jsonOut := fs.Bool("json", false, "print the registry as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	reg, err := cases.Load(*casesPath)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		encoded, err := json.MarshalIndent(reg, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(encoded))
+		return nil
+	}
+	for _, c := range reg.Cases {
+		fmt.Printf("%s\tsuite=%s\tpacket=%s\n", c.ID, c.Suite, c.TaskPacket)
+		if c.Description != "" {
+			fmt.Printf("  %s\n", c.Description)
+		}
+	}
+	return nil
+}
+
+func showCase(args []string) error {
+	fs := flag.NewFlagSet("cases show", flag.ContinueOnError)
+	caseID := fs.String("case", "", "case id to show")
+	casesPath := fs.String("cases", "configs/forgex/cases.yaml", "case registry YAML path")
+	jsonOut := fs.Bool("json", false, "print the case as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *caseID == "" {
+		return fmt.Errorf("--case is required")
+	}
+	reg, err := cases.Load(*casesPath)
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Find(*caseID)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		encoded, err := json.MarshalIndent(spec, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(encoded))
+		return nil
+	}
+	fmt.Printf("id: %s\n", spec.ID)
+	if spec.Description != "" {
+		fmt.Printf("description: %s\n", spec.Description)
+	}
+	fmt.Printf("task_packet: %s\n", spec.TaskPacket)
+	fmt.Printf("suite: %s\n", spec.Suite)
+	fmt.Println("expected:")
+	printExpectedField("status", spec.Expected.Status)
+	printExpectedField("final_decision", spec.Expected.FinalDecision)
+	printExpectedInt("errors", spec.Expected.Errors)
+	printExpectedInt("lessons", spec.Expected.Lessons)
+	printExpectedInt("lessons_min", spec.Expected.LessonsMin)
+	printExpectedInt("validation_failed", spec.Expected.ValidationFailed)
+	printExpectedInt("validation_failed_min", spec.Expected.ValidationFailedMin)
+	printExpectedInt("artifacts_missing", spec.Expected.ArtifactsMissing)
+	printExpectedInt("artifacts_missing_min", spec.Expected.ArtifactsMissingMin)
+	return nil
+}
+
+func printExpectedField(name, value string) {
+	if value != "" {
+		fmt.Printf("  %s: %s\n", name, value)
+	}
+}
+
+func printExpectedInt(name string, value *int) {
+	if value != nil {
+		fmt.Printf("  %s: %d\n", name, *value)
+	}
+}
+
 func printHelp() {
 	fmt.Print(`ForgeX - Agent Harness Control Plane
 
@@ -363,6 +469,7 @@ Commands:
   context    Inspect run context/progress state
   policy     Check tool policy decisions
   lessons    List lessons derived from a run
+  cases      List or show registered golden cases
 
 run-demo flags:
   --case      Demo case to run: generic-contract-violation | generic-contract-success (default: generic-contract-violation)
@@ -393,6 +500,10 @@ policy flags:
 lessons flags:
   lessons list --run .forgex/runs/<run_id> [--json]
 
+cases flags:
+  cases list --cases configs/forgex/cases.yaml [--json]
+  cases show --case <id> --cases configs/forgex/cases.yaml [--json]
+
 Examples:
   forgex run-demo --case generic-contract-violation --root .forgex
   forgex run-demo --case generic-contract-success --root .forgex
@@ -403,5 +514,7 @@ Examples:
   forgex context inspect --run .forgex/runs/<run_id>
   forgex policy check --tool demo.expensive_generation --authority L1
   forgex lessons list --run .forgex/runs/<run_id>
+  forgex cases list --cases configs/forgex/cases.yaml
+  forgex cases show --case generic-contract-violation --cases configs/forgex/cases.yaml
 `)
 }

@@ -1,0 +1,25 @@
+version: 1
+cases:
+  - id: generic-contract-violation
+    description: Generic contract violation path that must stop and produce a lesson.
+    task_packet: examples/forgex/task_packet_generic_contract_violation.yaml
+    suite: generic_contract_regression_v1
+    expected:
+      status: stopped
+      final_decision: stop
+      errors: 1
+      lessons_min: 1
+      validation_failed_min: 1
+      artifacts_missing_min: 1
+
+  - id: generic-contract-success
+    description: Generic happy path that must pass without lessons.
+    task_packet: examples/forgex/task_packet_generic_contract_success.yaml
+    suite: generic_contract_happy_v1
+    expected:
+      status: succeeded
+      final_decision: continue
+      errors: 0
+      lessons: 0
+      validation_failed: 0
+      artifacts_missing: 0
