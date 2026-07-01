@@ -493,13 +493,15 @@ func countLessons(path string) int {
 
 func runCases(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("cases subcommand required (available: list, show)")
+		return fmt.Errorf("cases subcommand required (available: list, show, run)")
 	}
 	switch args[0] {
 	case "list":
 		return listCases(args[1:])
 	case "show":
 		return showCase(args[1:])
+	case "run":
+		return runRegisteredCase(args[1:])
 	default:
 		return fmt.Errorf("unknown cases subcommand: %s", args[0])
 	}
@@ -579,6 +581,50 @@ func showCase(args []string) error {
 	return nil
 }
 
+func runRegisteredCase(args []string) error {
+	fs := flag.NewFlagSet("cases run", flag.ContinueOnError)
+	caseID := fs.String("case", "", "registered case id to run")
+	root := fs.String("root", ".forgex", "root directory for run artifacts")
+	casesPath := fs.String("cases", "configs/forgex/cases.yaml", "case registry YAML path")
+	rules := fs.String("rules", "configs/forgex/eval_rules.yaml", "eval rules YAML path")
+	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
+	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
+	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
+	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
+	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level override for tool policy decisions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *caseID == "" {
+		return fmt.Errorf("--case is required")
+	}
+	reg, err := cases.Load(*casesPath)
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Find(*caseID)
+	if err != nil {
+		return err
+	}
+	runID, err := runDemoCase(spec.ID, *root, *taxonomy, *policy, spec.TaskPacket, *contracts, *toolPolicy, *authority)
+	if err != nil {
+		return err
+	}
+	runDir := filepath.Join(*root, "runs", runID)
+	result, err := evaluateRunDir(runDir, *rules, spec.Suite)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("case completed: case=%s run_id=%s suite=%s eval=%s\n", spec.ID, runID, spec.Suite, result.Status)
+	fmt.Printf("artifacts: %s\n", runDir)
+	fmt.Printf("result: %s\n", filepath.Join(runDir, "eval_result.json"))
+	fmt.Printf("scorecard: %s\n", filepath.Join(runDir, "scorecard.json"))
+	if result.Status == model.EvalFailed {
+		return fmt.Errorf("case eval failed")
+	}
+	return nil
+}
+
 func printExpectedField(name, value string) {
 	if value != "" {
 		fmt.Printf("  %s: %s\n", name, value)
@@ -609,7 +655,7 @@ Commands:
   context    Inspect run context/progress state
   policy     Check tool policy decisions
   lessons    List lessons derived from a run
-  cases      List or show registered golden cases
+  cases      List, show, or run registered golden cases
 
 run-demo flags:
   --case      Demo case to run: generic-contract-violation | generic-contract-success (default: generic-contract-violation)
@@ -656,6 +702,7 @@ lessons flags:
 cases flags:
   cases list --cases configs/forgex/cases.yaml [--json]
   cases show --case <id> --cases configs/forgex/cases.yaml [--json]
+  cases run --case <id> --root .forgex [--cases configs/forgex/cases.yaml] [--rules configs/forgex/eval_rules.yaml]
 
 Examples:
   forgex run-demo --case generic-contract-violation --root .forgex
@@ -671,5 +718,6 @@ Examples:
   forgex lessons list --run .forgex/runs/<run_id>
   forgex cases list --cases configs/forgex/cases.yaml
   forgex cases show --case generic-contract-violation --cases configs/forgex/cases.yaml
+  forgex cases run --case generic-contract-success --root .forgex
 `)
 }
