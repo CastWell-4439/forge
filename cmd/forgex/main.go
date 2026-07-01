@@ -73,7 +73,7 @@ func runDemo(args []string) error {
 	root := fs.String("root", ".forgex", "root directory for run artifacts")
 	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
 	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
-	packet := fs.String("packet", demo.DefaultPacketPath, "task packet YAML path")
+	packet := fs.String("packet", "", "task packet YAML path; defaults to the case's packet")
 	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
 	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
 	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level override for tool policy decisions; defaults to task packet authority_level or L0")
@@ -90,8 +90,16 @@ func runDemo(args []string) error {
 		fmt.Printf("demo completed: run_id=%s\n", runID)
 		fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
 		return nil
+	case "generic-contract-success":
+		runID, err := demo.RunGenericContractSuccessDemoWithControl(context.Background(), *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("demo completed: run_id=%s\n", runID)
+		fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
+		return nil
 	default:
-		return fmt.Errorf("unknown demo case: %s (available: generic-contract-violation)", *caseName)
+		return fmt.Errorf("unknown demo case: %s (available: generic-contract-violation, generic-contract-success)", *caseName)
 	}
 }
 
@@ -260,11 +268,11 @@ Commands:
   policy     Check tool policy decisions
 
 run-demo flags:
-  --case      Demo case to run (default: generic-contract-violation)
+  --case      Demo case to run: generic-contract-violation | generic-contract-success (default: generic-contract-violation)
   --root      Root directory for run artifacts (default: .forgex)
   --taxonomy  Failure taxonomy YAML path
   --policy       Stop policy YAML path
-  --packet       Task packet YAML path
+  --packet       Task packet YAML path (default: the selected case's packet)
   --contracts    Tool contracts YAML path
   --tool-policy  Tool policy YAML path
   --authority    Authority level override for policy decisions (default: task packet authority_level or L0)
@@ -287,7 +295,9 @@ policy flags:
 
 Examples:
   forgex run-demo --case generic-contract-violation --root .forgex
+  forgex run-demo --case generic-contract-success --root .forgex
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_regression_v1
+  forgex eval --run .forgex/runs/<run_id> --suite generic_contract_happy_v1
   forgex index-run --run .forgex/runs/<run_id>
   forgex runs --limit 10
   forgex context inspect --run .forgex/runs/<run_id>

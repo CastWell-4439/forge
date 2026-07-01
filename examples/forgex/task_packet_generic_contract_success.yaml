@@ -1,0 +1,19 @@
+id: generic_contract_success_demo
+name: Generic contract success demo
+goal: Run demo.expensive_generation with the required assets provided.
+authority_level: L2
+inputs:
+  request_id: demo-req-002
+  batch_id: demo-batch-002
+  tool_payload:
+    required_assets:
+      - local://required_asset_0
+      - local://required_asset_1
+constraints:
+  - demo.expensive_generation must be called with non-empty required_assets.
+success:
+  - Non-empty required_assets passes tool_contract validation.
+  - Produced result_url passes the required output validation.
+  - Stop decision is continue and the run completes.
+metadata:
+  source: generic_contract_success

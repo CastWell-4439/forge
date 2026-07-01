@@ -34,3 +34,47 @@ suites:
           - path: stop_decisions[0].reason
             op: contains
             value: arbiter selected
+
+  - id: generic_contract_happy_v1
+    cases:
+      - id: GENERIC_REQUIRED_ASSETS_PRESENT
+        assertions:
+          - path: run.status
+            op: eq
+            value: succeeded
+          - path: policy_decisions[0].action
+            op: eq
+            value: allow
+          - path: policy_decisions[0].authority
+            op: eq
+            value: L2
+          - path: contract_validations[3].validator
+            op: eq
+            value: required_assets_not_empty
+          - path: contract_validations[3].status
+            op: eq
+            value: passed
+          - path: contract_validations[4].validator
+            op: eq
+            value: required_outputs_present
+          - path: contract_validations[4].status
+            op: eq
+            value: passed
+          - path: artifacts[0].status
+            op: eq
+            value: produced
+          - path: artifacts[1].status
+            op: eq
+            value: valid
+          - path: world_state.entries[0].status
+            op: eq
+            value: accepted
+          - path: stop_signals[0].source
+            op: eq
+            value: llm_suggested_done
+          - path: stop_decisions[0].action
+            op: eq
+            value: continue
+          - path: stop_decisions[0].reason
+            op: contains
+            value: arbiter selected

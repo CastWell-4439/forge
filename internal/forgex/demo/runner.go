@@ -23,14 +23,81 @@ import (
 
 // Default paths used when the caller does not override them.
 const (
-	DefaultTaxonomyPath   = "configs/forgex/failure_taxonomy.yaml"
-	DefaultPolicyPath     = "configs/forgex/stop_policies.yaml"
-	DefaultPacketPath     = "examples/forgex/task_packet_generic_contract_violation.yaml"
-	DefaultContractsPath  = "configs/forgex/tool_contracts/generic_tool_contracts.yaml"
-	DefaultToolPolicyPath = "configs/forgex/policies/safe_default.yaml"
-	DefaultAuthorityLevel = ""
-	defaultExpensiveTool  = "demo.expensive_generation"
+	DefaultTaxonomyPath      = "configs/forgex/failure_taxonomy.yaml"
+	DefaultPolicyPath        = "configs/forgex/stop_policies.yaml"
+	DefaultPacketPath        = "examples/forgex/task_packet_generic_contract_violation.yaml"
+	DefaultSuccessPacketPath = "examples/forgex/task_packet_generic_contract_success.yaml"
+	DefaultContractsPath     = "configs/forgex/tool_contracts/generic_tool_contracts.yaml"
+	DefaultToolPolicyPath    = "configs/forgex/policies/safe_default.yaml"
+	DefaultAuthorityLevel    = ""
+	defaultExpensiveTool     = "demo.expensive_generation"
 )
+
+// demoInputs bundles the configuration a demo run needs. Loading everything up
+// front means a config error fails the demo before any run artifacts are
+// written.
+type demoInputs struct {
+	packet         model.TaskPacket
+	suitability    forgextask.SuitabilityResult
+	authorityLevel string
+	taxonomy       *failure.Taxonomy
+	stopPolicy     *stop.PolicyConfig
+	contract       toolgw.ToolContract
+	toolPolicy     *forgexpolicy.Config
+}
+
+// loadDemoInputs reads and validates every config file a demo run depends on.
+// The packet path must already be resolved by the caller; the remaining paths
+// fall back to the ForgeX defaults when empty.
+func loadDemoInputs(taxonomyPath, policyPath, packetPath, contractsPath, toolPolicyPath, authorityLevel string) (demoInputs, error) {
+	if taxonomyPath == "" {
+		taxonomyPath = DefaultTaxonomyPath
+	}
+	if policyPath == "" {
+		policyPath = DefaultPolicyPath
+	}
+	if contractsPath == "" {
+		contractsPath = DefaultContractsPath
+	}
+	if toolPolicyPath == "" {
+		toolPolicyPath = DefaultToolPolicyPath
+	}
+
+	packet, err := forgextask.LoadPacket(packetPath)
+	if err != nil {
+		return demoInputs{}, err
+	}
+	taxonomy, err := failure.LoadTaxonomy(taxonomyPath)
+	if err != nil {
+		return demoInputs{}, err
+	}
+	stopPolicy, err := stop.LoadPolicy(policyPath)
+	if err != nil {
+		return demoInputs{}, err
+	}
+	contracts, err := toolgw.LoadContracts(contractsPath)
+	if err != nil {
+		return demoInputs{}, err
+	}
+	contract, err := contracts.MustGet(defaultExpensiveTool)
+	if err != nil {
+		return demoInputs{}, err
+	}
+	toolPolicy, err := forgexpolicy.LoadConfig(toolPolicyPath)
+	if err != nil {
+		return demoInputs{}, err
+	}
+
+	return demoInputs{
+		packet:         packet,
+		suitability:    forgextask.EvaluatePacket(packet),
+		authorityLevel: effectiveAuthorityLevel(authorityLevel, packet),
+		taxonomy:       taxonomy,
+		stopPolicy:     stopPolicy,
+		contract:       contract,
+		toolPolicy:     toolPolicy,
+	}, nil
+}
 
 // RunGenericContractViolationDemo runs the "empty required_assets" contract
 // violation bad case end to end without calling any external API. It reads the
@@ -52,53 +119,26 @@ func RunGenericContractViolationDemoWithControl(ctx context.Context, root, taxon
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if taxonomyPath == "" {
-		taxonomyPath = DefaultTaxonomyPath
-	}
-	if policyPath == "" {
-		policyPath = DefaultPolicyPath
-	}
 	if packetPath == "" {
 		packetPath = DefaultPacketPath
-	}
-	if contractsPath == "" {
-		contractsPath = DefaultContractsPath
 	}
 	if toolPolicyPath == "" {
 		toolPolicyPath = DefaultToolPolicyPath
 	}
-	// 1. Read TaskPacket.
-	packet, err := forgextask.LoadPacket(packetPath)
-	if err != nil {
-		return "", err
-	}
-	authorityLevel = effectiveAuthorityLevel(authorityLevel, packet)
-
-	suitability := forgextask.EvaluatePacket(packet)
-
 	// Load classification taxonomy, stop policies, tool contracts and tool
 	// policies up front so a config error fails the demo before any artifacts are
 	// written.
-	taxonomy, err := failure.LoadTaxonomy(taxonomyPath)
+	inputs, err := loadDemoInputs(taxonomyPath, policyPath, packetPath, contractsPath, toolPolicyPath, authorityLevel)
 	if err != nil {
 		return "", err
 	}
-	policy, err := stop.LoadPolicy(policyPath)
-	if err != nil {
-		return "", err
-	}
-	contracts, err := toolgw.LoadContracts(contractsPath)
-	if err != nil {
-		return "", err
-	}
-	toolContract, err := contracts.MustGet(defaultExpensiveTool)
-	if err != nil {
-		return "", err
-	}
-	toolPolicy, err := forgexpolicy.LoadConfig(toolPolicyPath)
-	if err != nil {
-		return "", err
-	}
+	packet := inputs.packet
+	authorityLevel = inputs.authorityLevel
+	suitability := inputs.suitability
+	taxonomy := inputs.taxonomy
+	policy := inputs.stopPolicy
+	toolContract := inputs.contract
+	toolPolicy := inputs.toolPolicy
 
 	// 2. Create Run.
 	now := time.Now().UTC()
