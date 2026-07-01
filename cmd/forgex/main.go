@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/castwell/forge/internal/forgex/cases"
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
@@ -16,6 +17,7 @@ import (
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
+	"github.com/castwell/forge/internal/forgex/reliability"
 	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
 	"github.com/castwell/forge/internal/forgex/toolgw"
@@ -43,6 +45,11 @@ func main() {
 	case "eval":
 		if err := runEval(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "eval: %v\n", err)
+			os.Exit(1)
+		}
+	case "eval-repeat":
+		if err := runEvalRepeat(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "eval-repeat: %v\n", err)
 			os.Exit(1)
 		}
 	case "index-run":
@@ -97,25 +104,23 @@ func runDemo(args []string) error {
 		return err
 	}
 
-	switch *caseName {
+	runID, err := runDemoCase(*caseName, *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("demo completed: run_id=%s\n", runID)
+	fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
+	return nil
+}
+
+func runDemoCase(caseName, root, taxonomy, policy, packet, contracts, toolPolicy, authority string) (string, error) {
+	switch caseName {
 	case "generic-contract-violation":
-		runID, err := demo.RunGenericContractViolationDemoWithControl(context.Background(), *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("demo completed: run_id=%s\n", runID)
-		fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
-		return nil
+		return demo.RunGenericContractViolationDemoWithControl(context.Background(), root, taxonomy, policy, packet, contracts, toolPolicy, authority)
 	case "generic-contract-success":
-		runID, err := demo.RunGenericContractSuccessDemoWithControl(context.Background(), *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("demo completed: run_id=%s\n", runID)
-		fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
-		return nil
+		return demo.RunGenericContractSuccessDemoWithControl(context.Background(), root, taxonomy, policy, packet, contracts, toolPolicy, authority)
 	default:
-		return fmt.Errorf("unknown demo case: %s (available: generic-contract-violation, generic-contract-success)", *caseName)
+		return "", fmt.Errorf("unknown demo case: %s (available: generic-contract-violation, generic-contract-success)", caseName)
 	}
 }
 
@@ -130,27 +135,108 @@ func runEval(args []string) error {
 	if *runDir == "" {
 		return fmt.Errorf("--run is required")
 	}
-	result, err := forgexeval.Run(context.Background(), *runDir, *rules, *suite)
+	result, err := evaluateRunDir(*runDir, *rules, *suite)
 	if err != nil {
-		return err
-	}
-	artifacts, err := forgexeval.LoadRunArtifacts(*runDir)
-	if err != nil {
-		return err
-	}
-	card := scorecard.Build(artifacts, result, countLessons(filepath.Join(*runDir, "lessons.jsonl")))
-	if err := scorecard.Write(*runDir, card); err != nil {
-		return err
-	}
-	if err := scorecard.AppendToReport(*runDir, card); err != nil {
 		return err
 	}
 	fmt.Printf("eval completed: run_id=%s suite=%s status=%s\n", result.RunID, result.SuiteID, result.Status)
 	fmt.Printf("result: %s/eval_result.json\n", *runDir)
 	fmt.Printf("scorecard: %s/scorecard.json\n", *runDir)
-	fmt.Printf("scorecard summary: %s\n", scorecard.Format(card))
+	if card, err := readScorecard(filepath.Join(*runDir, "scorecard.json")); err == nil {
+		fmt.Printf("scorecard summary: %s\n", scorecard.Format(card))
+	}
 	if result.Status == "failed" {
 		return fmt.Errorf("eval failed")
+	}
+	return nil
+}
+
+func evaluateRunDir(runDir, rulesPath, suiteID string) (model.EvalResult, error) {
+	result, err := forgexeval.Run(context.Background(), runDir, rulesPath, suiteID)
+	if err != nil {
+		return model.EvalResult{}, err
+	}
+	artifacts, err := forgexeval.LoadRunArtifacts(runDir)
+	if err != nil {
+		return model.EvalResult{}, err
+	}
+	card := scorecard.Build(artifacts, result, countLessons(filepath.Join(runDir, "lessons.jsonl")))
+	if err := scorecard.Write(runDir, card); err != nil {
+		return model.EvalResult{}, err
+	}
+	if err := scorecard.AppendToReport(runDir, card); err != nil {
+		return model.EvalResult{}, err
+	}
+	return result, nil
+}
+
+func readScorecard(path string) (scorecard.Scorecard, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return scorecard.Scorecard{}, err
+	}
+	var card scorecard.Scorecard
+	if err := json.Unmarshal(data, &card); err != nil {
+		return scorecard.Scorecard{}, err
+	}
+	return card, nil
+}
+
+func runEvalRepeat(args []string) error {
+	fs := flag.NewFlagSet("eval-repeat", flag.ContinueOnError)
+	caseID := fs.String("case", "", "registered case id to repeat")
+	n := fs.Int("n", 1, "number of serial repetitions")
+	root := fs.String("root", ".forgex-repeat", "root directory for repeated run artifacts")
+	casesPath := fs.String("cases", "configs/forgex/cases.yaml", "case registry YAML path")
+	rules := fs.String("rules", "configs/forgex/eval_rules.yaml", "eval rules YAML path")
+	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
+	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
+	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
+	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
+	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level override for tool policy decisions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *caseID == "" {
+		return fmt.Errorf("--case is required")
+	}
+	if *n <= 0 {
+		return fmt.Errorf("--n must be greater than 0")
+	}
+	reg, err := cases.Load(*casesPath)
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Find(*caseID)
+	if err != nil {
+		return err
+	}
+
+	runs := make([]reliability.RunResult, 0, *n)
+	for i := 1; i <= *n; i++ {
+		runID, err := runDemoCase(spec.ID, *root, *taxonomy, *policy, spec.TaskPacket, *contracts, *toolPolicy, *authority)
+		result := reliability.RunResult{Index: i, RunID: runID, RunDir: filepath.Join(*root, "runs", runID), CreatedAt: time.Now().UTC()}
+		if err != nil {
+			result.Error = err.Error()
+			runs = append(runs, result)
+			continue
+		}
+		evalResult, err := evaluateRunDir(result.RunDir, *rules, spec.Suite)
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.EvalStatus = string(evalResult.Status)
+		}
+		runs = append(runs, result)
+	}
+	summary := reliability.Summarize(spec.ID, spec.Suite, runs)
+	if err := reliability.Write(*root, summary); err != nil {
+		return err
+	}
+	fmt.Printf("repeat completed: case=%s suite=%s total=%d passed=%d failed=%d pass_at_k=%t pass_all=%t flaky_rate=%.2f\n", summary.CaseID, summary.SuiteID, summary.Total, summary.Passed, summary.Failed, summary.PassAtK, summary.PassAll, summary.FlakyRate)
+	fmt.Printf("result: %s/repeat_result.json\n", *root)
+	if summary.Failed > 0 {
+		return fmt.Errorf("repeat eval failed")
 	}
 	return nil
 }
@@ -486,6 +572,7 @@ Commands:
   help       Print this help message
   run-demo   Run a local harness demo (no external API calls)
   eval       Evaluate a run directory against eval rules
+  eval-repeat Repeat a registered case and summarize reliability
   index-run  Index one run directory into .forgex/index.db
   runs       List indexed runs
   context    Inspect run context/progress state
@@ -508,6 +595,14 @@ eval flags:
   --suite  Eval suite id (default: generic_contract_regression_v1)
   --rules  Eval rules YAML path (default: configs/forgex/eval_rules.yaml)
   Writes eval_result.json and scorecard.json into the run directory.
+
+eval-repeat flags:
+  --case   Registered case id, e.g. generic-contract-success
+  --n      Number of serial repetitions (default: 1)
+  --root   Root directory for repeated run artifacts (default: .forgex-repeat)
+  --cases  Case registry YAML path (default: configs/forgex/cases.yaml)
+  --rules  Eval rules YAML path (default: configs/forgex/eval_rules.yaml)
+  Writes repeat_result.json under --root.
 
 index flags:
   --run    ForgeX run directory to index, e.g. .forgex/runs/<run_id>
@@ -532,6 +627,7 @@ Examples:
   forgex run-demo --case generic-contract-success --root .forgex
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_regression_v1
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_happy_v1
+  forgex eval-repeat --case generic-contract-success --n 5 --root .forgex-repeat
   forgex index-run --run .forgex/runs/<run_id>
   forgex runs --limit 10
   forgex context inspect --run .forgex/runs/<run_id>
