@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/demo"
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
+	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
 	"github.com/castwell/forge/internal/forgex/storage"
 	"github.com/castwell/forge/internal/forgex/toolgw"
@@ -57,6 +61,11 @@ func main() {
 	case "policy":
 		if err := runPolicy(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "policy: %v\n", err)
+			os.Exit(1)
+		}
+	case "lessons":
+		if err := runLessons(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "lessons: %v\n", err)
 			os.Exit(1)
 		}
 	default:
@@ -251,6 +260,93 @@ func checkPolicy(args []string) error {
 	return nil
 }
 
+func runLessons(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("lessons subcommand required (available: list)")
+	}
+	switch args[0] {
+	case "list":
+		return listLessons(args[1:])
+	default:
+		return fmt.Errorf("unknown lessons subcommand: %s", args[0])
+	}
+}
+
+func listLessons(args []string) error {
+	fs := flag.NewFlagSet("lessons list", flag.ContinueOnError)
+	runDir := fs.String("run", "", "ForgeX run directory whose lessons.jsonl should be listed")
+	jsonOut := fs.Bool("json", false, "print raw lessons as JSON lines")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *runDir == "" {
+		return fmt.Errorf("--run is required")
+	}
+	lessonsPath := filepath.Join(*runDir, "lessons.jsonl")
+	lessons, err := readLessonsFile(lessonsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("No lessons recorded.")
+			return nil
+		}
+		return err
+	}
+	if len(lessons) == 0 {
+		fmt.Println("No lessons recorded.")
+		return nil
+	}
+	for _, lesson := range lessons {
+		if *jsonOut {
+			encoded, err := json.Marshal(lesson)
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(encoded))
+			continue
+		}
+		fmt.Printf("%s\tcategory=%s\tsource_run=%s\n", lesson.ID, lesson.Category, lesson.SourceRunID)
+		if lesson.Title != "" {
+			fmt.Printf("  title: %s\n", lesson.Title)
+		}
+		if lesson.Content != "" {
+			fmt.Printf("  recommendation: %s\n", lesson.Content)
+		}
+		if trigger := strings.TrimSpace(lesson.Metadata["trigger"]); trigger != "" {
+			fmt.Printf("  trigger: %s\n", trigger)
+		}
+		if evidence := strings.TrimSpace(lesson.Metadata["evidence"]); evidence != "" {
+			fmt.Printf("  evidence: %s\n", evidence)
+		}
+	}
+	return nil
+}
+
+func readLessonsFile(path string) ([]model.Lesson, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var lessons []model.Lesson
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var lesson model.Lesson
+		if err := json.Unmarshal([]byte(line), &lesson); err != nil {
+			return nil, fmt.Errorf("decode %s: %w", path, err)
+		}
+		lessons = append(lessons, lesson)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return lessons, nil
+}
+
 func printHelp() {
 	fmt.Print(`ForgeX - Agent Harness Control Plane
 
@@ -266,6 +362,7 @@ Commands:
   runs       List indexed runs
   context    Inspect run context/progress state
   policy     Check tool policy decisions
+  lessons    List lessons derived from a run
 
 run-demo flags:
   --case      Demo case to run: generic-contract-violation | generic-contract-success (default: generic-contract-violation)
@@ -293,6 +390,9 @@ context flags:
 policy flags:
   policy check --tool <name> --authority L1 [--contracts path] [--policy path]
 
+lessons flags:
+  lessons list --run .forgex/runs/<run_id> [--json]
+
 Examples:
   forgex run-demo --case generic-contract-violation --root .forgex
   forgex run-demo --case generic-contract-success --root .forgex
@@ -302,5 +402,6 @@ Examples:
   forgex runs --limit 10
   forgex context inspect --run .forgex/runs/<run_id>
   forgex policy check --tool demo.expensive_generation --authority L1
+  forgex lessons list --run .forgex/runs/<run_id>
 `)
 }
