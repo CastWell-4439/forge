@@ -85,6 +85,7 @@ func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
 		"## Errors",
 		"## Stop Decisions",
 		"## Suggested Fix",
+		"## Lessons",
 		"run_generic_001",
 		"Run demo.expensive_generation with required assets.",
 		"demo.expensive_generation",
@@ -140,7 +141,7 @@ func TestGenerateMarkdownEmptyErrorsStillRenders(t *testing.T) {
 	}
 	md := GenerateMarkdown(snapshot)
 
-	for _, section := range []string{"## Summary", "## Timeline", "## Errors", "## Stop Decisions", "## Suggested Fix"} {
+	for _, section := range []string{"## Summary", "## Timeline", "## Errors", "## Stop Decisions", "## Suggested Fix", "## Lessons"} {
 		if !strings.Contains(md, section) {
 			t.Errorf("report missing section %q", section)
 		}
@@ -150,6 +151,39 @@ func TestGenerateMarkdownEmptyErrorsStillRenders(t *testing.T) {
 	}
 	if !strings.Contains(md, "_No errors recorded._") {
 		t.Errorf("report missing empty-errors placeholder\n%s", md)
+	}
+	if !strings.Contains(md, "_No lessons recorded._") {
+		t.Errorf("report missing empty-lessons placeholder\n%s", md)
+	}
+}
+
+func TestGenerateMarkdownRendersLessons(t *testing.T) {
+	snapshot := genericSnapshot()
+	snapshot.Lessons = []model.Lesson{
+		{
+			ID:       "LESSON_GENERIC_REQUIRED_ASSETS_EMPTY",
+			Title:    "Prevent tool_contract_violation failure in demo.expensive_generation",
+			Category: "tool_contract_violation",
+			Content:  "validate required assets before execution",
+			Metadata: map[string]string{
+				"trigger":  "required_assets is empty for demo.expensive_generation",
+				"evidence": "err_1,cv_1",
+			},
+		},
+	}
+
+	md := GenerateMarkdown(snapshot)
+
+	for _, w := range []string{
+		"## Lessons",
+		"LESSON_GENERIC_REQUIRED_ASSETS_EMPTY",
+		"recommendation: validate required assets before execution",
+		"trigger: required_assets is empty for demo.expensive_generation",
+		"evidence: err_1,cv_1",
+	} {
+		if !strings.Contains(md, w) {
+			t.Errorf("report missing %q\n---\n%s", w, md)
+		}
 	}
 }
 

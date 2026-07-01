@@ -109,3 +109,9 @@ func (l Layout) ReportFile(runID string) string {
 func (l Layout) BadCaseFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "badcase.yaml")
 }
+
+// LessonsFile returns the lessons JSONL file path. The file is written only for
+// runs that produce at least one lesson, so a clean run leaves it absent.
+func (l Layout) LessonsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "lessons.jsonl")
+}

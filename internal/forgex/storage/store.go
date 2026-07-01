@@ -23,6 +23,7 @@ type Store interface {
 	SaveWorldState(ctx context.Context, state model.WorldState) error
 	AppendStateClaim(ctx context.Context, claim model.StateClaim) error
 	AppendArtifact(ctx context.Context, artifact model.ArtifactRecord) error
+	AppendLesson(ctx context.Context, lesson model.Lesson) error
 	WriteReport(ctx context.Context, runID string, markdown string) error
 	WriteBadCase(ctx context.Context, runID string, yamlBytes []byte) error
 }

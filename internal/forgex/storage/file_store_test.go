@@ -146,6 +146,17 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 	}
 	assertFileExists(t, layout.ReportFile(run.ID))
 
+	if err := store.AppendLesson(ctx, model.Lesson{
+		ID:          "LESSON_GENERIC_REQUIRED_ASSETS_EMPTY",
+		SourceRunID: run.ID,
+		Category:    "tool_contract_violation",
+		Content:     "validate required assets before execution",
+		CreatedAt:   now,
+	}); err != nil {
+		t.Fatalf("AppendLesson: %v", err)
+	}
+	assertJSONLLines(t, layout.LessonsFile(run.ID), 1)
+
 	if err := store.WriteBadCase(ctx, run.ID, []byte("id: GENERIC_001\n")); err != nil {
 		t.Fatalf("WriteBadCase: %v", err)
 	}

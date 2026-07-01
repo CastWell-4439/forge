@@ -9,6 +9,7 @@ import (
 
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/failure"
+	"github.com/castwell/forge/internal/forgex/lessons"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
 	"github.com/castwell/forge/internal/forgex/report"
@@ -331,6 +332,17 @@ func RunGenericContractViolationDemoWithControl(ctx context.Context, root, taxon
 	}
 
 	// 10. Generate the Markdown report.
+	// 10a. Derive lessons from the halting outcome and persist them so future
+	// runs can learn from this bad case. Deriving before rendering lets the
+	// report surface the lessons it just wrote.
+	derivedLessons := lessons.Derive(snapshot)
+	for _, lesson := range derivedLessons {
+		if err := store.AppendLesson(ctx, lesson); err != nil {
+			return "", fmt.Errorf("append lesson: %w", err)
+		}
+	}
+	snapshot.Lessons = derivedLessons
+
 	markdown := report.GenerateMarkdown(snapshot)
 	if err := store.WriteReport(ctx, runID, markdown); err != nil {
 		return "", fmt.Errorf("write report: %w", err)

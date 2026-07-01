@@ -29,13 +29,15 @@ type RunSnapshot struct {
 	StopDecisions       []model.StopDecision
 	ProgressLedger      *model.ProgressLedger
 	ContextPacks        []model.ContextPack
+	Lessons             []model.Lesson
 }
 
 // GenerateMarkdown renders a human-readable Markdown report for a run snapshot.
 //
 // The report always contains the following sections in order: Summary,
-// Timeline, Tool Calls, Errors, Stop Decisions and Suggested Fix. Empty streams
-// render an explicit placeholder so the structure stays stable across runs.
+// Timeline, Tool Calls, Errors, Stop Decisions, Suggested Fix and Lessons.
+// Empty streams render an explicit placeholder so the structure stays stable
+// across runs.
 func GenerateMarkdown(snapshot RunSnapshot) string {
 	var b strings.Builder
 
@@ -56,6 +58,7 @@ func GenerateMarkdown(snapshot RunSnapshot) string {
 	writeStopSignals(&b, snapshot)
 	writeStopDecisions(&b, snapshot)
 	writeSuggestedFix(&b, snapshot)
+	writeLessons(&b, snapshot)
 
 	return b.String()
 }
@@ -362,6 +365,33 @@ func writeSuggestedFix(b *strings.Builder, snapshot RunSnapshot) {
 		}
 	}
 	b.WriteString("_No specific fix suggested._\n")
+}
+
+// writeLessons renders the durable lessons derived from the run. A clean run
+// carries no lessons and renders an explicit placeholder, so the section never
+// implies a bad case where none occurred.
+func writeLessons(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Lessons\n\n")
+	if len(snapshot.Lessons) == 0 {
+		b.WriteString("_No lessons recorded._\n\n")
+		return
+	}
+	for _, l := range snapshot.Lessons {
+		b.WriteString(fmt.Sprintf("- **%s** category=%s\n", orPlaceholder(l.ID), orPlaceholder(l.Category)))
+		if l.Title != "" {
+			b.WriteString(fmt.Sprintf("  - title: %s\n", l.Title))
+		}
+		if l.Content != "" {
+			b.WriteString(fmt.Sprintf("  - recommendation: %s\n", l.Content))
+		}
+		if trigger := strings.TrimSpace(l.Metadata["trigger"]); trigger != "" {
+			b.WriteString(fmt.Sprintf("  - trigger: %s\n", trigger))
+		}
+		if evidence := strings.TrimSpace(l.Metadata["evidence"]); evidence != "" {
+			b.WriteString(fmt.Sprintf("  - evidence: %s\n", evidence))
+		}
+	}
+	b.WriteString("\n")
 }
 
 // finalDecision returns the action of the last stop decision, or a placeholder

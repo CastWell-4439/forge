@@ -142,6 +142,15 @@ func (s *FileStore) AppendArtifact(ctx context.Context, artifact model.ArtifactR
 	return AppendJSONL(s.layout.ArtifactsFile(artifact.RunID), artifact)
 }
 
+// AppendLesson appends one lesson to lessons.jsonl. The lesson is routed to its
+// source run's directory via lesson.SourceRunID.
+func (s *FileStore) AppendLesson(ctx context.Context, lesson model.Lesson) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.LessonsFile(lesson.SourceRunID), lesson)
+}
+
 // WriteReport writes the Markdown report for a run.
 func (s *FileStore) WriteReport(ctx context.Context, runID string, markdown string) error {
 	return writeBytesFile(ctx, s.layout.ReportFile(runID), []byte(markdown))

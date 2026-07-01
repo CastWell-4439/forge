@@ -6,6 +6,7 @@ import (
 	"time"
 
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
+	"github.com/castwell/forge/internal/forgex/lessons"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
 	"github.com/castwell/forge/internal/forgex/report"
@@ -252,6 +253,17 @@ func RunGenericContractSuccessDemoWithControl(ctx context.Context, root, taxonom
 		ProgressLedger:      &ledger,
 		ContextPacks:        []model.ContextPack{contextPack},
 	}
+	// A clean run produces no lessons: Derive returns nil for a non-halting
+	// outcome, so no lessons.jsonl is written and the report shows no
+	// misleading bad case. The call documents that this is intentional.
+	derivedLessons := lessons.Derive(snapshot)
+	for _, lesson := range derivedLessons {
+		if err := store.AppendLesson(ctx, lesson); err != nil {
+			return "", fmt.Errorf("append lesson: %w", err)
+		}
+	}
+	snapshot.Lessons = derivedLessons
+
 	markdown := report.GenerateMarkdown(snapshot)
 	if err := store.WriteReport(ctx, runID, markdown); err != nil {
 		return "", fmt.Errorf("write report: %w", err)
