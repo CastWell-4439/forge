@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
@@ -27,7 +28,7 @@ const (
 	DefaultPacketPath     = "examples/forgex/task_packet_aihook_empty_images_refs.yaml"
 	DefaultContractsPath  = "configs/forgex/tool_contracts/blueai_aihook.yaml"
 	DefaultToolPolicyPath = "configs/forgex/policies/safe_default.yaml"
-	DefaultAuthorityLevel = "L2"
+	DefaultAuthorityLevel = ""
 	defaultAIHookViduTool = "vidu.reference2video"
 )
 
@@ -66,15 +67,12 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 	if toolPolicyPath == "" {
 		toolPolicyPath = DefaultToolPolicyPath
 	}
-	if authorityLevel == "" {
-		authorityLevel = DefaultAuthorityLevel
-	}
-
 	// 1. Read TaskPacket.
 	packet, err := forgextask.LoadPacket(packetPath)
 	if err != nil {
 		return "", err
 	}
+	authorityLevel = effectiveAuthorityLevel(authorityLevel, packet)
 
 	suitability := forgextask.EvaluatePacket(packet)
 
@@ -318,6 +316,17 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 
 	// 12. Return the run ID.
 	return runID, nil
+}
+
+func effectiveAuthorityLevel(override string, packet model.TaskPacket) string {
+	override = strings.TrimSpace(override)
+	if override != "" {
+		return override
+	}
+	if strings.TrimSpace(packet.Authority) != "" {
+		return packet.Authority
+	}
+	return string(forgexpolicy.AuthorityL0)
 }
 
 func toModelPolicyDecision(decision forgexpolicy.Decision) model.PolicyDecision {

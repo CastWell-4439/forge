@@ -11,9 +11,10 @@ import (
 func TestLoadPacketValidatesAndNormalizes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "task.yaml")
 	packet := model.TaskPacket{
-		ID:   " task_1 ",
-		Name: " demo ",
-		Goal: " do the thing ",
+		ID:        " task_1 ",
+		Name:      " demo ",
+		Goal:      " do the thing ",
+		Authority: " l2 ",
 		Inputs: map[string]any{
 			"x": 1,
 		},
@@ -26,7 +27,7 @@ func TestLoadPacketValidatesAndNormalizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPacket() error = %v", err)
 	}
-	if got.ID != "task_1" || got.Name != "demo" || got.Goal != "do the thing" {
+	if got.ID != "task_1" || got.Name != "demo" || got.Goal != "do the thing" || got.Authority != "L2" {
 		t.Fatalf("packet not normalized: %+v", got)
 	}
 	if got.Inputs["x"] == nil {

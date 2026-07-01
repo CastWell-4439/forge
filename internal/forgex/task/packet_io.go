@@ -32,6 +32,7 @@ type packetYAML struct {
 	Name        string            `json:"name" yaml:"name"`
 	Title       string            `json:"title" yaml:"title"`
 	Goal        string            `json:"goal" yaml:"goal"`
+	Authority   string            `json:"authority_level" yaml:"authority_level"`
 	Inputs      map[string]any    `json:"inputs" yaml:"inputs"`
 	Constraints []string          `json:"constraints,omitempty" yaml:"constraints,omitempty"`
 	Success     []string          `json:"success,omitempty" yaml:"success,omitempty"`
@@ -64,6 +65,7 @@ func (p packetYAML) toModel() model.TaskPacket {
 		ID:          p.ID,
 		Name:        name,
 		Goal:        p.Goal,
+		Authority:   p.Authority,
 		Inputs:      p.Inputs,
 		Constraints: p.Constraints,
 		Success:     p.Success,
@@ -95,6 +97,7 @@ func NormalizePacket(packet model.TaskPacket) model.TaskPacket {
 	packet.ID = strings.TrimSpace(packet.ID)
 	packet.Name = strings.TrimSpace(packet.Name)
 	packet.Goal = strings.TrimSpace(packet.Goal)
+	packet.Authority = strings.ToUpper(strings.TrimSpace(packet.Authority))
 	return packet
 }
 

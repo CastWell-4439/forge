@@ -76,6 +76,7 @@ func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
 	wants := []string{
 		"# ForgeX Run Report",
 		"## Summary",
+		"## Control Metrics",
 		"## Task Packet",
 		"## Progress Ledger",
 		"## Context Packs",
@@ -92,6 +93,35 @@ func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
 		"high",
 		"Retryable: false",
 		"stop",
+	}
+	for _, w := range wants {
+		if !strings.Contains(md, w) {
+			t.Errorf("report missing %q\n---\n%s", w, md)
+		}
+	}
+}
+
+func TestGenerateMarkdownControlMetrics(t *testing.T) {
+	snapshot := aihookSnapshot()
+	snapshot.PolicyDecisions = []model.PolicyDecision{
+		{ToolName: "vidu.reference2video", Action: "require_approval", RequiresHITL: true},
+	}
+	snapshot.ContractValidations = []model.ContractValidation{
+		{ToolName: "vidu.reference2video", Status: "failed", Message: "images_refs is empty"},
+	}
+	snapshot.Artifacts = []model.ArtifactRecord{
+		{ID: "art_1", Type: "reference_image", Status: model.ArtifactMissing},
+	}
+
+	md := GenerateMarkdown(snapshot)
+
+	wants := []string{
+		"## Control Metrics",
+		"- **Policy Decisions**: 1",
+		"- **Approval Required**: 1",
+		"- **Contract Validation Failed**: 1",
+		"- **Safe Stop**: 1",
+		"- **Missing Artifacts**: 1",
 	}
 	for _, w := range wants {
 		if !strings.Contains(md, w) {

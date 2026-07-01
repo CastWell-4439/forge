@@ -7,6 +7,9 @@ suites:
           - path: policy_decisions[0].action
             op: eq
             value: allow
+          - path: policy_decisions[0].authority
+            op: eq
+            value: L2
           - path: contract_validations[3].status
             op: eq
             value: failed

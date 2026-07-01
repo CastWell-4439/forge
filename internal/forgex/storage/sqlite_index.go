@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/castwell/forge/internal/forgex/metrics"
 	"github.com/castwell/forge/internal/forgex/model"
+	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 )
 
@@ -27,6 +29,7 @@ type IndexedRun struct {
 	EvalStatus      string
 	LastCategory    string
 	LastFingerprint string
+	Metrics         metrics.ControlMetrics
 }
 
 // SQLiteIndex stores searchable summaries for local ForgeX run artifacts.
@@ -116,6 +119,60 @@ func (idx *SQLiteIndex) Init(ctx context.Context) error {
 			return err
 		}
 	}
+	return idx.ensureRunMetricColumns(ctx)
+}
+
+// runMetricColumns lists the control-metric summary columns kept on the runs
+// table. They are added idempotently so databases created before M7 keep
+// working after an upgrade.
+var runMetricColumns = []string{
+	"policy_decision_count",
+	"policy_deny_count",
+	"approval_required_count",
+	"contract_validation_failed_count",
+	"safe_stop_count",
+	"pause_count",
+	"context_budget_exceeded_count",
+	"progress_no_change_count",
+	"missing_artifact_count",
+	"state_conflict_count",
+}
+
+// ensureRunMetricColumns adds any missing control-metric columns to the runs
+// table. SQLite has no "ADD COLUMN IF NOT EXISTS", so existing columns are read
+// from PRAGMA table_info first.
+func (idx *SQLiteIndex) ensureRunMetricColumns(ctx context.Context) error {
+	rows, err := idx.db.QueryContext(ctx, `PRAGMA table_info(runs)`)
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, col := range runMetricColumns {
+		if existing[col] {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE runs ADD COLUMN %s INTEGER NOT NULL DEFAULT 0", col)
+		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -146,8 +203,19 @@ func (idx *SQLiteIndex) IndexArtifacts(ctx context.Context, artifacts indexArtif
 	if artifacts.EvalResult.ID != "" {
 		evalStatus = string(artifacts.EvalResult.Status)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO runs (id, task_id, name, status, started_at, ended_at, error_count, stop_action, eval_status, last_category, last_fingerprint, indexed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	m := metrics.Compute(metrics.Inputs{
+		PolicyDecisions:     artifacts.PolicyDecisions,
+		ContractValidations: artifacts.ContractValidations,
+		StopDecisions:       artifacts.StopDecisions,
+		StopSignals:         artifacts.StopSignals,
+		ContextPacks:        artifacts.ContextPacks,
+		Artifacts:           artifacts.Artifacts,
+		StateClaims:         artifacts.StateClaims,
+		WorldState:          artifacts.WorldState,
+	})
+	_, err = tx.ExecContext(ctx, `INSERT INTO runs (id, task_id, name, status, started_at, ended_at, error_count, stop_action, eval_status, last_category, last_fingerprint, indexed_at,
+	policy_decision_count, policy_deny_count, approval_required_count, contract_validation_failed_count, safe_stop_count, pause_count, context_budget_exceeded_count, progress_no_change_count, missing_artifact_count, state_conflict_count)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	task_id=excluded.task_id,
 	name=excluded.name,
@@ -159,9 +227,21 @@ ON CONFLICT(id) DO UPDATE SET
 	eval_status=excluded.eval_status,
 	last_category=excluded.last_category,
 	last_fingerprint=excluded.last_fingerprint,
-	indexed_at=excluded.indexed_at`,
+	indexed_at=excluded.indexed_at,
+	policy_decision_count=excluded.policy_decision_count,
+	policy_deny_count=excluded.policy_deny_count,
+	approval_required_count=excluded.approval_required_count,
+	contract_validation_failed_count=excluded.contract_validation_failed_count,
+	safe_stop_count=excluded.safe_stop_count,
+	pause_count=excluded.pause_count,
+	context_budget_exceeded_count=excluded.context_budget_exceeded_count,
+	progress_no_change_count=excluded.progress_no_change_count,
+	missing_artifact_count=excluded.missing_artifact_count,
+	state_conflict_count=excluded.state_conflict_count`,
 		run.ID, run.TaskID, run.Name, string(run.Status), formatTime(run.StartedAt), formatOptionalTime(run.EndedAt),
-		len(artifacts.Errors), stopAction, evalStatus, lastCategory, lastFingerprint, formatTime(time.Now().UTC()))
+		len(artifacts.Errors), stopAction, evalStatus, lastCategory, lastFingerprint, formatTime(time.Now().UTC()),
+		m.PolicyDecisionCount, m.PolicyDenyCount, m.ApprovalRequiredCount, m.ContractValidationFailedCount, m.SafeStopCount,
+		m.PauseCount, m.ContextBudgetExceededCount, m.ProgressNoChangeCount, m.MissingArtifactCount, m.StateConflictCount)
 	if err != nil {
 		return err
 	}
@@ -200,7 +280,9 @@ func (idx *SQLiteIndex) ListRuns(ctx context.Context, limit int) ([]IndexedRun, 
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := idx.db.QueryContext(ctx, `SELECT id, task_id, name, status, started_at, COALESCE(ended_at, ''), error_count, COALESCE(stop_action, ''), COALESCE(eval_status, ''), COALESCE(last_category, ''), COALESCE(last_fingerprint, '') FROM runs ORDER BY started_at DESC LIMIT ?`, limit)
+	rows, err := idx.db.QueryContext(ctx, `SELECT id, task_id, name, status, started_at, COALESCE(ended_at, ''), error_count, COALESCE(stop_action, ''), COALESCE(eval_status, ''), COALESCE(last_category, ''), COALESCE(last_fingerprint, ''),
+	policy_decision_count, policy_deny_count, approval_required_count, contract_validation_failed_count, safe_stop_count, pause_count, context_budget_exceeded_count, progress_no_change_count, missing_artifact_count, state_conflict_count
+	FROM runs ORDER BY started_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +292,9 @@ func (idx *SQLiteIndex) ListRuns(ctx context.Context, limit int) ([]IndexedRun, 
 	for rows.Next() {
 		var run IndexedRun
 		var startedAt, endedAt string
-		if err := rows.Scan(&run.ID, &run.TaskID, &run.Name, &run.Status, &startedAt, &endedAt, &run.ErrorCount, &run.StopAction, &run.EvalStatus, &run.LastCategory, &run.LastFingerprint); err != nil {
+		m := &run.Metrics
+		if err := rows.Scan(&run.ID, &run.TaskID, &run.Name, &run.Status, &startedAt, &endedAt, &run.ErrorCount, &run.StopAction, &run.EvalStatus, &run.LastCategory, &run.LastFingerprint,
+			&m.PolicyDecisionCount, &m.PolicyDenyCount, &m.ApprovalRequiredCount, &m.ContractValidationFailedCount, &m.SafeStopCount, &m.PauseCount, &m.ContextBudgetExceededCount, &m.ProgressNoChangeCount, &m.MissingArtifactCount, &m.StateConflictCount); err != nil {
 			return nil, err
 		}
 		run.StartedAt = parseIndexTime(startedAt)
@@ -221,10 +305,17 @@ func (idx *SQLiteIndex) ListRuns(ctx context.Context, limit int) ([]IndexedRun, 
 }
 
 type indexArtifacts struct {
-	Run           model.Run
-	Errors        []model.ErrorEnvelope
-	StopDecisions []model.StopDecision
-	EvalResult    model.EvalResult
+	Run                 model.Run
+	Errors              []model.ErrorEnvelope
+	StopDecisions       []model.StopDecision
+	StopSignals         []model.StopSignalRecord
+	PolicyDecisions     []model.PolicyDecision
+	ContractValidations []model.ContractValidation
+	ContextPacks        []model.ContextPack
+	Artifacts           []model.ArtifactRecord
+	StateClaims         []model.StateClaim
+	WorldState          *model.WorldState
+	EvalResult          model.EvalResult
 }
 
 func loadIndexArtifacts(runDir string) (indexArtifacts, error) {
@@ -236,6 +327,34 @@ func loadIndexArtifacts(runDir string) (indexArtifacts, error) {
 		return indexArtifacts{}, err
 	}
 	if err := readIndexJSONL(filepath.Join(runDir, "stop_decisions.jsonl"), &artifacts.StopDecisions); err != nil {
+		return indexArtifacts{}, err
+	}
+	if err := readIndexJSONL(filepath.Join(runDir, "stop_signals.jsonl"), &artifacts.StopSignals); err != nil {
+		return indexArtifacts{}, err
+	}
+	if err := readIndexJSONL(filepath.Join(runDir, "policy_decisions.jsonl"), &artifacts.PolicyDecisions); err != nil {
+		return indexArtifacts{}, err
+	}
+	if err := readIndexJSONL(filepath.Join(runDir, "contract_validations.jsonl"), &artifacts.ContractValidations); err != nil {
+		return indexArtifacts{}, err
+	}
+	if err := readIndexJSONL(filepath.Join(runDir, "context_packs.jsonl"), &artifacts.ContextPacks); err != nil {
+		return indexArtifacts{}, err
+	}
+	if err := readIndexJSONL(filepath.Join(runDir, "artifacts.jsonl"), &artifacts.Artifacts); err != nil {
+		return indexArtifacts{}, err
+	}
+	if err := readIndexJSONL(filepath.Join(runDir, "state_claims.jsonl"), &artifacts.StateClaims); err != nil {
+		return indexArtifacts{}, err
+	}
+	worldStatePath := filepath.Join(runDir, "world_state.yaml")
+	if data, err := os.ReadFile(worldStatePath); err == nil {
+		var worldState model.WorldState
+		if err := yaml.Unmarshal(data, &worldState); err != nil {
+			return indexArtifacts{}, err
+		}
+		artifacts.WorldState = &worldState
+	} else if !os.IsNotExist(err) {
 		return indexArtifacts{}, err
 	}
 	evalPath := filepath.Join(runDir, "eval_result.json")

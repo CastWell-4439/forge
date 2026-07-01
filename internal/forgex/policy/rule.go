@@ -23,6 +23,7 @@ type Condition struct {
 	RiskLevel        string `json:"risk_level,omitempty" yaml:"risk_level,omitempty"`
 	SideEffect       string `json:"side_effect,omitempty" yaml:"side_effect,omitempty"`
 	AuthorityBelow   string `json:"authority_below,omitempty" yaml:"authority_below,omitempty"`
+	AuthorityAtLeast string `json:"authority_at_least,omitempty" yaml:"authority_at_least,omitempty"`
 	ApprovalRequired *bool  `json:"approval_required,omitempty" yaml:"approval_required,omitempty"`
 }
 
@@ -42,6 +43,12 @@ func (c Condition) matches(input decisionInput) bool {
 	if c.AuthorityBelow != "" {
 		threshold := AuthorityLevel(c.AuthorityBelow)
 		if !threshold.Valid() || CompareAuthority(input.Authority, threshold) >= 0 {
+			return false
+		}
+	}
+	if c.AuthorityAtLeast != "" {
+		threshold := AuthorityLevel(c.AuthorityAtLeast)
+		if !threshold.Valid() || CompareAuthority(input.Authority, threshold) < 0 {
 			return false
 		}
 	}

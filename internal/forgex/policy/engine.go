@@ -101,6 +101,11 @@ func applySafeDefault(decision *Decision, authority AuthorityLevel, contract too
 		decision.RequiresHITL = true
 		return
 	}
+	if contract.SideEffect == toolgw.SideEffectExternalAPICall && CompareAuthority(authority, AuthorityL2) < 0 {
+		decision.Action = ActionDeny
+		decision.Reason = fmt.Sprintf("%s side effect requires authority %s or above", contract.SideEffect, AuthorityL2)
+		return
+	}
 	if contract.RiskLevel == toolgw.RiskHigh || contract.RiskLevel == toolgw.RiskCritical {
 		decision.Action = ActionRequireApproval
 		decision.Reason = fmt.Sprintf("%s risk tool requires approval by safe default", contract.RiskLevel)

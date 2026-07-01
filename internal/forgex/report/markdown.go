@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/castwell/forge/internal/forgex/metrics"
 	"github.com/castwell/forge/internal/forgex/model"
 )
 
@@ -41,6 +42,7 @@ func GenerateMarkdown(snapshot RunSnapshot) string {
 	b.WriteString("# ForgeX Run Report\n\n")
 
 	writeSummary(&b, snapshot)
+	writeControlMetrics(&b, snapshot)
 	writeTaskPacket(&b, snapshot)
 	writeProgress(&b, snapshot)
 	writeContextPacks(&b, snapshot)
@@ -74,6 +76,36 @@ func writeSummary(b *strings.Builder, snapshot RunSnapshot) {
 	b.WriteString(fmt.Sprintf("- **Status**: %s\n", orPlaceholder(string(snapshot.Run.Status))))
 	b.WriteString(fmt.Sprintf("- **Final Decision**: %s\n", finalDecision(snapshot)))
 	b.WriteString("\n")
+}
+
+func writeControlMetrics(b *strings.Builder, snapshot RunSnapshot) {
+	b.WriteString("## Control Metrics\n\n")
+	m := metrics.Compute(controlMetricsInputs(snapshot))
+	b.WriteString(fmt.Sprintf("- **Policy Decisions**: %d\n", m.PolicyDecisionCount))
+	b.WriteString(fmt.Sprintf("- **Policy Deny**: %d\n", m.PolicyDenyCount))
+	b.WriteString(fmt.Sprintf("- **Approval Required**: %d\n", m.ApprovalRequiredCount))
+	b.WriteString(fmt.Sprintf("- **Contract Validation Failed**: %d\n", m.ContractValidationFailedCount))
+	b.WriteString(fmt.Sprintf("- **Safe Stop**: %d\n", m.SafeStopCount))
+	b.WriteString(fmt.Sprintf("- **Pause**: %d\n", m.PauseCount))
+	b.WriteString(fmt.Sprintf("- **Context Budget Exceeded**: %d\n", m.ContextBudgetExceededCount))
+	b.WriteString(fmt.Sprintf("- **Progress No Change**: %d\n", m.ProgressNoChangeCount))
+	b.WriteString(fmt.Sprintf("- **Missing Artifacts**: %d\n", m.MissingArtifactCount))
+	b.WriteString(fmt.Sprintf("- **State Conflicts**: %d\n", m.StateConflictCount))
+	b.WriteString("\n")
+}
+
+// controlMetricsInputs adapts a RunSnapshot into metrics.Inputs.
+func controlMetricsInputs(snapshot RunSnapshot) metrics.Inputs {
+	return metrics.Inputs{
+		PolicyDecisions:     snapshot.PolicyDecisions,
+		ContractValidations: snapshot.ContractValidations,
+		StopDecisions:       snapshot.StopDecisions,
+		StopSignals:         snapshot.StopSignals,
+		ContextPacks:        snapshot.ContextPacks,
+		Artifacts:           snapshot.Artifacts,
+		StateClaims:         snapshot.StateClaims,
+		WorldState:          snapshot.WorldState,
+	}
 }
 
 func writeTaskPacket(b *strings.Builder, snapshot RunSnapshot) {

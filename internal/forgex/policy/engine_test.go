@@ -52,12 +52,52 @@ func TestEngineSafeReadOnlyAllows(t *testing.T) {
 	}
 }
 
+func TestEngineL1ExternalAPICallDenies(t *testing.T) {
+	contract := lowRiskContract()
+	contract.SideEffect = toolgw.SideEffectExternalAPICall
+	decision := NewEngine(nil).Decide("run-1", AuthorityL1, contract)
+	if decision.Action != ActionDeny {
+		t.Fatalf("expected L1 external api call deny, got %+v", decision)
+	}
+}
+
+func TestEngineL2LowRiskReadOnlyAllows(t *testing.T) {
+	decision := NewEngine(nil).Decide("run-1", AuthorityL2, lowRiskContract())
+	if decision.Action != ActionAllow || decision.Authority != AuthorityL2 {
+		t.Fatalf("expected L2 low risk allow with authority recorded, got %+v", decision)
+	}
+}
+
 func TestEnginePaidCallBelowL3Denies(t *testing.T) {
 	contract := lowRiskContract()
 	contract.SideEffect = toolgw.SideEffectPaidCall
 	decision := NewEngine(nil).Decide("run-1", AuthorityL2, contract)
 	if decision.Action != ActionDeny {
 		t.Fatalf("expected paid call deny, got %+v", decision)
+	}
+}
+
+func TestEngineL3HighRiskApprovalRequired(t *testing.T) {
+	contract := highRiskContract()
+	contract.ApprovalRequired = true
+	decision := NewEngine(nil).Decide("run-1", AuthorityL3, contract)
+	if decision.Action != ActionRequireApproval || !decision.RequiresHITL || decision.Authority != AuthorityL3 {
+		t.Fatalf("expected L3 high risk approval, got %+v", decision)
+	}
+}
+
+func TestEngineAuthorityAtLeastCondition(t *testing.T) {
+	cfg := &Config{Rules: []Rule{{
+		ID:     "allow-l2-plus",
+		When:   Condition{ToolName: "vidu.reference2video", AuthorityAtLeast: "L2"},
+		Action: ActionAllow,
+	}}}
+	contract := highRiskContract()
+	if got := NewEngine(cfg).Decide("run-1", AuthorityL1, contract); got.Action == ActionAllow {
+		t.Fatalf("expected L1 not to match authority_at_least rule, got %+v", got)
+	}
+	if got := NewEngine(cfg).Decide("run-1", AuthorityL2, contract); got.Action != ActionAllow {
+		t.Fatalf("expected L2 to match authority_at_least rule, got %+v", got)
 	}
 }
 

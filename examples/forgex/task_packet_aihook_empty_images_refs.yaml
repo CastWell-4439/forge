@@ -1,6 +1,7 @@
 id: aihook_empty_images_refs_demo
 name: AIhook empty images_refs demo
 goal: Generate AI Hook video with Vidu reference2video.
+authority_level: L2
 inputs:
   material_id: 121503
   project_id: 493e80ecf0ec4503853429161b285500

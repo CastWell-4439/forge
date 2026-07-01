@@ -4,6 +4,7 @@ rules:
   - id: ALLOW_SIMULATED_AIHOOK_VIDU_REFERENCE2VIDEO
     when:
       tool_name: vidu.reference2video
+      authority_at_least: L2
     action: allow
     reason: Simulated AIhook demo tool call is allowed so contract validation can gate external execution.
 

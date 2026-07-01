@@ -10,7 +10,9 @@ import (
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/demo"
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
+	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
 	"github.com/castwell/forge/internal/forgex/storage"
+	"github.com/castwell/forge/internal/forgex/toolgw"
 )
 
 const version = "ForgeX v0.1.0"
@@ -52,6 +54,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "context: %v\n", err)
 			os.Exit(1)
 		}
+	case "policy":
+		if err := runPolicy(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "policy: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 		printHelp()
@@ -69,7 +76,7 @@ func runDemo(args []string) error {
 	packet := fs.String("packet", demo.DefaultPacketPath, "task packet YAML path")
 	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
 	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
-	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level for tool policy decisions")
+	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level override for tool policy decisions; defaults to task packet authority_level or L0")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -161,7 +168,7 @@ func listRuns(args []string) error {
 		return err
 	}
 	for _, run := range runs {
-		fmt.Printf("%s\t%s\t%s\terrors=%d\tstop=%s\teval=%s\tcategory=%s\n", run.ID, run.Status, run.Name, run.ErrorCount, run.StopAction, run.EvalStatus, run.LastCategory)
+		fmt.Printf("%s\t%s\t%s\terrors=%d\tstop=%s\teval=%s\tcategory=%s\t%s\n", run.ID, run.Status, run.Name, run.ErrorCount, run.StopAction, run.EvalStatus, run.LastCategory, run.Metrics.Summary())
 	}
 	return nil
 }
@@ -195,6 +202,47 @@ func inspectContext(args []string) error {
 	return nil
 }
 
+func runPolicy(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("policy subcommand required (available: check)")
+	}
+	switch args[0] {
+	case "check":
+		return checkPolicy(args[1:])
+	default:
+		return fmt.Errorf("unknown policy subcommand: %s", args[0])
+	}
+}
+
+func checkPolicy(args []string) error {
+	fs := flag.NewFlagSet("policy check", flag.ContinueOnError)
+	toolName := fs.String("tool", "", "tool name to check, e.g. vidu.reference2video")
+	authority := fs.String("authority", "L0", "authority level to evaluate, e.g. L0-L4")
+	contractsPath := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
+	policyPath := fs.String("policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *toolName == "" {
+		return fmt.Errorf("--tool is required")
+	}
+	contracts, err := toolgw.LoadContracts(*contractsPath)
+	if err != nil {
+		return err
+	}
+	contract, err := contracts.MustGet(*toolName)
+	if err != nil {
+		return err
+	}
+	cfg, err := forgexpolicy.LoadConfig(*policyPath)
+	if err != nil {
+		return err
+	}
+	decision := forgexpolicy.NewEngine(cfg).Decide("policy_check", forgexpolicy.AuthorityLevel(*authority), contract)
+	fmt.Printf("tool=%s\tauthority=%s\taction=%s\trequires_hitl=%t\trisk=%s\tside_effect=%s\treason=%s\n", decision.ToolName, decision.Authority, decision.Action, decision.RequiresHITL, decision.RiskLevel, decision.SideEffect, decision.Reason)
+	return nil
+}
+
 func printHelp() {
 	fmt.Print(`ForgeX - Agent Harness Control Plane
 
@@ -209,6 +257,7 @@ Commands:
   index-run  Index one run directory into .forgex/index.db
   runs       List indexed runs
   context    Inspect run context/progress state
+  policy     Check tool policy decisions
 
 run-demo flags:
   --case      Demo case to run (default: aihook-empty-images-refs)
@@ -218,7 +267,7 @@ run-demo flags:
   --packet       Task packet YAML path
   --contracts    Tool contracts YAML path
   --tool-policy  Tool policy YAML path
-  --authority    Authority level for policy decisions (default: L2)
+  --authority    Authority level override for policy decisions (default: task packet authority_level or L0)
 
 eval flags:
   --run    ForgeX run directory to evaluate, e.g. .forgex/runs/<run_id>
@@ -233,11 +282,15 @@ index flags:
 context flags:
   context inspect --run .forgex/runs/<run_id>
 
+policy flags:
+  policy check --tool <name> --authority L1 [--contracts path] [--policy path]
+
 Examples:
   forgex run-demo --case aihook-empty-images-refs --root .forgex
   forgex eval --run .forgex/runs/<run_id> --suite aihook_regression_v1
   forgex index-run --run .forgex/runs/<run_id>
   forgex runs --limit 10
   forgex context inspect --run .forgex/runs/<run_id>
+  forgex policy check --tool vidu.reference2video --authority L1
 `)
 }
