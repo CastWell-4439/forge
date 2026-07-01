@@ -43,7 +43,7 @@ func TestRecorderWritesEventsToolErrorsAndDecision(t *testing.T) {
 		t.Fatalf("Event: %v", err)
 	}
 
-	callID, err := recorder.ToolCallStarted(ctx, "vidu.reference2video", map[string]any{"images_refs": []any{}})
+	callID, err := recorder.ToolCallStarted(ctx, "demo.expensive_generation", map[string]any{"required_assets": []any{}})
 	if err != nil {
 		t.Fatalf("ToolCallStarted: %v", err)
 	}
@@ -51,14 +51,14 @@ func TestRecorderWritesEventsToolErrorsAndDecision(t *testing.T) {
 		t.Fatal("ToolCallStarted returned empty callID")
 	}
 
-	if err := recorder.ToolCallFailed(ctx, callID, errors.New("images_refs is empty")); err != nil {
+	if err := recorder.ToolCallFailed(ctx, callID, errors.New("required_assets is empty")); err != nil {
 		t.Fatalf("ToolCallFailed: %v", err)
 	}
 
 	if err := recorder.Error(ctx, model.ErrorEnvelope{
 		Source:    "tool",
-		Operation: "vidu.reference2video",
-		Message:   "images_refs is empty",
+		Operation: "demo.expensive_generation",
+		Message:   "required_assets is empty",
 	}); err != nil {
 		t.Fatalf("Error: %v", err)
 	}

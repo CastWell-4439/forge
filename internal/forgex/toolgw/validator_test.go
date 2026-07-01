@@ -4,22 +4,22 @@ import "testing"
 
 func TestValidateInputsRequiredMissing(t *testing.T) {
 	contract := ToolContract{
-		Name:           "vidu.reference2video",
-		RequiredInputs: []string{"prompt", "images_refs"},
+		Name:           "demo.expensive_generation",
+		RequiredInputs: []string{"prompt", "required_assets"},
 		Validators:     []string{ValidatorRequiredInputsPresent},
 	}
-	results := ValidateInputs("run-1", contract, map[string]any{"prompt": "make video"})
+	results := ValidateInputs("run-1", contract, map[string]any{"prompt": "make output"})
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 	if results[1].Status != ValidationFailed {
-		t.Fatalf("expected missing images_refs to fail, got %+v", results[1])
+		t.Fatalf("expected missing required_assets to fail, got %+v", results[1])
 	}
 }
 
-func TestValidateInputsImagesRefsEmpty(t *testing.T) {
-	contract := ToolContract{Name: "vidu.reference2video", Validators: []string{ValidatorImagesRefsNotEmpty}}
-	results := ValidateInputs("run-1", contract, map[string]any{"images_refs": []any{}})
+func TestValidateInputsRequiredAssetsEmpty(t *testing.T) {
+	contract := ToolContract{Name: "demo.expensive_generation", Validators: []string{ValidatorRequiredAssetsNotEmpty}}
+	results := ValidateInputs("run-1", contract, map[string]any{"required_assets": []any{}})
 	if len(results) != 1 || results[0].Status != ValidationFailed {
 		t.Fatalf("expected failed validation, got %+v", results)
 	}
@@ -44,7 +44,7 @@ func TestValidateInputsMaterialIDsNotEmpty(t *testing.T) {
 func TestValidateOutputsRequiredMissing(t *testing.T) {
 	contract := ToolContract{
 		Name:            "tool",
-		RequiredOutputs: []string{"video_url"},
+		RequiredOutputs: []string{"result_url"},
 		Validators:      []string{ValidatorRequiredOutputsPresent},
 	}
 	results := ValidateOutputs("run-1", contract, map[string]any{})
@@ -55,15 +55,15 @@ func TestValidateOutputsRequiredMissing(t *testing.T) {
 
 func TestValidateInputsValidArgsPassed(t *testing.T) {
 	contract := ToolContract{
-		Name:           "vidu.reference2video",
-		RequiredInputs: []string{"prompt", "images_refs"},
+		Name:           "demo.expensive_generation",
+		RequiredInputs: []string{"prompt", "required_assets"},
 		Validators: []string{
 			ValidatorRequiredInputsPresent,
 			ValidatorPromptNotEmpty,
-			ValidatorImagesRefsNotEmpty,
+			ValidatorRequiredAssetsNotEmpty,
 		},
 	}
-	results := ValidateInputs("run-1", contract, map[string]any{"prompt": "make video", "images_refs": []any{"img-1"}})
+	results := ValidateInputs("run-1", contract, map[string]any{"prompt": "make output", "required_assets": []any{"asset-1"}})
 	if len(results) != 4 {
 		t.Fatalf("expected 4 results, got %d", len(results))
 	}

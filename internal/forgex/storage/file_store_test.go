@@ -22,15 +22,15 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 	run := model.Run{
 		ID:        "run_001",
 		TaskID:    "task_001",
-		Name:      "AIhook demo",
+		Name:      "generic contract demo",
 		Status:    model.RunRunning,
 		StartedAt: now,
 	}
 	packet := model.TaskPacket{
 		ID:     "task_001",
-		Name:   "AIhook empty images_refs demo",
-		Goal:   "Generate AI Hook video with Vidu reference2video.",
-		Inputs: map[string]any{"material_id": 121503},
+		Name:   "generic contract violation demo",
+		Goal:   "Run demo.expensive_generation with required assets.",
+		Inputs: map[string]any{"request_id": "demo-req-001"},
 	}
 
 	if err := store.InitRun(ctx, run, packet); err != nil {
@@ -75,7 +75,7 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 	if err := store.AppendSpan(ctx, model.Span{
 		ID:        "span_001",
 		RunID:     run.ID,
-		Name:      "vidu.reference2video",
+		Name:      "demo.expensive_generation",
 		StartedAt: now,
 		Status:    "failed",
 	}); err != nil {
@@ -86,8 +86,8 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 	if err := store.AppendToolCall(ctx, model.ToolCall{
 		ID:        "tool_001",
 		RunID:     run.ID,
-		ToolName:  "vidu.reference2video",
-		Error:     "images_refs is empty",
+		ToolName:  "demo.expensive_generation",
+		Error:     "required_assets is empty",
 		StartedAt: now,
 	}); err != nil {
 		t.Fatalf("AppendToolCall: %v", err)
@@ -98,8 +98,8 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 		ID:        "err_001",
 		RunID:     run.ID,
 		Source:    "tool",
-		Operation: "vidu.reference2video",
-		Message:   "images_refs is empty",
+		Operation: "demo.expensive_generation",
+		Message:   "required_assets is empty",
 		Timestamp: now,
 	}); err != nil {
 		t.Fatalf("AppendError: %v", err)
@@ -146,7 +146,7 @@ func TestFileStoreInitRunAndAppendStreams(t *testing.T) {
 	}
 	assertFileExists(t, layout.ReportFile(run.ID))
 
-	if err := store.WriteBadCase(ctx, run.ID, []byte("id: AIHOOK_001\n")); err != nil {
+	if err := store.WriteBadCase(ctx, run.ID, []byte("id: GENERIC_001\n")); err != nil {
 		t.Fatalf("WriteBadCase: %v", err)
 	}
 	assertFileExists(t, layout.BadCaseFile(run.ID))

@@ -53,9 +53,9 @@ func TestRunWritesEvalResult(t *testing.T) {
 	rulesPath := filepath.Join(t.TempDir(), "eval_rules.yaml")
 	if err := os.WriteFile(rulesPath, []byte(`version: 1
 suites:
-  - id: aihook_regression_v1
+  - id: generic_contract_regression_v1
     cases:
-      - id: AIHOOK_EMPTY_IMAGES_REFS
+      - id: GENERIC_REQUIRED_ASSETS_EMPTY
         assertions:
           - path: errors[0].category
             op: eq
@@ -67,7 +67,7 @@ suites:
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	result, err := Run(context.Background(), filepath.Join(root, "runs", runID), rulesPath, "aihook_regression_v1")
+	result, err := Run(context.Background(), filepath.Join(root, "runs", runID), rulesPath, "generic_contract_regression_v1")
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}

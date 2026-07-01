@@ -45,7 +45,7 @@ func TestArbiterEvalFailedPauses(t *testing.T) {
 }
 
 func TestArbiterContractValidationFailedStops(t *testing.T) {
-	signals := []StopSignal{NewSignal("run-1", SignalSourceContractValidation, SignalSeverityHigh, model.StopActionStop, "images_refs_not_empty failed", []string{"validation-1"})}
+	signals := []StopSignal{NewSignal("run-1", SignalSourceContractValidation, SignalSeverityHigh, model.StopActionStop, "required_assets_not_empty failed", []string{"validation-1"})}
 	got := NewArbiter().Decide("run-1", signals)
 	if got.Action != model.StopActionStop || !strings.Contains(got.Reason, "validation") {
 		t.Fatalf("expected validation stop, got %+v", got)

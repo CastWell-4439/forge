@@ -22,38 +22,38 @@ func loadTestTaxonomy(t *testing.T) *Taxonomy {
 	return tax
 }
 
-func TestClassifyEmptyImagesRefs(t *testing.T) {
+func TestClassifyEmptyRequiredAssets(t *testing.T) {
 	tax := loadTestTaxonomy(t)
 
 	env := model.ErrorEnvelope{
 		ID:        "err-1",
 		RunID:     "run-1",
 		Source:    "tool",
-		Operation: "vidu.reference2video",
-		Message:   "images_refs is empty",
+		Operation: "demo.expensive_generation",
+		Message:   "required_assets is empty",
 	}
 
 	got := Classify(tax, env)
 
-	assert.Equal(t, "AIHOOK_EMPTY_IMAGES_REFS", got.Metadata["rule_id"])
+	assert.Equal(t, "GENERIC_REQUIRED_ASSETS_EMPTY", got.Metadata["rule_id"])
 	assert.Equal(t, "tool_contract_violation", got.Category)
 	assert.Equal(t, "high", got.Severity)
 	assert.False(t, got.Retryable)
-	assert.Equal(t, "real_badcase", got.Metadata["source"])
+	assert.Equal(t, "demo", got.Metadata["source"])
 	assert.NotEmpty(t, got.Metadata["recommendation"])
 	assert.NotEmpty(t, got.Fingerprint)
 }
 
-func TestClassifyEmptyImagesRefsCaseInsensitive(t *testing.T) {
+func TestClassifyEmptyRequiredAssetsCaseInsensitive(t *testing.T) {
 	tax := loadTestTaxonomy(t)
 
 	env := model.ErrorEnvelope{
-		Operation: "VIDU.Reference2Video",
-		Message:   "Images_Refs is EMPTY",
+		Operation: "DEMO.Expensive_Generation",
+		Message:   "Required_Assets is EMPTY",
 	}
 
 	got := Classify(tax, env)
-	assert.Equal(t, "AIHOOK_EMPTY_IMAGES_REFS", got.Metadata["rule_id"])
+	assert.Equal(t, "GENERIC_REQUIRED_ASSETS_EMPTY", got.Metadata["rule_id"])
 	assert.Equal(t, "tool_contract_violation", got.Category)
 }
 
@@ -89,13 +89,14 @@ func TestClassifyUnknown(t *testing.T) {
 	assert.NotEmpty(t, got.Fingerprint)
 }
 
-// images_refs without a vidu operation must not match the operation-scoped rule.
+// required_assets without a matching operation must not match the
+// operation-scoped rule.
 func TestClassifyOperationGate(t *testing.T) {
 	tax := loadTestTaxonomy(t)
 
 	env := model.ErrorEnvelope{
 		Operation: "some.other.tool",
-		Message:   "images_refs is empty",
+		Message:   "required_assets is empty",
 	}
 
 	got := Classify(tax, env)
@@ -108,13 +109,13 @@ func TestFingerprintStableAcrossVolatileTokens(t *testing.T) {
 
 	a := model.ErrorEnvelope{
 		Source:    "tool",
-		Operation: "vidu.reference2video",
-		Message:   "images_refs is empty for material 121503 project 493e80ecf0ec4503853429161b285500",
+		Operation: "demo.expensive_generation",
+		Message:   "required_assets is empty for request 121503 batch 493e80ecf0ec4503853429161b285500",
 	}
 	b := model.ErrorEnvelope{
 		Source:    "tool",
-		Operation: "vidu.reference2video",
-		Message:   "images_refs is empty for material 999888 project a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+		Operation: "demo.expensive_generation",
+		Message:   "required_assets is empty for request 999888 batch a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
 	}
 
 	ga := Classify(tax, a)

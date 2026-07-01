@@ -1,16 +1,16 @@
 version: 1
 rules:
-  - id: AIHOOK_EMPTY_IMAGES_REFS
+  - id: GENERIC_REQUIRED_ASSETS_EMPTY
     category: tool_contract_violation
     severity: high
     retryable: false
-    source: real_badcase
+    source: demo
     match:
       message_contains:
-        - images_refs
+        - required_assets
         - empty
-      operation_contains: vidu
-    recommendation: Vidu reference2video must provide non-empty images_refs. Stop and ask upstream to provide real character reference frames.
+      operation_contains: demo.expensive_generation
+    recommendation: demo.expensive_generation must provide non-empty required_assets. Stop and ask upstream to provide the missing required assets.
 
   - id: TOOL_TIMEOUT
     category: transient_timeout

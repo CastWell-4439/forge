@@ -25,30 +25,30 @@ import (
 const (
 	DefaultTaxonomyPath   = "configs/forgex/failure_taxonomy.yaml"
 	DefaultPolicyPath     = "configs/forgex/stop_policies.yaml"
-	DefaultPacketPath     = "examples/forgex/task_packet_aihook_empty_images_refs.yaml"
-	DefaultContractsPath  = "configs/forgex/tool_contracts/blueai_aihook.yaml"
+	DefaultPacketPath     = "examples/forgex/task_packet_generic_contract_violation.yaml"
+	DefaultContractsPath  = "configs/forgex/tool_contracts/generic_tool_contracts.yaml"
 	DefaultToolPolicyPath = "configs/forgex/policies/safe_default.yaml"
 	DefaultAuthorityLevel = ""
-	defaultAIHookViduTool = "vidu.reference2video"
+	defaultExpensiveTool  = "demo.expensive_generation"
 )
 
-// RunAIHookEmptyImagesRefsDemo runs the AIhook "empty images_refs" bad case end
-// to end without calling any external API. It reads the task packet, creates a
-// run, records a simulated vidu.reference2video tool call, builds an
-// ErrorEnvelope for the empty images_refs failure, classifies it with the
-// failure taxonomy, decides on a stop action with the StopConditionEngine, and
-// persists the run streams plus a Markdown report and bad-case YAML under
-// root/runs/<run_id>/. It returns the generated run ID.
+// RunGenericContractViolationDemo runs the "empty required_assets" contract
+// violation bad case end to end without calling any external API. It reads the
+// task packet, creates a run, records a simulated demo.expensive_generation tool
+// call, builds an ErrorEnvelope for the empty required_assets failure, classifies
+// it with the failure taxonomy, decides on a stop action with the
+// StopConditionEngine, and persists the run streams plus a Markdown report and
+// bad-case YAML under root/runs/<run_id>/. It returns the generated run ID.
 //
 // Empty taxonomyPath/policyPath/packetPath fall back to the ForgeX defaults.
-func RunAIHookEmptyImagesRefsDemo(ctx context.Context, root, taxonomyPath, policyPath, packetPath string) (string, error) {
-	return RunAIHookEmptyImagesRefsDemoWithControl(ctx, root, taxonomyPath, policyPath, packetPath, DefaultContractsPath, DefaultToolPolicyPath, DefaultAuthorityLevel)
+func RunGenericContractViolationDemo(ctx context.Context, root, taxonomyPath, policyPath, packetPath string) (string, error) {
+	return RunGenericContractViolationDemoWithControl(ctx, root, taxonomyPath, policyPath, packetPath, DefaultContractsPath, DefaultToolPolicyPath, DefaultAuthorityLevel)
 }
 
-// RunAIHookEmptyImagesRefsDemoWithControl runs the AIhook bad case through the
-// M3 tool gateway and policy controls. The tool call remains simulated: the demo
-// never invokes a real external API.
-func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomyPath, policyPath, packetPath, contractsPath, toolPolicyPath, authorityLevel string) (string, error) {
+// RunGenericContractViolationDemoWithControl runs the contract violation bad case
+// through the M3 tool gateway and policy controls. The tool call remains
+// simulated: the demo never invokes a real external API.
+func RunGenericContractViolationDemoWithControl(ctx context.Context, root, taxonomyPath, policyPath, packetPath, contractsPath, toolPolicyPath, authorityLevel string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -91,7 +91,7 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 	if err != nil {
 		return "", err
 	}
-	toolContract, err := contracts.MustGet(defaultAIHookViduTool)
+	toolContract, err := contracts.MustGet(defaultExpensiveTool)
 	if err != nil {
 		return "", err
 	}
@@ -120,19 +120,19 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 
 	ledger := model.ProgressLedger{
 		RunID:        runID,
-		CurrentPhase: "aihook_contract_validation",
+		CurrentPhase: "contract_validation",
 		Checklist: []model.ProgressItem{
-			{ID: "load_packet", Title: "Load AIhook task packet", Status: model.ProgressDone, Evidence: packetPath},
-			{ID: "policy_check", Title: "Authorize Vidu tool call", Status: model.ProgressDone, Evidence: toolPolicyPath},
-			{ID: "validate_vidu_refs", Title: "Validate Vidu reference images", Status: model.ProgressFailed, Evidence: "images_refs is empty"},
+			{ID: "load_packet", Title: "Load task packet", Status: model.ProgressDone, Evidence: packetPath},
+			{ID: "policy_check", Title: "Authorize tool call", Status: model.ProgressDone, Evidence: toolPolicyPath},
+			{ID: "validate_required_assets", Title: "Validate required assets", Status: model.ProgressFailed, Evidence: "required_assets is empty"},
 			{ID: "generate_report", Title: "Generate report and badcase", Status: model.ProgressInProgress},
 		},
 		Decisions: []string{
 			fmt.Sprintf("AgentSuitabilityGate=%s controls=%v", suitability.Decision, suitability.RequiredControls),
 			"Tool call must pass policy decision and contract validation before external execution.",
-			"Stop before paid Vidu generation when images_refs is empty.",
+			"Stop before paid generation when required_assets is empty.",
 		},
-		NextActions: []string{"Ask upstream to provide non-empty character reference frames."},
+		NextActions: []string{"Ask upstream to provide non-empty required assets."},
 		UpdatedAt:   now,
 	}
 	if err := store.SaveProgressLedger(ctx, ledger); err != nil {
@@ -155,16 +155,16 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 	}
 
 	// 5. Evaluate policy before the simulated tool call.
-	args := map[string]any{"prompt": packet.Goal, "images_refs": []any{}}
+	args := map[string]any{"prompt": packet.Goal, "required_assets": []any{}}
 	policyDecision := forgexpolicy.NewEngine(toolPolicy).Decide(runID, forgexpolicy.AuthorityLevel(authorityLevel), toolContract)
 	modelPolicyDecision := toModelPolicyDecision(policyDecision)
 	if err := store.AppendPolicyDecision(ctx, modelPolicyDecision); err != nil {
 		return "", fmt.Errorf("append policy decision: %w", err)
 	}
 
-	// 6. Simulate the tool call: vidu.reference2video with empty images_refs.
-	// This records the attempt but never calls Vidu or any external API.
-	callID, err := recorder.ToolCallStarted(ctx, defaultAIHookViduTool, args)
+	// 6. Simulate the tool call: demo.expensive_generation with empty required_assets.
+	// This records the attempt but never calls any external API.
+	callID, err := recorder.ToolCallStarted(ctx, defaultExpensiveTool, args)
 	if err != nil {
 		return "", fmt.Errorf("record tool call: %w", err)
 	}
@@ -179,22 +179,22 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		}
 	}
 
-	missingReferenceArtifact := forgexstate.NewArtifactRecord(runID, "reference_image", model.ArtifactMissing, "contract_validator", map[string]string{
-		"reason":      "images_refs is empty",
-		"tool":        defaultAIHookViduTool,
-		"input_key":   "images_refs",
+	missingAssetArtifact := forgexstate.NewArtifactRecord(runID, "required_asset", model.ArtifactMissing, "contract_validator", map[string]string{
+		"reason":      "required_assets is empty",
+		"tool":        defaultExpensiveTool,
+		"input_key":   "required_assets",
 		"required":    "true",
 		"source_step": "contract_validation",
 	})
-	if err := store.AppendArtifact(ctx, missingReferenceArtifact); err != nil {
+	if err := store.AppendArtifact(ctx, missingAssetArtifact); err != nil {
 		return "", fmt.Errorf("append artifact: %w", err)
 	}
 
-	claim := forgexstate.NewClaim(runID, "claim_"+uuid.NewString(), "reference_images.status", "contract_validator", map[string]any{
+	claim := forgexstate.NewClaim(runID, "claim_"+uuid.NewString(), "required_assets.status", "contract_validator", map[string]any{
 		"status": "missing",
-		"reason": "images_refs is empty",
-		"tool":   defaultAIHookViduTool,
-	}, []string{missingReferenceArtifact.ID, "contract_validations.jsonl"})
+		"reason": "required_assets is empty",
+		"tool":   defaultExpensiveTool,
+	}, []string{missingAssetArtifact.ID, "contract_validations.jsonl"})
 	if err := store.AppendStateClaim(ctx, claim); err != nil {
 		return "", fmt.Errorf("append state claim: %w", err)
 	}
@@ -204,15 +204,15 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 	}
 
 	// 7. Construct the ErrorEnvelope for the contract validation failure.
-	toolErr := errors.New(firstValidationFailureMessage(contractValidations, "images_refs is empty"))
+	toolErr := errors.New(firstValidationFailureMessage(contractValidations, "required_assets is empty"))
 	if err := recorder.ToolCallFailed(ctx, callID, toolErr); err != nil {
 		return "", fmt.Errorf("record tool failure: %w", err)
 	}
 	envelope := model.ErrorEnvelope{
 		RunID:     runID,
 		Source:    "tool_contract",
-		Operation: defaultAIHookViduTool,
-		Message:   "images_refs is empty",
+		Operation: defaultExpensiveTool,
+		Message:   "required_assets is empty",
 		RawError:  toolErr.Error(),
 		Timestamp: time.Now().UTC(),
 	}
@@ -228,7 +228,7 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 	// 9b. Convert validation failure into a termination signal and arbitrate.
 	engine := stop.NewEngine(policy)
 	engineDecision := engine.Decide(runID, envelope)
-	contractSignal := stop.NewSignal(runID, stop.SignalSourceContractValidation, stop.SignalSeverityHigh, engineDecision.Action, "contract validation failed: images_refs_not_empty", []string{contractValidations[len(contractValidations)-1].ID, envelope.ID})
+	contractSignal := stop.NewSignal(runID, stop.SignalSourceContractValidation, stop.SignalSeverityHigh, engineDecision.Action, "contract validation failed: required_assets_not_empty", []string{contractValidations[len(contractValidations)-1].ID, envelope.ID})
 	modelStopSignal := toModelStopSignal(contractSignal)
 	if err := store.AppendStopSignal(ctx, modelStopSignal); err != nil {
 		return "", fmt.Errorf("append stop signal: %w", err)
@@ -263,15 +263,15 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		TaskPacket: packet,
 		Events: []model.Event{
 			{Type: model.EventRunStarted, Message: "run started", Timestamp: now},
-			{Type: model.EventToolCalled, Message: "tool called: " + defaultAIHookViduTool, Timestamp: now},
-			{Type: model.EventToolFailed, Message: "tool failed: " + defaultAIHookViduTool, Timestamp: now},
+			{Type: model.EventToolCalled, Message: "tool called: " + defaultExpensiveTool, Timestamp: now},
+			{Type: model.EventToolFailed, Message: "tool failed: " + defaultExpensiveTool, Timestamp: now},
 			{Type: model.EventStopDecided, Message: "stop decision: " + string(decision.Action), Timestamp: run.EndedAt},
 		},
 		ToolCalls: []model.ToolCall{
 			{
 				ID:        callID,
 				RunID:     runID,
-				ToolName:  defaultAIHookViduTool,
+				ToolName:  defaultExpensiveTool,
 				Args:      args,
 				Error:     toolErr.Error(),
 				StartedAt: now,
@@ -282,7 +282,7 @@ func RunAIHookEmptyImagesRefsDemoWithControl(ctx context.Context, root, taxonomy
 		ContractValidations: contractValidations,
 		WorldState:          &worldState,
 		StateClaims:         []model.StateClaim{claim},
-		Artifacts:           []model.ArtifactRecord{missingReferenceArtifact},
+		Artifacts:           []model.ArtifactRecord{missingAssetArtifact},
 		Errors:              []model.ErrorEnvelope{envelope},
 		StopSignals:         []model.StopSignalRecord{modelStopSignal},
 		StopDecisions:       []model.StopDecision{decision},

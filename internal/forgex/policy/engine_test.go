@@ -89,7 +89,7 @@ func TestEngineL3HighRiskApprovalRequired(t *testing.T) {
 func TestEngineAuthorityAtLeastCondition(t *testing.T) {
 	cfg := &Config{Rules: []Rule{{
 		ID:     "allow-l2-plus",
-		When:   Condition{ToolName: "vidu.reference2video", AuthorityAtLeast: "L2"},
+		When:   Condition{ToolName: "demo.expensive_generation", AuthorityAtLeast: "L2"},
 		Action: ActionAllow,
 	}}}
 	contract := highRiskContract()
@@ -114,7 +114,7 @@ func TestLoadConfigMissingVersion(t *testing.T) {
 }
 
 func highRiskContract() toolgw.ToolContract {
-	return toolgw.ToolContract{Name: "vidu.reference2video", Capability: "video_generation", RiskLevel: toolgw.RiskHigh, SideEffect: toolgw.SideEffectExternalAPICall}
+	return toolgw.ToolContract{Name: "demo.expensive_generation", Capability: "generation.expensive", RiskLevel: toolgw.RiskHigh, SideEffect: toolgw.SideEffectExternalAPICall}
 }
 
 func lowRiskContract() toolgw.ToolContract {

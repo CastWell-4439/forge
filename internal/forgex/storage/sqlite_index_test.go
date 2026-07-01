@@ -22,8 +22,8 @@ func TestSQLiteIndexRunDir(t *testing.T) {
 	if err := store.AppendError(context.Background(), model.ErrorEnvelope{
 		ID:          "err_1",
 		RunID:       runID,
-		Operation:   "vidu.reference2video",
-		Message:     "images_refs is empty",
+		Operation:   "demo.expensive_generation",
+		Message:     "required_assets is empty",
 		Category:    "tool_contract_violation",
 		Severity:    "high",
 		Fingerprint: "fp_1",
@@ -74,13 +74,13 @@ func TestSQLiteIndexControlMetrics(t *testing.T) {
 	if err := store.InitRun(context.Background(), run, packet); err != nil {
 		t.Fatalf("InitRun() error = %v", err)
 	}
-	if err := store.AppendPolicyDecision(context.Background(), model.PolicyDecision{ID: "pd_1", RunID: runID, ToolName: "vidu.reference2video", Action: "require_approval", RequiresHITL: true}); err != nil {
+	if err := store.AppendPolicyDecision(context.Background(), model.PolicyDecision{ID: "pd_1", RunID: runID, ToolName: "demo.expensive_generation", Action: "require_approval", RequiresHITL: true}); err != nil {
 		t.Fatalf("AppendPolicyDecision() error = %v", err)
 	}
-	if err := store.AppendContractValidation(context.Background(), model.ContractValidation{ID: "cv_1", RunID: runID, ToolName: "vidu.reference2video", Status: "failed", Message: "images_refs is empty"}); err != nil {
+	if err := store.AppendContractValidation(context.Background(), model.ContractValidation{ID: "cv_1", RunID: runID, ToolName: "demo.expensive_generation", Status: "failed", Message: "required_assets is empty"}); err != nil {
 		t.Fatalf("AppendContractValidation() error = %v", err)
 	}
-	if err := store.AppendArtifact(context.Background(), model.ArtifactRecord{ID: "art_1", RunID: runID, Type: "reference_image", Status: model.ArtifactMissing}); err != nil {
+	if err := store.AppendArtifact(context.Background(), model.ArtifactRecord{ID: "art_1", RunID: runID, Type: "required_asset", Status: model.ArtifactMissing}); err != nil {
 		t.Fatalf("AppendArtifact() error = %v", err)
 	}
 	if err := store.AppendStopDecision(context.Background(), model.StopDecision{ID: "sd_1", RunID: runID, Action: model.StopActionStop, Reason: "contract violation", DecidedAt: time.Now().UTC()}); err != nil {

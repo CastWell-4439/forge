@@ -69,7 +69,7 @@ func main() {
 // runDemo parses run-demo flags and dispatches to the requested demo case.
 func runDemo(args []string) error {
 	fs := flag.NewFlagSet("run-demo", flag.ContinueOnError)
-	caseName := fs.String("case", "aihook-empty-images-refs", "demo case to run")
+	caseName := fs.String("case", "generic-contract-violation", "demo case to run")
 	root := fs.String("root", ".forgex", "root directory for run artifacts")
 	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
 	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
@@ -82,8 +82,8 @@ func runDemo(args []string) error {
 	}
 
 	switch *caseName {
-	case "aihook-empty-images-refs":
-		runID, err := demo.RunAIHookEmptyImagesRefsDemoWithControl(context.Background(), *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
+	case "generic-contract-violation":
+		runID, err := demo.RunGenericContractViolationDemoWithControl(context.Background(), *root, *taxonomy, *policy, *packet, *contracts, *toolPolicy, *authority)
 		if err != nil {
 			return err
 		}
@@ -91,14 +91,14 @@ func runDemo(args []string) error {
 		fmt.Printf("artifacts: %s/runs/%s/\n", *root, runID)
 		return nil
 	default:
-		return fmt.Errorf("unknown demo case: %s (available: aihook-empty-images-refs)", *caseName)
+		return fmt.Errorf("unknown demo case: %s (available: generic-contract-violation)", *caseName)
 	}
 }
 
 func runEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	runDir := fs.String("run", "", "ForgeX run directory to evaluate")
-	suite := fs.String("suite", "aihook_regression_v1", "eval suite id")
+	suite := fs.String("suite", "generic_contract_regression_v1", "eval suite id")
 	rules := fs.String("rules", "configs/forgex/eval_rules.yaml", "eval rules YAML path")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -216,7 +216,7 @@ func runPolicy(args []string) error {
 
 func checkPolicy(args []string) error {
 	fs := flag.NewFlagSet("policy check", flag.ContinueOnError)
-	toolName := fs.String("tool", "", "tool name to check, e.g. vidu.reference2video")
+	toolName := fs.String("tool", "", "tool name to check, e.g. demo.expensive_generation")
 	authority := fs.String("authority", "L0", "authority level to evaluate, e.g. L0-L4")
 	contractsPath := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
 	policyPath := fs.String("policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
@@ -260,7 +260,7 @@ Commands:
   policy     Check tool policy decisions
 
 run-demo flags:
-  --case      Demo case to run (default: aihook-empty-images-refs)
+  --case      Demo case to run (default: generic-contract-violation)
   --root      Root directory for run artifacts (default: .forgex)
   --taxonomy  Failure taxonomy YAML path
   --policy       Stop policy YAML path
@@ -271,7 +271,7 @@ run-demo flags:
 
 eval flags:
   --run    ForgeX run directory to evaluate, e.g. .forgex/runs/<run_id>
-  --suite  Eval suite id (default: aihook_regression_v1)
+  --suite  Eval suite id (default: generic_contract_regression_v1)
   --rules  Eval rules YAML path (default: configs/forgex/eval_rules.yaml)
 
 index flags:
@@ -286,11 +286,11 @@ policy flags:
   policy check --tool <name> --authority L1 [--contracts path] [--policy path]
 
 Examples:
-  forgex run-demo --case aihook-empty-images-refs --root .forgex
-  forgex eval --run .forgex/runs/<run_id> --suite aihook_regression_v1
+  forgex run-demo --case generic-contract-violation --root .forgex
+  forgex eval --run .forgex/runs/<run_id> --suite generic_contract_regression_v1
   forgex index-run --run .forgex/runs/<run_id>
   forgex runs --limit 10
   forgex context inspect --run .forgex/runs/<run_id>
-  forgex policy check --tool vidu.reference2video --authority L1
+  forgex policy check --tool demo.expensive_generation --authority L1
 `)
 }

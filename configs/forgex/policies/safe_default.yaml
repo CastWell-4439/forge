@@ -1,12 +1,12 @@
 version: 1
 profile: safe_default
 rules:
-  - id: ALLOW_SIMULATED_AIHOOK_VIDU_REFERENCE2VIDEO
+  - id: ALLOW_SIMULATED_DEMO_EXPENSIVE_GENERATION
     when:
-      tool_name: vidu.reference2video
+      tool_name: demo.expensive_generation
       authority_at_least: L2
     action: allow
-    reason: Simulated AIhook demo tool call is allowed so contract validation can gate external execution.
+    reason: Simulated demo tool call is allowed so contract validation can gate external execution.
 
   - id: DENY_EXTERNAL_WRITE_BELOW_L3
     when:

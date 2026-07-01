@@ -1,0 +1,16 @@
+id: generic_contract_violation_demo
+name: Generic contract violation demo
+goal: Run demo.expensive_generation with required assets.
+authority_level: L2
+inputs:
+  request_id: demo-req-001
+  batch_id: demo-batch-001
+  tool_payload:
+    required_assets: []
+constraints:
+  - demo.expensive_generation must not be called with empty required_assets.
+success:
+  - Empty required_assets is classified as tool_contract_violation.
+  - Stop decision is stop.
+metadata:
+  source: generic_contract_violation

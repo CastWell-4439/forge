@@ -9,36 +9,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// aihookSnapshot builds a snapshot resembling the AIhook empty images_refs run.
-func aihookSnapshot() RunSnapshot {
+// genericSnapshot builds a snapshot resembling the empty required_assets run.
+func genericSnapshot() RunSnapshot {
 	ts := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	return RunSnapshot{
 		Run: model.Run{
-			ID:        "run_aihook_001",
-			TaskID:    "aihook_empty_images_refs_demo",
-			Name:      "AIhook empty images_refs demo",
+			ID:        "run_generic_001",
+			TaskID:    "generic_contract_violation_demo",
+			Name:      "Generic contract violation demo",
 			Status:    model.RunStopped,
 			StartedAt: ts,
 		},
 		TaskPacket: model.TaskPacket{
-			ID:   "aihook_empty_images_refs_demo",
-			Name: "AIhook empty images_refs demo",
-			Goal: "Generate AI Hook video with Vidu reference2video.",
+			ID:   "generic_contract_violation_demo",
+			Name: "Generic contract violation demo",
+			Goal: "Run demo.expensive_generation with required assets.",
 			Inputs: map[string]any{
-				"material_id": 121503,
+				"request_id": "demo-req-001",
 			},
-			Metadata: map[string]string{"source": "aihook_real_badcase"},
+			Metadata: map[string]string{"source": "generic_contract_violation"},
 		},
 		Events: []model.Event{
 			{Type: model.EventRunStarted, Message: "run started", Timestamp: ts},
-			{Type: model.EventToolCalled, Message: "tool called: vidu.reference2video", Timestamp: ts.Add(time.Second)},
+			{Type: model.EventToolCalled, Message: "tool called: demo.expensive_generation", Timestamp: ts.Add(time.Second)},
 			{Type: model.EventStopDecided, Message: "stop decision: stop", Timestamp: ts.Add(2 * time.Second)},
 		},
 		ToolCalls: []model.ToolCall{
 			{
-				ToolName:  "vidu.reference2video",
-				Args:      map[string]any{"images_refs": []any{}},
-				Error:     "images_refs is empty",
+				ToolName:  "demo.expensive_generation",
+				Args:      map[string]any{"required_assets": []any{}},
+				Error:     "required_assets is empty",
 				StartedAt: ts.Add(time.Second),
 			},
 		},
@@ -46,16 +46,16 @@ func aihookSnapshot() RunSnapshot {
 			{
 				ID:          "err_1",
 				Source:      "tool",
-				Operation:   "vidu.reference2video",
-				Message:     "images_refs is empty",
+				Operation:   "demo.expensive_generation",
+				Message:     "required_assets is empty",
 				Category:    "tool_contract_violation",
 				Severity:    "high",
 				Retryable:   false,
 				Fingerprint: "abcd1234abcd1234",
 				Metadata: map[string]string{
-					"rule_id":        "AIHOOK_EMPTY_IMAGES_REFS",
-					"source":         "real_badcase",
-					"recommendation": "Vidu reference2video must provide non-empty images_refs.",
+					"rule_id":        "GENERIC_REQUIRED_ASSETS_EMPTY",
+					"source":         "demo",
+					"recommendation": "demo.expensive_generation must provide non-empty required_assets.",
 				},
 			},
 		},
@@ -71,7 +71,7 @@ func aihookSnapshot() RunSnapshot {
 }
 
 func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
-	md := GenerateMarkdown(aihookSnapshot())
+	md := GenerateMarkdown(genericSnapshot())
 
 	wants := []string{
 		"# ForgeX Run Report",
@@ -85,10 +85,10 @@ func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
 		"## Errors",
 		"## Stop Decisions",
 		"## Suggested Fix",
-		"run_aihook_001",
-		"Generate AI Hook video with Vidu reference2video.",
-		"vidu.reference2video",
-		"images_refs is empty",
+		"run_generic_001",
+		"Run demo.expensive_generation with required assets.",
+		"demo.expensive_generation",
+		"required_assets is empty",
 		"tool_contract_violation",
 		"high",
 		"Retryable: false",
@@ -102,15 +102,15 @@ func TestGenerateMarkdownContainsKeyFields(t *testing.T) {
 }
 
 func TestGenerateMarkdownControlMetrics(t *testing.T) {
-	snapshot := aihookSnapshot()
+	snapshot := genericSnapshot()
 	snapshot.PolicyDecisions = []model.PolicyDecision{
-		{ToolName: "vidu.reference2video", Action: "require_approval", RequiresHITL: true},
+		{ToolName: "demo.expensive_generation", Action: "require_approval", RequiresHITL: true},
 	}
 	snapshot.ContractValidations = []model.ContractValidation{
-		{ToolName: "vidu.reference2video", Status: "failed", Message: "images_refs is empty"},
+		{ToolName: "demo.expensive_generation", Status: "failed", Message: "required_assets is empty"},
 	}
 	snapshot.Artifacts = []model.ArtifactRecord{
-		{ID: "art_1", Type: "reference_image", Status: model.ArtifactMissing},
+		{ID: "art_1", Type: "required_asset", Status: model.ArtifactMissing},
 	}
 
 	md := GenerateMarkdown(snapshot)
@@ -154,7 +154,7 @@ func TestGenerateMarkdownEmptyErrorsStillRenders(t *testing.T) {
 }
 
 func TestGenerateBadCaseYAMLParseable(t *testing.T) {
-	out, err := GenerateBadCaseYAML(aihookSnapshot())
+	out, err := GenerateBadCaseYAML(genericSnapshot())
 	if err != nil {
 		t.Fatalf("GenerateBadCaseYAML: %v", err)
 	}
@@ -164,8 +164,8 @@ func TestGenerateBadCaseYAMLParseable(t *testing.T) {
 		t.Fatalf("bad case yaml is not parseable: %v\n%s", err, out)
 	}
 
-	if parsed["run_id"] != "run_aihook_001" {
-		t.Errorf("run_id = %v, want run_aihook_001", parsed["run_id"])
+	if parsed["run_id"] != "run_generic_001" {
+		t.Errorf("run_id = %v, want run_generic_001", parsed["run_id"])
 	}
 	if parsed["failure_category"] != "tool_contract_violation" {
 		t.Errorf("failure_category = %v, want tool_contract_violation", parsed["failure_category"])
@@ -173,8 +173,8 @@ func TestGenerateBadCaseYAMLParseable(t *testing.T) {
 	if parsed["expected_decision"] != "stop" {
 		t.Errorf("expected_decision = %v, want stop", parsed["expected_decision"])
 	}
-	if parsed["id"] != "AIHOOK_EMPTY_IMAGES_REFS" {
-		t.Errorf("id = %v, want AIHOOK_EMPTY_IMAGES_REFS", parsed["id"])
+	if parsed["id"] != "GENERIC_REQUIRED_ASSETS_EMPTY" {
+		t.Errorf("id = %v, want GENERIC_REQUIRED_ASSETS_EMPTY", parsed["id"])
 	}
 
 	replay, ok := parsed["replay"].(map[string]any)

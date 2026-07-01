@@ -1,8 +1,8 @@
 version: 1
 suites:
-  - id: aihook_regression_v1
+  - id: generic_contract_regression_v1
     cases:
-      - id: AIHOOK_EMPTY_IMAGES_REFS
+      - id: GENERIC_REQUIRED_ASSETS_EMPTY
         assertions:
           - path: policy_decisions[0].action
             op: eq
@@ -15,7 +15,7 @@ suites:
             value: failed
           - path: contract_validations[3].validator
             op: eq
-            value: images_refs_not_empty
+            value: required_assets_not_empty
           - path: artifacts[0].status
             op: eq
             value: missing

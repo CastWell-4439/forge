@@ -10,8 +10,8 @@ import (
 func TestLoadContractsSuccess(t *testing.T) {
 	path := writeContractConfig(t, `version: 1
 tools:
-  - name: vidu.reference2video
-    capability: video_generation
+  - name: demo.expensive_generation
+    capability: generation.expensive
     risk_level: high
     side_effect: external_api_call
 `)
@@ -19,11 +19,11 @@ tools:
 	if err != nil {
 		t.Fatalf("LoadContracts() error = %v", err)
 	}
-	contract, ok := registry.Get("vidu.reference2video")
+	contract, ok := registry.Get("demo.expensive_generation")
 	if !ok {
 		t.Fatalf("expected contract")
 	}
-	if contract.Capability != "video_generation" {
+	if contract.Capability != "generation.expensive" {
 		t.Fatalf("unexpected capability %q", contract.Capability)
 	}
 }

@@ -11,7 +11,7 @@ import (
 const (
 	ValidatorRequiredInputsPresent  = "required_inputs_present"
 	ValidatorRequiredOutputsPresent = "required_outputs_present"
-	ValidatorImagesRefsNotEmpty     = "images_refs_not_empty"
+	ValidatorRequiredAssetsNotEmpty = "required_assets_not_empty"
 	ValidatorPromptNotEmpty         = "prompt_not_empty"
 	ValidatorMaterialIDsNotEmpty    = "material_ids_not_empty"
 )
@@ -25,8 +25,8 @@ func ValidateInputs(runID string, contract ToolContract, args map[string]any) []
 		switch strings.TrimSpace(validator) {
 		case ValidatorRequiredInputsPresent:
 			results = append(results, validateRequired(runID, contract.Name, ValidatorRequiredInputsPresent, contract.RequiredInputs, args)...)
-		case ValidatorImagesRefsNotEmpty:
-			results = append(results, validateNotEmpty(runID, contract.Name, ValidatorImagesRefsNotEmpty, args, "images_refs"))
+		case ValidatorRequiredAssetsNotEmpty:
+			results = append(results, validateNotEmpty(runID, contract.Name, ValidatorRequiredAssetsNotEmpty, args, "required_assets"))
 		case ValidatorPromptNotEmpty:
 			results = append(results, validateNotEmpty(runID, contract.Name, ValidatorPromptNotEmpty, args, "prompt"))
 		case ValidatorMaterialIDsNotEmpty:
@@ -47,7 +47,7 @@ func ValidateOutputs(runID string, contract ToolContract, output map[string]any)
 		switch strings.TrimSpace(validator) {
 		case ValidatorRequiredOutputsPresent:
 			results = append(results, validateRequired(runID, contract.Name, ValidatorRequiredOutputsPresent, contract.RequiredOutputs, output)...)
-		case "", ValidatorRequiredInputsPresent, ValidatorImagesRefsNotEmpty, ValidatorPromptNotEmpty, ValidatorMaterialIDsNotEmpty:
+		case "", ValidatorRequiredInputsPresent, ValidatorRequiredAssetsNotEmpty, ValidatorPromptNotEmpty, ValidatorMaterialIDsNotEmpty:
 			// Input-only validator or empty config; ignore during output validation.
 		default:
 			results = append(results, newValidationResult(runID, contract.Name, validator, ValidationFailed, fmt.Sprintf("unknown output validator %q", validator)))
