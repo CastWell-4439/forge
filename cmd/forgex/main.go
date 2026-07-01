@@ -16,6 +16,7 @@ import (
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
+	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
 	"github.com/castwell/forge/internal/forgex/toolgw"
 )
@@ -133,8 +134,21 @@ func runEval(args []string) error {
 	if err != nil {
 		return err
 	}
+	artifacts, err := forgexeval.LoadRunArtifacts(*runDir)
+	if err != nil {
+		return err
+	}
+	card := scorecard.Build(artifacts, result, countLessons(filepath.Join(*runDir, "lessons.jsonl")))
+	if err := scorecard.Write(*runDir, card); err != nil {
+		return err
+	}
+	if err := scorecard.AppendToReport(*runDir, card); err != nil {
+		return err
+	}
 	fmt.Printf("eval completed: run_id=%s suite=%s status=%s\n", result.RunID, result.SuiteID, result.Status)
 	fmt.Printf("result: %s/eval_result.json\n", *runDir)
+	fmt.Printf("scorecard: %s/scorecard.json\n", *runDir)
+	fmt.Printf("scorecard summary: %s\n", scorecard.Format(card))
 	if result.Status == "failed" {
 		return fmt.Errorf("eval failed")
 	}
@@ -353,6 +367,14 @@ func readLessonsFile(path string) ([]model.Lesson, error) {
 	return lessons, nil
 }
 
+func countLessons(path string) int {
+	lessons, err := readLessonsFile(path)
+	if err != nil {
+		return 0
+	}
+	return len(lessons)
+}
+
 func runCases(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("cases subcommand required (available: list, show)")
@@ -485,6 +507,7 @@ eval flags:
   --run    ForgeX run directory to evaluate, e.g. .forgex/runs/<run_id>
   --suite  Eval suite id (default: generic_contract_regression_v1)
   --rules  Eval rules YAML path (default: configs/forgex/eval_rules.yaml)
+  Writes eval_result.json and scorecard.json into the run directory.
 
 index flags:
   --run    ForgeX run directory to index, e.g. .forgex/runs/<run_id>
