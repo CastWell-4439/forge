@@ -59,6 +59,8 @@ type RunMetrics struct {
 	Lessons             int `json:"lessons"`
 	Artifacts           int `json:"artifacts"`
 	StopDecisions       int `json:"stop_decisions"`
+	GateDecisions       int `json:"gate_decisions"`
+	HITLReviews         int `json:"hitl_reviews"`
 }
 
 // AssetSummary is a future-proof local asset registry projection.
@@ -92,6 +94,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/projects/", s.handleProjectSubresource)
 	mux.HandleFunc("GET /api/v1/runs", s.handleRuns)
 	mux.HandleFunc("GET /api/v1/runs/", s.handleRunSubresource)
+	mux.HandleFunc("POST /api/v1/runs/", s.handleRunMutation)
+	mux.HandleFunc("GET /api/v1/reliability/repeat-result", s.handleRepeatResult)
 	mux.HandleFunc("GET /api/v1/assets", s.handleAssets)
 	return recoverMiddleware(mux)
 }
@@ -237,12 +241,22 @@ func (s *Server) handleRunSubresource(w http.ResponseWriter, r *http.Request) {
 		s.writeRunCollection(w, runID, "lessons", lessons, err)
 	case "report":
 		s.handleReport(w, runID)
+	case "badcase":
+		s.handleBadCase(w, runID)
+	case "promotion-draft":
+		s.handlePromotionDraft(w, runID)
 	case "artifacts":
 		artifacts, err := s.service.GetArtifacts(runID)
 		s.writeRunCollection(w, runID, "artifacts", artifacts, err)
 	case "stop-decisions":
 		decisions, err := s.service.GetStopDecisions(runID)
 		s.writeRunCollection(w, runID, "stop_decisions", decisions, err)
+	case "gate-decisions":
+		decisions, err := s.service.GetGateDecisions(runID)
+		s.writeRunCollection(w, runID, "gate_decisions", decisions, err)
+	case "hitl-reviews":
+		reviews, err := s.service.GetHITLReviews(runID)
+		s.writeRunCollection(w, runID, "hitl_reviews", reviews, err)
 	case "context-packs":
 		packs, err := s.service.GetContextPacks(runID)
 		s.writeRunCollection(w, runID, "context_packs", packs, err)
@@ -263,6 +277,57 @@ func (s *Server) handleRunSubresource(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleRunMutation(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" {
+		writeError(w, http.StatusNotFound, "not_found", "unknown run mutation endpoint")
+		return
+	}
+	runID := parts[0]
+	if !safeID(runID) {
+		writeError(w, http.StatusBadRequest, "invalid_run_id", "run id contains invalid path characters")
+		return
+	}
+	switch parts[1] {
+	case "gate-decisions":
+		var decision model.GateDecision
+		if err := json.NewDecoder(r.Body).Decode(&decision); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+			return
+		}
+		decision.RunID = runID
+		created, err := s.service.AppendGateDecision(decision)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "append_gate_decision_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	case "promotion-draft":
+		draft, err := s.service.PromoteBadCase(runID)
+		if err != nil {
+			s.writeRunReadError(w, runID, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, draft)
+	case "hitl-reviews":
+		var review model.HITLReview
+		if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+			return
+		}
+		review.RunID = runID
+		created, err := s.service.AppendHITLReview(review)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "append_hitl_review_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	default:
+		writeError(w, http.StatusNotFound, "not_found", "unknown run mutation endpoint")
+	}
+}
+
 func (s *Server) handleRunDetail(w http.ResponseWriter, runID string) {
 	detail, err := s.service.GetRun(runID)
 	s.writeRunResult(w, runID, detail, err)
@@ -275,6 +340,37 @@ func (s *Server) handleReport(w http.ResponseWriter, runID string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "format": "markdown", "content": report})
+}
+
+func (s *Server) handleBadCase(w http.ResponseWriter, runID string) {
+	badcase, err := s.service.GetBadCase(runID)
+	if err != nil {
+		s.writeRunReadError(w, runID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "format": "yaml", "content": badcase})
+}
+
+func (s *Server) handlePromotionDraft(w http.ResponseWriter, runID string) {
+	draft, err := s.service.GetPromotionDraft(runID)
+	if err != nil {
+		s.writeRunReadError(w, runID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "format": "yaml", "content": draft})
+}
+
+func (s *Server) handleRepeatResult(w http.ResponseWriter, r *http.Request) {
+	result, err := s.service.GetRepeatResult()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "repeat_result_not_found", "repeat_result.json was not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "read_repeat_result_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {

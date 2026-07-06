@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/castwell/forge/internal/forgex/model"
+	"github.com/castwell/forge/internal/forgex/reliability"
 	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
 )
@@ -53,6 +54,12 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	if err := store.AppendContextPack(context.Background(), model.ContextPack{ID: "ctx_1", RunID: runID, Purpose: "api test", Summary: "context pack", CreatedAt: now}); err != nil {
 		t.Fatalf("AppendContextPack() error = %v", err)
 	}
+	if err := store.AppendGateDecision(context.Background(), model.GateDecision{ID: "gate_1", RunID: runID, Mode: model.GateModeShadow, Action: model.GateActionPause, Reason: "needs review", NeedsHuman: true, CreatedAt: now}); err != nil {
+		t.Fatalf("AppendGateDecision() error = %v", err)
+	}
+	if err := store.AppendHITLReview(context.Background(), model.HITLReview{ID: "hitl_1", RunID: runID, GateID: "gate_1", Status: model.HITLReviewPending, Reason: "waiting", CreatedAt: now}); err != nil {
+		t.Fatalf("AppendHITLReview() error = %v", err)
+	}
 	if err := store.SaveWorldState(context.Background(), model.WorldState{RunID: runID, Version: 1, Entries: []model.StateEntry{{Key: "phase", Status: model.StateAccepted, Producer: "test", Version: 1}}, UpdatedAt: now}); err != nil {
 		t.Fatalf("SaveWorldState() error = %v", err)
 	}
@@ -69,6 +76,14 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	}
 	if err := store.WriteReport(context.Background(), runID, "# Report\n\nOK\n"); err != nil {
 		t.Fatalf("WriteReport() error = %v", err)
+	}
+	badcase := []byte("id: FORGEX_BADCASE_TOOL_CONTRACT\ntitle: Tool contract badcase\nrun_id: " + runID + "\nfailure_category: tool_contract\nexpected_decision: pause\nassertions:\n  - expected pause\n")
+	if err := store.WriteBadCase(context.Background(), runID, badcase); err != nil {
+		t.Fatalf("WriteBadCase() error = %v", err)
+	}
+	repeat := reliability.RepeatResult{CaseID: "case_1", SuiteID: "suite_1", Total: 1, Passed: 1, PassAtK: true, PassAll: true, CreatedAt: now}
+	if err := writeTestJSON(filepath.Join(root, "repeat_result.json"), repeat); err != nil {
+		t.Fatalf("write repeat result: %v", err)
 	}
 
 	h := New(Config{Root: root, Version: "test"}).Handler()
@@ -104,9 +119,15 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	assertContains(t, h, "/api/v1/runs/"+runID+"/errors", "boom")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/lessons", "keep product API stable")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/report", "# Report")
+	assertContains(t, h, "/api/v1/runs/"+runID+"/badcase", "Tool contract badcase")
+	postJSON(t, h, "/api/v1/runs/"+runID+"/promotion-draft", `{}`, http.StatusCreated)
+	assertContains(t, h, "/api/v1/runs/"+runID+"/promotion-draft", "review_required")
+	assertContains(t, h, "/api/v1/reliability/repeat-result", "case_1")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/explorer", "scorecard")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/artifacts", "asset_1")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/stop-decisions", "healthy")
+	assertContains(t, h, "/api/v1/runs/"+runID+"/gate-decisions", "needs review")
+	assertContains(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", "waiting")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/context-packs", "context pack")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/state", "phase")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/state-claims", "claim_1")
@@ -119,6 +140,10 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	assertContains(t, h, "/api/v1/projects/forgex", "forgex")
 	assertContains(t, h, "/api/v1/projects/forgex/runs", runID)
 	assertContains(t, h, "/api/v1/runs?project=forgex", runID)
+	postJSON(t, h, "/api/v1/runs/"+runID+"/gate-decisions", `{"action":"escalate","reason":"manual shadow gate"}`, http.StatusCreated)
+	postJSON(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", `{"gate_id":"gate_manual","status":"approved","reviewer":"tester","reason":"safe to continue"}`, http.StatusCreated)
+	assertContains(t, h, "/api/v1/runs/"+runID+"/gate-decisions", "manual shadow gate")
+	assertContains(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", "safe to continue")
 	assertContains(t, h, "/api/v1/assets", "asset_1")
 	assertContains(t, h, "/api/v1/assets", "by_kind")
 }
@@ -155,6 +180,18 @@ func assertContains(t *testing.T, h http.Handler, path string, want string) {
 	if !strings.Contains(body, want) {
 		t.Fatalf("response for %s does not contain %q: %s", path, want, body)
 	}
+}
+
+func postJSON(t *testing.T, h http.Handler, path string, body string, want int) []byte {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != want {
+		t.Fatalf("POST %s status = %d, want %d, body=%s", path, rec.Code, want, rec.Body.String())
+	}
+	return rec.Body.Bytes()
 }
 
 func getJSON(t *testing.T, h http.Handler, path string, want int) []byte {

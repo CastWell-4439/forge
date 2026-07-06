@@ -1,6 +1,7 @@
 package productapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
+	"github.com/castwell/forge/internal/forgex/promotion"
+	"github.com/castwell/forge/internal/forgex/reliability"
 	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
 )
@@ -92,6 +95,8 @@ type RunExplorer struct {
 	Lessons             []model.Lesson             `json:"lessons"`
 	Artifacts           []model.ArtifactRecord     `json:"artifacts"`
 	StopDecisions       []model.StopDecision       `json:"stop_decisions"`
+	GateDecisions       []model.GateDecision       `json:"gate_decisions"`
+	HITLReviews         []model.HITLReview         `json:"hitl_reviews"`
 	ContextPacks        []model.ContextPack        `json:"context_packs"`
 	StateClaims         []model.StateClaim         `json:"state_claims"`
 	WorldState          model.WorldState           `json:"world_state"`
@@ -312,6 +317,14 @@ func (s *Service) GetRun(runID string) (RunDetail, error) {
 	if err != nil {
 		return RunDetail{}, err
 	}
+	gateDecisions, err := s.GetGateDecisions(runID)
+	if err != nil {
+		return RunDetail{}, err
+	}
+	hitlReviews, err := s.GetHITLReviews(runID)
+	if err != nil {
+		return RunDetail{}, err
+	}
 	return RunDetail{
 		Run:        artifacts.Run,
 		TaskPacket: artifacts.TaskPacket,
@@ -326,6 +339,8 @@ func (s *Service) GetRun(runID string) (RunDetail, error) {
 			Lessons:             len(lessons),
 			Artifacts:           len(artifacts.Artifacts),
 			StopDecisions:       len(artifacts.StopDecisions),
+			GateDecisions:       len(gateDecisions),
+			HITLReviews:         len(hitlReviews),
 		},
 	}, nil
 }
@@ -348,6 +363,14 @@ func (s *Service) GetRunExplorer(runID string) (RunExplorer, error) {
 	if err != nil {
 		return RunExplorer{}, err
 	}
+	gateDecisions, err := s.GetGateDecisions(runID)
+	if err != nil {
+		return RunExplorer{}, err
+	}
+	hitlReviews, err := s.GetHITLReviews(runID)
+	if err != nil {
+		return RunExplorer{}, err
+	}
 	explorer := RunExplorer{
 		Detail:              detail,
 		Events:              artifacts.Events,
@@ -358,6 +381,8 @@ func (s *Service) GetRunExplorer(runID string) (RunExplorer, error) {
 		Lessons:             lessons,
 		Artifacts:           artifacts.Artifacts,
 		StopDecisions:       artifacts.StopDecisions,
+		GateDecisions:       gateDecisions,
+		HITLReviews:         hitlReviews,
 		ContextPacks:        contextPacks,
 		StateClaims:         artifacts.StateClaims,
 		WorldState:          artifacts.WorldState,
@@ -414,6 +439,69 @@ func (s *Service) GetStopDecisions(runID string) ([]model.StopDecision, error) {
 	return artifacts.StopDecisions, err
 }
 
+func (s *Service) GetGateDecisions(runID string) ([]model.GateDecision, error) {
+	if !safeID(runID) {
+		return nil, fmt.Errorf("invalid run id: %s", runID)
+	}
+	return readJSONL[model.GateDecision](s.layout.GateDecisionsFile(runID))
+}
+
+func (s *Service) GetHITLReviews(runID string) ([]model.HITLReview, error) {
+	if !safeID(runID) {
+		return nil, fmt.Errorf("invalid run id: %s", runID)
+	}
+	return readJSONL[model.HITLReview](s.layout.HITLReviewsFile(runID))
+}
+
+func (s *Service) AppendGateDecision(decision model.GateDecision) (model.GateDecision, error) {
+	if !safeID(decision.RunID) {
+		return model.GateDecision{}, fmt.Errorf("invalid run id: %s", decision.RunID)
+	}
+	if strings.TrimSpace(decision.ID) == "" {
+		decision.ID = fmt.Sprintf("gate-%s-%d", decision.RunID, time.Now().UTC().UnixNano())
+	}
+	if decision.Mode == "" {
+		decision.Mode = model.GateModeShadow
+	}
+	if decision.Action == "" {
+		decision.Action = model.GateActionAllow
+	}
+	if decision.CreatedAt.IsZero() {
+		decision.CreatedAt = time.Now().UTC()
+	}
+	if decision.Mode == model.GateModeShadow && decision.Action != model.GateActionAllow {
+		decision.NeedsHuman = true
+	}
+	store := storage.NewFileStore(s.root)
+	if err := store.AppendGateDecision(context.Background(), decision); err != nil {
+		return model.GateDecision{}, err
+	}
+	return decision, nil
+}
+
+func (s *Service) AppendHITLReview(review model.HITLReview) (model.HITLReview, error) {
+	if !safeID(review.RunID) {
+		return model.HITLReview{}, fmt.Errorf("invalid run id: %s", review.RunID)
+	}
+	if strings.TrimSpace(review.ID) == "" {
+		review.ID = fmt.Sprintf("hitl-%s-%d", review.RunID, time.Now().UTC().UnixNano())
+	}
+	if review.Status == "" {
+		review.Status = model.HITLReviewPending
+	}
+	if review.CreatedAt.IsZero() {
+		review.CreatedAt = time.Now().UTC()
+	}
+	if review.Status != model.HITLReviewPending && review.ResolvedAt.IsZero() {
+		review.ResolvedAt = time.Now().UTC()
+	}
+	store := storage.NewFileStore(s.root)
+	if err := store.AppendHITLReview(context.Background(), review); err != nil {
+		return model.HITLReview{}, err
+	}
+	return review, nil
+}
+
 func (s *Service) GetContextPacks(runID string) ([]model.ContextPack, error) {
 	if !safeID(runID) {
 		return nil, fmt.Errorf("invalid run id: %s", runID)
@@ -447,6 +535,44 @@ func (s *Service) GetReport(runID string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func (s *Service) GetBadCase(runID string) (string, error) {
+	if !safeID(runID) {
+		return "", fmt.Errorf("invalid run id: %s", runID)
+	}
+	data, err := os.ReadFile(s.layout.BadCaseFile(runID))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (s *Service) PromoteBadCase(runID string) (promotion.Draft, error) {
+	if !safeID(runID) {
+		return promotion.Draft{}, fmt.Errorf("invalid run id: %s", runID)
+	}
+	runDir := s.layout.RunDir(runID)
+	return promotion.Promote(runDir, filepath.Join(runDir, "promotion_draft.yaml"))
+}
+
+func (s *Service) GetPromotionDraft(runID string) (string, error) {
+	if !safeID(runID) {
+		return "", fmt.Errorf("invalid run id: %s", runID)
+	}
+	data, err := os.ReadFile(filepath.Join(s.layout.RunDir(runID), "promotion_draft.yaml"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (s *Service) GetRepeatResult() (reliability.RepeatResult, error) {
+	var result reliability.RepeatResult
+	if err := readJSON(filepath.Join(s.root, "repeat_result.json"), &result); err != nil {
+		return reliability.RepeatResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) GetEvalResult(runID string) (model.EvalResult, error) {

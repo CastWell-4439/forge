@@ -92,6 +92,22 @@ func (s *FileStore) AppendStopSignal(ctx context.Context, signal model.StopSigna
 	return AppendJSONL(s.layout.StopSignalsFile(signal.RunID), signal)
 }
 
+// AppendGateDecision appends one RuntimeGate decision to gate_decisions.jsonl.
+func (s *FileStore) AppendGateDecision(ctx context.Context, decision model.GateDecision) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.GateDecisionsFile(decision.RunID), decision)
+}
+
+// AppendHITLReview appends one human review decision to hitl_reviews.jsonl.
+func (s *FileStore) AppendHITLReview(ctx context.Context, review model.HITLReview) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.HITLReviewsFile(review.RunID), review)
+}
+
 // SaveProgressLedger writes the latest progress ledger as YAML.
 func (s *FileStore) SaveProgressLedger(ctx context.Context, ledger model.ProgressLedger) error {
 	return writeYAMLFile(ctx, s.layout.ProgressLedgerFile(ledger.RunID), ledger)

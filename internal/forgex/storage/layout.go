@@ -65,6 +65,16 @@ func (l Layout) StopSignalsFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "stop_signals.jsonl")
 }
 
+// GateDecisionsFile returns the runtime gate decisions JSONL file path.
+func (l Layout) GateDecisionsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "gate_decisions.jsonl")
+}
+
+// HITLReviewsFile returns the human-in-the-loop review decisions JSONL file path.
+func (l Layout) HITLReviewsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "hitl_reviews.jsonl")
+}
+
 // ProgressLedgerFile returns the progress ledger YAML file path.
 func (l Layout) ProgressLedgerFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "progress_ledger.yaml")
