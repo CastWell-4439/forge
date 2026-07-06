@@ -23,9 +23,9 @@ const (
 
 // GateDecision records one explainable RuntimeGate decision.
 //
-// In local product mode these records are artifacts only. Shadow decisions never
-// alter Forge runtime execution semantics; enforce decisions are reserved for a
-// later integration point.
+// Shadow decisions never alter Forge runtime execution semantics. Enforce
+// decisions may be applied by a runtime gate integration before handler/tool
+// execution and should remain fully explainable through this artifact.
 type GateDecision struct {
 	ID         string     `json:"id" yaml:"id"`
 	RunID      string     `json:"run_id" yaml:"run_id"`

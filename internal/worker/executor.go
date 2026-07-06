@@ -11,6 +11,7 @@ import (
 // Executor executes tasks by looking up handlers in the registry and invoking them.
 type Executor struct {
 	registry *Registry
+	gate     RuntimeGate
 }
 
 // NewExecutor creates a new Executor with the given handler registry.
@@ -42,6 +43,22 @@ func (e *Executor) Execute(ctx context.Context, req *forgev1.TaskRequest) *forge
 	}
 	if params == nil {
 		params = make(map[string]interface{})
+	}
+
+	if e.gate != nil {
+		decision, err := e.gate.BeforeExecute(ctx, GateRequest{
+			TaskID:     req.GetTaskId(),
+			WorkflowID: req.GetWorkflowId(),
+			TaskName:   req.GetTaskName(),
+			Handler:    req.GetHandler(),
+			Params:     params,
+		})
+		if err != nil {
+			return &forgev1.TaskResponse{TaskId: req.GetTaskId(), Success: false, ErrorMsg: fmt.Sprintf("runtime gate failed: %v", err)}
+		}
+		if decision.Enforce && decision.Action != GateActionAllow {
+			return &forgev1.TaskResponse{TaskId: req.GetTaskId(), Success: false, ErrorMsg: fmt.Sprintf("runtime gate %s: %s", decision.Action, decision.Reason)}
+		}
 	}
 
 	// Execute handler
