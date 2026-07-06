@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
+	mux.HandleFunc("GET /api/v1/control-plane/summary", s.handleControlPlaneSummary)
 	mux.HandleFunc("GET /api/v1/overview", s.handleOverview)
 	mux.HandleFunc("GET /api/v1/workspaces", s.handleWorkspaces)
 	mux.HandleFunc("GET /api/v1/projects", s.handleProjects)
@@ -111,6 +113,15 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"mode":    "local",
 		"root":    s.service.Root(),
 	})
+}
+
+func (s *Server) handleControlPlaneSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.service.Summary()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "summary_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -178,21 +189,21 @@ func (s *Server) handleProjectSubresource(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
-	var (
-		runs []RunSummary
-		err  error
-	)
-	project := r.URL.Query().Get("project")
-	if project != "" {
-		runs, err = s.service.ListRunsByProject(project)
-	} else {
-		runs, err = s.service.ListRuns()
-	}
+	query := r.URL.Query()
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	offset, _ := strconv.Atoi(query.Get("offset"))
+	result, err := s.service.SearchRuns(RunQuery{
+		Project: query.Get("project"),
+		Status:  query.Get("status"),
+		Q:       query.Get("q"),
+		Limit:   limit,
+		Offset:  offset,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list_runs_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleRunSubresource(w http.ResponseWriter, r *http.Request) {

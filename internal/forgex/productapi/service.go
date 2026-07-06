@@ -25,6 +25,38 @@ type Service struct {
 }
 
 // Overview is the local workspace summary used by product console entry pages.
+type ControlPlaneSummary struct {
+	Workspace       string            `json:"workspace"`
+	Root            string            `json:"root"`
+	Ready           bool              `json:"ready"`
+	Modules         map[string]string `json:"modules"`
+	Overview        Overview          `json:"overview"`
+	PendingHITL     int               `json:"pending_hitl"`
+	GateDecisions   int               `json:"gate_decisions"`
+	HumanGates      int               `json:"human_gates"`
+	BadCases        int               `json:"badcases"`
+	PromotionDrafts int               `json:"promotion_drafts"`
+	RepeatAvailable bool              `json:"repeat_available"`
+	GeneratedAt     time.Time         `json:"generated_at"`
+}
+
+// RunQuery describes supported local run list filters.
+type RunQuery struct {
+	Project string
+	Status  string
+	Q       string
+	Limit   int
+	Offset  int
+}
+
+// RunSearchResult is the paged run list response.
+type RunSearchResult struct {
+	Runs   []RunSummary `json:"runs"`
+	Total  int          `json:"total"`
+	Limit  int          `json:"limit"`
+	Offset int          `json:"offset"`
+}
+
 type Overview struct {
 	Workspace       string         `json:"workspace"`
 	Root            string         `json:"root"`
@@ -119,6 +151,60 @@ func (s *Service) Root() string { return s.root }
 func (s *Service) Layout() storage.Layout { return s.layout }
 
 // Overview returns a local workspace summary for Product Console.
+func (s *Service) Summary() (ControlPlaneSummary, error) {
+	overview, err := s.Overview()
+	if err != nil {
+		return ControlPlaneSummary{}, err
+	}
+	runs, err := s.ListRuns()
+	if err != nil {
+		return ControlPlaneSummary{}, err
+	}
+	summary := ControlPlaneSummary{
+		Workspace:   "local",
+		Root:        s.root,
+		Ready:       true,
+		Overview:    overview,
+		GeneratedAt: time.Now().UTC(),
+		Modules: map[string]string{
+			"product_api":       "ready",
+			"run_explorer":      "ready",
+			"workspace_project": "ready",
+			"asset_registry":    "ready",
+			"runtime_gate":      "shadow_artifact_ready",
+			"hitl":              "local_artifact_ready",
+			"badcase_promotion": "ready",
+			"repeat_result":     "optional",
+			"ui":                "intentionally_not_in_scope",
+		},
+	}
+	for _, run := range runs {
+		gates, _ := s.GetGateDecisions(run.ID)
+		reviews, _ := s.GetHITLReviews(run.ID)
+		if _, err := s.GetBadCase(run.ID); err == nil {
+			summary.BadCases++
+		}
+		if _, err := s.GetPromotionDraft(run.ID); err == nil {
+			summary.PromotionDrafts++
+		}
+		summary.GateDecisions += len(gates)
+		for _, gate := range gates {
+			if gate.NeedsHuman {
+				summary.HumanGates++
+			}
+		}
+		for _, review := range reviews {
+			if review.Status == model.HITLReviewPending {
+				summary.PendingHITL++
+			}
+		}
+	}
+	if _, err := s.GetRepeatResult(); err == nil {
+		summary.RepeatAvailable = true
+	}
+	return summary, nil
+}
+
 func (s *Service) Overview() (Overview, error) {
 	runs, err := s.ListRuns()
 	if err != nil {
@@ -248,6 +334,50 @@ func (s *Service) ListProjects() ([]ProjectSummary, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastRunAt.After(out[j].LastRunAt) })
 	return out, nil
+}
+
+// SearchRuns returns filtered and paged local run summaries.
+func (s *Service) SearchRuns(query RunQuery) (RunSearchResult, error) {
+	runs, err := s.ListRuns()
+	if err != nil {
+		return RunSearchResult{}, err
+	}
+	filtered := make([]RunSummary, 0, len(runs))
+	needle := strings.ToLower(strings.TrimSpace(query.Q))
+	status := strings.ToLower(strings.TrimSpace(query.Status))
+	project := projectID(query.Project)
+	for _, run := range runs {
+		if query.Project != "" && projectID(run.Project) != project {
+			continue
+		}
+		if status != "" && strings.ToLower(string(run.Status)) != status {
+			continue
+		}
+		if needle != "" {
+			haystack := strings.ToLower(strings.Join([]string{run.ID, run.TaskID, run.Name, run.Summary, run.Project}, " "))
+			if !strings.Contains(haystack, needle) {
+				continue
+			}
+		}
+		filtered = append(filtered, run)
+	}
+	total := len(filtered)
+	offset := query.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return RunSearchResult{Runs: filtered[offset:end], Total: total, Limit: limit, Offset: offset}, nil
 }
 
 // ListRunsByProject returns local runs filtered by project id or name.

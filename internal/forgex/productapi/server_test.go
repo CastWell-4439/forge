@@ -90,6 +90,7 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 
 	assertStatus(t, h, "/healthz", http.StatusOK)
 	assertStatus(t, h, "/api/v1/version", http.StatusOK)
+	assertContains(t, h, "/api/v1/control-plane/summary", "runtime_gate")
 
 	body := getJSON(t, h, "/api/v1/runs", http.StatusOK)
 	var runs struct {
@@ -140,6 +141,8 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	assertContains(t, h, "/api/v1/projects/forgex", "forgex")
 	assertContains(t, h, "/api/v1/projects/forgex/runs", runID)
 	assertContains(t, h, "/api/v1/runs?project=forgex", runID)
+	assertContains(t, h, "/api/v1/runs?status=succeeded&q=api&limit=1&offset=0", runID)
+	assertContains(t, h, "/api/v1/runs?status=failed", `"total":0`)
 	postJSON(t, h, "/api/v1/runs/"+runID+"/gate-decisions", `{"action":"escalate","reason":"manual shadow gate"}`, http.StatusCreated)
 	postJSON(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", `{"gate_id":"gate_manual","status":"approved","reviewer":"tester","reason":"safe to continue"}`, http.StatusCreated)
 	assertContains(t, h, "/api/v1/runs/"+runID+"/gate-decisions", "manual shadow gate")
