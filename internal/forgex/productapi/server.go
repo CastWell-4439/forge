@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/runs", s.handleRuns)
 	mux.HandleFunc("GET /api/v1/runs/", s.handleRunSubresource)
 	mux.HandleFunc("POST /api/v1/runs/", s.handleRunMutation)
+	mux.HandleFunc("POST /api/v1/gate/evaluate", s.handleGateEvaluate)
 	mux.HandleFunc("GET /api/v1/reliability/repeat-result", s.handleRepeatResult)
 	mux.HandleFunc("GET /api/v1/assets", s.handleAssets)
 	return recoverMiddleware(mux)
@@ -369,6 +370,20 @@ func (s *Server) handlePromotionDraft(w http.ResponseWriter, runID string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "format": "yaml", "content": draft})
+}
+
+func (s *Server) handleGateEvaluate(w http.ResponseWriter, r *http.Request) {
+	var req GateEvaluationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	result, err := s.service.EvaluateGate(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "gate_evaluation_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleRepeatResult(w http.ResponseWriter, r *http.Request) {

@@ -145,8 +145,10 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	assertContains(t, h, "/api/v1/runs?status=failed", `"total":0`)
 	postJSON(t, h, "/api/v1/runs/"+runID+"/gate-decisions", `{"action":"escalate","reason":"manual shadow gate"}`, http.StatusCreated)
 	postJSON(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", `{"gate_id":"gate_manual","status":"approved","reviewer":"tester","reason":"safe to continue"}`, http.StatusCreated)
+	postJSON(t, h, "/api/v1/gate/evaluate", `{"run_id":"`+runID+`","authority":"L0","persist":true,"contract":{"name":"danger.tool","risk_level":"high","side_effect":"external_write","approval_required":true}}`, http.StatusOK)
 	assertContains(t, h, "/api/v1/runs/"+runID+"/gate-decisions", "manual shadow gate")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", "safe to continue")
+	assertContains(t, h, "/api/v1/runs/"+runID+"/hitl-reviews", "requires human review")
 	assertContains(t, h, "/api/v1/assets", "asset_1")
 	assertContains(t, h, "/api/v1/assets", "by_kind")
 }

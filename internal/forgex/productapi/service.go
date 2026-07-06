@@ -12,10 +12,12 @@ import (
 
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
+	"github.com/castwell/forge/internal/forgex/policy"
 	"github.com/castwell/forge/internal/forgex/promotion"
 	"github.com/castwell/forge/internal/forgex/reliability"
 	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
+	"github.com/castwell/forge/internal/forgex/toolgw"
 )
 
 // Service is the product-level read model boundary for the local Control Plane.
@@ -55,6 +57,24 @@ type RunSearchResult struct {
 	Total  int          `json:"total"`
 	Limit  int          `json:"limit"`
 	Offset int          `json:"offset"`
+}
+
+// GateEvaluationRequest is a local dry-run/shadow gate evaluation input.
+type GateEvaluationRequest struct {
+	RunID     string              `json:"run_id,omitempty"`
+	Authority string              `json:"authority,omitempty"`
+	Contract  toolgw.ToolContract `json:"contract"`
+	Scope     string              `json:"scope,omitempty"`
+	SubjectID string              `json:"subject_id,omitempty"`
+	Persist   bool                `json:"persist,omitempty"`
+}
+
+// GateEvaluationResult returns the policy and gate projection for one tool.
+type GateEvaluationResult struct {
+	PolicyDecision policy.Decision    `json:"policy_decision"`
+	GateDecision   model.GateDecision `json:"gate_decision"`
+	HITLReview     *model.HITLReview  `json:"hitl_review,omitempty"`
+	Persisted      bool               `json:"persisted"`
 }
 
 type Overview struct {
@@ -583,6 +603,48 @@ func (s *Service) GetHITLReviews(runID string) ([]model.HITLReview, error) {
 	return readJSONL[model.HITLReview](s.layout.HITLReviewsFile(runID))
 }
 
+func (s *Service) EvaluateGate(req GateEvaluationRequest) (GateEvaluationResult, error) {
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" {
+		runID = "adhoc"
+	}
+	if !safeID(runID) {
+		return GateEvaluationResult{}, fmt.Errorf("invalid run id: %s", runID)
+	}
+	engine := policy.NewEngine(nil)
+	policyDecision := engine.Decide(runID, policy.AuthorityLevel(req.Authority), req.Contract)
+	gate := model.GateDecision{
+		RunID:      runID,
+		Mode:       model.GateModeShadow,
+		Action:     gateActionFromPolicy(policyDecision.Action),
+		Scope:      req.Scope,
+		SubjectID:  req.SubjectID,
+		Reason:     policyDecision.Reason,
+		Evidence:   []string{policyDecision.ID},
+		Source:     "policy_engine",
+		NeedsHuman: policyDecision.RequiresHITL,
+		CreatedAt:  policyDecision.CreatedAt,
+	}
+	result := GateEvaluationResult{PolicyDecision: policyDecision, GateDecision: gate}
+	if !req.Persist {
+		return result, nil
+	}
+	createdGate, err := s.AppendGateDecision(gate)
+	if err != nil {
+		return GateEvaluationResult{}, err
+	}
+	result.GateDecision = createdGate
+	result.Persisted = true
+	if createdGate.NeedsHuman {
+		review, err := s.AppendHITLReview(model.HITLReview{RunID: runID, GateID: createdGate.ID, Status: model.HITLReviewPending, Reason: "gate decision requires human review"})
+		if err != nil {
+			return GateEvaluationResult{}, err
+		}
+		result.HITLReview = &review
+	}
+	return result, nil
+}
+
 func (s *Service) AppendGateDecision(decision model.GateDecision) (model.GateDecision, error) {
 	if !safeID(decision.RunID) {
 		return model.GateDecision{}, fmt.Errorf("invalid run id: %s", decision.RunID)
@@ -775,6 +837,21 @@ func (s *Service) ListAssets() ([]AssetSummary, error) {
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].CreatedAt.After(assets[j].CreatedAt) })
 	return assets, nil
+}
+
+func gateActionFromPolicy(action policy.Action) model.GateAction {
+	switch action {
+	case policy.ActionAllow, policy.ActionDryRunOnly:
+		return model.GateActionAllow
+	case policy.ActionDeny:
+		return model.GateActionBlock
+	case policy.ActionRequireApproval, policy.ActionPause:
+		return model.GateActionPause
+	case policy.ActionEscalate:
+		return model.GateActionEscalate
+	default:
+		return model.GateActionPause
+	}
 }
 
 func projectID(project string) string {
