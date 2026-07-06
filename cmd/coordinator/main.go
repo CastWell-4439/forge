@@ -13,6 +13,10 @@ import (
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/castwell/forge/internal/coordinator"
+	"github.com/castwell/forge/internal/forgex/failure"
+	"github.com/castwell/forge/internal/forgex/policy"
+	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
+	"github.com/castwell/forge/internal/forgex/toolgw"
 	"github.com/castwell/forge/internal/observability"
 	"github.com/castwell/forge/internal/storage"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
@@ -34,6 +38,39 @@ func main() {
 
 	// --- Coordinator ---
 	coord := coordinator.NewCoordinator(store)
+	if envBool("FORGEX_RUNTIME_OBSERVER_ENABLED") {
+		root := envOrDefault("FORGEX_RUNTIME_ROOT", ".forgex-runtime")
+		observerCfg := forgexruntime.FileObserverConfig{
+			Root:      root,
+			AutoIndex: envBool("FORGEX_RUNTIME_AUTO_INDEX"),
+			Authority: envOrDefault("FORGEX_RUNTIME_AUTHORITY", "L0"),
+		}
+		if contractsPath := os.Getenv("FORGEX_RUNTIME_CONTRACTS"); contractsPath != "" {
+			contracts, err := toolgw.LoadContracts(contractsPath)
+			if err != nil {
+				log.Fatalf("FATAL: load ForgeX runtime contracts: %v", err)
+			}
+			observerCfg.Contracts = contracts
+		}
+		if policyPath := os.Getenv("FORGEX_RUNTIME_POLICY"); policyPath != "" {
+			policyCfg, err := policy.LoadConfig(policyPath)
+			if err != nil {
+				log.Fatalf("FATAL: load ForgeX runtime policy: %v", err)
+			}
+			observerCfg.Policy = policy.NewEngine(policyCfg)
+		}
+		if taxonomyPath := os.Getenv("FORGEX_RUNTIME_TAXONOMY"); taxonomyPath != "" {
+			taxonomy, err := failure.LoadTaxonomy(taxonomyPath)
+			if err != nil {
+				log.Fatalf("FATAL: load ForgeX runtime taxonomy: %v", err)
+			}
+			observerCfg.Taxonomy = taxonomy
+		}
+		observerCfg.EvalRules = os.Getenv("FORGEX_RUNTIME_EVAL_RULES")
+		observerCfg.EvalSuite = os.Getenv("FORGEX_RUNTIME_EVAL_SUITE")
+		coord.SetRuntimeObserver(forgexruntime.NewFileObserver(observerCfg))
+		log.Printf("INFO: ForgeX runtime observer enabled root=%s auto_index=%v authority=%s contracts=%v policy=%v taxonomy=%v auto_eval=%v", root, envBool("FORGEX_RUNTIME_AUTO_INDEX"), observerCfg.Authority, observerCfg.Contracts != nil, observerCfg.Policy != nil, observerCfg.Taxonomy != nil, observerCfg.EvalRules != "" && observerCfg.EvalSuite != "")
+	}
 
 	// --- Observability ---
 	metrics := observability.NewMetrics()
@@ -124,8 +161,8 @@ func main() {
 func corsMiddleware(h http.Handler) http.Handler {
 	allowedRaw := os.Getenv("FORGE_CORS_ORIGINS")
 	allowed := map[string]bool{
-		"http://localhost:5173":  true, // Vite dev server
-		"http://localhost:3000":  true,
+		"http://localhost:5173": true, // Vite dev server
+		"http://localhost:3000": true,
 		"http://127.0.0.1:5173": true,
 		"http://127.0.0.1:3000": true,
 	}
@@ -159,4 +196,13 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }

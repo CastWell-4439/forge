@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/castwell/forge/internal/discovery"
+	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
 	"github.com/castwell/forge/internal/saga"
 	"github.com/castwell/forge/internal/storage"
 	"github.com/google/uuid"
@@ -38,18 +39,19 @@ type WorkerEntry struct {
 type Coordinator struct {
 	forgev1.UnimplementedCoordinatorServiceServer
 
-	store        storage.Storage
-	workers      map[string]*WorkerEntry
-	mu           sync.RWMutex
-	seqNum       int64
-	seqMu        sync.Mutex
-	disco        discovery.Discovery
-	leader       *LeaderController
-	workerMgr    *WorkerManager
+	store           storage.Storage
+	workers         map[string]*WorkerEntry
+	mu              sync.RWMutex
+	seqNum          int64
+	seqMu           sync.Mutex
+	disco           discovery.Discovery
+	leader          *LeaderController
+	workerMgr       *WorkerManager
+	runtimeObserver forgexruntime.Observer
 
 	// dagCache stores parsed DAG definitions by workflow ID (for Saga compensation lookup).
-	dagCache     map[string]*DAG
-	dagCacheMu   sync.RWMutex
+	dagCache   map[string]*DAG
+	dagCacheMu sync.RWMutex
 }
 
 // NewCoordinator creates a new Coordinator with the given storage backend.
@@ -91,6 +93,13 @@ func (c *Coordinator) DeregisterWorker(id string) {
 		}
 		delete(c.workers, id)
 	}
+}
+
+// SetRuntimeObserver configures an optional ForgeX observer for persisted Forge
+// runtime events. Observer errors are logged by saveEvent and never alter Forge
+// workflow execution semantics.
+func (c *Coordinator) SetRuntimeObserver(observer forgexruntime.Observer) {
+	c.runtimeObserver = observer
 }
 
 // SubmitWorkflow implements the CoordinatorService SubmitWorkflow RPC.
@@ -461,6 +470,7 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 	}
 	c.saveEvent(ctx, task.WorkflowID, task.ID, storage.EventTaskStarted, nil)
 
+	callStartedAt := time.Now().UTC()
 	resp, err := worker.Client.ExecuteTask(ctx, &forgev1.TaskRequest{
 		TaskId:     task.ID,
 		WorkflowId: task.WorkflowID,
@@ -468,12 +478,39 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		Handler:    task.Handler,
 		Input:      task.Input,
 	})
+	callEndedAt := time.Now().UTC()
 	if err != nil {
+		c.observeTaskCall(ctx, forgexruntime.TaskCall{
+			WorkflowID: task.WorkflowID,
+			TaskID:     task.ID,
+			TaskName:   task.TaskName,
+			Handler:    task.Handler,
+			WorkerID:   worker.ID,
+			Input:      task.Input,
+			Error:      err.Error(),
+			Success:    false,
+			StartedAt:  callStartedAt,
+			EndedAt:    callEndedAt,
+		})
 		if failErr := c.OnTaskFailed(ctx, task.ID, err.Error()); failErr != nil {
 			log.Printf("ERROR: handle task %s failure: %v", task.ID, failErr)
 		}
 		return
 	}
+
+	c.observeTaskCall(ctx, forgexruntime.TaskCall{
+		WorkflowID: task.WorkflowID,
+		TaskID:     task.ID,
+		TaskName:   task.TaskName,
+		Handler:    task.Handler,
+		WorkerID:   worker.ID,
+		Input:      task.Input,
+		Output:     resp.GetOutput(),
+		Error:      resp.GetErrorMsg(),
+		Success:    resp.GetSuccess(),
+		StartedAt:  callStartedAt,
+		EndedAt:    callEndedAt,
+	})
 
 	if resp.GetSuccess() {
 		if err := c.OnTaskCompleted(ctx, task.ID, resp.GetOutput()); err != nil {
@@ -486,6 +523,16 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 	}
 }
 
+func (c *Coordinator) observeTaskCall(ctx context.Context, call forgexruntime.TaskCall) {
+	observer, ok := c.runtimeObserver.(forgexruntime.TaskCallObserver)
+	if !ok || observer == nil {
+		return
+	}
+	if err := observer.ObserveTaskCall(ctx, call); err != nil {
+		log.Printf("WARN: forgex runtime observer task_call workflow=%s task=%s handler=%s: %v", call.WorkflowID, call.TaskID, call.Handler, err)
+	}
+}
+
 // saveEvent is a helper that persists an event without blocking on errors.
 func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, eventType storage.EventType, payload json.RawMessage) {
 	c.seqMu.Lock()
@@ -493,14 +540,21 @@ func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, 
 	seq := c.seqNum
 	c.seqMu.Unlock()
 
-	if err := c.store.SaveEvent(ctx, &storage.Event{
+	event := &storage.Event{
 		WorkflowID:  workflowID,
 		TaskID:      taskID,
 		Type:        eventType,
 		Payload:     payload,
 		SequenceNum: seq,
-	}); err != nil {
+	}
+	if err := c.store.SaveEvent(ctx, event); err != nil {
 		log.Printf("ERROR: save event %s for workflow %s: %v", eventType, workflowID, err)
+		return
+	}
+	if c.runtimeObserver != nil {
+		if err := c.runtimeObserver.ObserveEvent(ctx, event); err != nil {
+			log.Printf("WARN: forgex runtime observer event=%s workflow=%s task=%s: %v", eventType, workflowID, taskID, err)
+		}
 	}
 }
 
