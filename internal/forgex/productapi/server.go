@@ -66,6 +66,7 @@ type AssetSummary struct {
 	ID          string    `json:"id"`
 	Kind        string    `json:"kind"`
 	RunID       string    `json:"run_id"`
+	Project     string    `json:"project,omitempty"`
 	Path        string    `json:"path"`
 	ContentType string    `json:"content_type,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitempty"`
@@ -86,6 +87,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /api/v1/version", s.handleVersion)
 	mux.HandleFunc("GET /api/v1/overview", s.handleOverview)
+	mux.HandleFunc("GET /api/v1/workspaces", s.handleWorkspaces)
+	mux.HandleFunc("GET /api/v1/projects", s.handleProjects)
+	mux.HandleFunc("GET /api/v1/projects/", s.handleProjectSubresource)
 	mux.HandleFunc("GET /api/v1/runs", s.handleRuns)
 	mux.HandleFunc("GET /api/v1/runs/", s.handleRunSubresource)
 	mux.HandleFunc("GET /api/v1/assets", s.handleAssets)
@@ -114,8 +118,72 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, overview)
 }
 
+func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
+	workspaces, err := s.service.ListWorkspaces()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list_workspaces_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspaces": workspaces})
+}
+
+func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
+	projects, err := s.service.ListProjects()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list_projects_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+}
+
+func (s *Server) handleProjectSubresource(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/v1/projects/")
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, http.StatusNotFound, "not_found", "project id is required")
+		return
+	}
+	projectID := parts[0]
+	if !safeID(projectID) {
+		writeError(w, http.StatusBadRequest, "invalid_project_id", "project id contains invalid path characters")
+		return
+	}
+	if len(parts) == 1 {
+		project, err := s.service.GetProject(projectID)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				writeError(w, http.StatusNotFound, "project_not_found", fmt.Sprintf("project %s was not found", projectID))
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "read_project_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, project)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "runs" {
+		runs, err := s.service.ListRunsByProject(projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "list_project_runs_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"project_id": projectID, "runs": runs})
+		return
+	}
+	writeError(w, http.StatusNotFound, "not_found", "unknown project endpoint")
+}
+
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
-	runs, err := s.service.ListRuns()
+	var (
+		runs []RunSummary
+		err  error
+	)
+	project := r.URL.Query().Get("project")
+	if project != "" {
+		runs, err = s.service.ListRunsByProject(project)
+	} else {
+		runs, err = s.service.ListRuns()
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list_runs_failed", err.Error())
 		return
@@ -210,15 +278,12 @@ func (s *Server) handleReport(w http.ResponseWriter, runID string) {
 }
 
 func (s *Server) handleAssets(w http.ResponseWriter, r *http.Request) {
-	assets, err := s.service.ListAssets()
+	registry, err := s.service.AssetRegistry()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list_assets_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workspace": "local",
-		"assets":    assets,
-	})
+	writeJSON(w, http.StatusOK, registry)
 }
 
 func (s *Server) writeRunCollection(w http.ResponseWriter, runID, field string, value any, err error) {

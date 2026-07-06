@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
@@ -24,6 +25,7 @@ type Service struct {
 type Overview struct {
 	Workspace       string         `json:"workspace"`
 	Root            string         `json:"root"`
+	Projects        int            `json:"projects"`
 	Runs            int            `json:"runs"`
 	ActiveRuns      int            `json:"active_runs"`
 	SucceededRuns   int            `json:"succeeded_runs"`
@@ -35,6 +37,48 @@ type Overview struct {
 	TotalAssets     int            `json:"total_assets"`
 	RecentRuns      []RunSummary   `json:"recent_runs"`
 	StatusHistogram map[string]int `json:"status_histogram"`
+}
+
+// WorkspaceSummary describes one logical local Control Plane workspace.
+type WorkspaceSummary struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Mode          string    `json:"mode"`
+	Root          string    `json:"root"`
+	Projects      int       `json:"projects"`
+	Runs          int       `json:"runs"`
+	Assets        int       `json:"assets"`
+	Errors        int       `json:"errors"`
+	LastRunAt     time.Time `json:"last_run_at,omitempty"`
+	Derived       bool      `json:"derived"`
+	SchemaVersion string    `json:"schema_version"`
+}
+
+// ProjectSummary is a product-level grouping derived from TaskPacket metadata.
+type ProjectSummary struct {
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	WorkspaceID     string         `json:"workspace_id"`
+	Runs            int            `json:"runs"`
+	ActiveRuns      int            `json:"active_runs"`
+	SucceededRuns   int            `json:"succeeded_runs"`
+	FailedRuns      int            `json:"failed_runs"`
+	StoppedRuns     int            `json:"stopped_runs"`
+	PausedRuns      int            `json:"paused_runs"`
+	EscalatedRuns   int            `json:"escalated_runs"`
+	Assets          int            `json:"assets"`
+	Errors          int            `json:"errors"`
+	LastRunAt       time.Time      `json:"last_run_at,omitempty"`
+	StatusHistogram map[string]int `json:"status_histogram"`
+	Derived         bool           `json:"derived"`
+}
+
+// AssetRegistry groups all local assets with workspace/project facets.
+type AssetRegistry struct {
+	Workspace string         `json:"workspace"`
+	Assets    []AssetSummary `json:"assets"`
+	ByKind    map[string]int `json:"by_kind"`
+	ByProject map[string]int `json:"by_project"`
 }
 
 // RunExplorer is the product-level aggregate view for one run.
@@ -75,8 +119,10 @@ func (s *Service) Overview() (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
+	projects := map[string]struct{}{}
 	o := Overview{Workspace: "local", Root: s.root, Runs: len(runs), StatusHistogram: map[string]int{}}
 	for _, run := range runs {
+		projects[projectID(run.Project)] = struct{}{}
 		status := string(run.Status)
 		o.StatusHistogram[status]++
 		o.TotalErrors += run.ErrorCount
@@ -101,7 +147,118 @@ func (s *Service) Overview() (Overview, error) {
 		limit = len(runs)
 	}
 	o.RecentRuns = append([]RunSummary(nil), runs[:limit]...)
+	o.Projects = len(projects)
 	return o, nil
+}
+
+// ListWorkspaces returns the local workspace registry projection.
+func (s *Service) ListWorkspaces() ([]WorkspaceSummary, error) {
+	runs, err := s.ListRuns()
+	if err != nil {
+		return nil, err
+	}
+	projects, err := s.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	assets, err := s.ListAssets()
+	if err != nil {
+		return nil, err
+	}
+	summary := WorkspaceSummary{
+		ID:            "local",
+		Name:          "Local Workspace",
+		Mode:          "local",
+		Root:          s.root,
+		Projects:      len(projects),
+		Runs:          len(runs),
+		Assets:        len(assets),
+		Derived:       true,
+		SchemaVersion: "derived/v1",
+	}
+	for _, run := range runs {
+		summary.Errors += run.ErrorCount
+		if run.StartedAt.After(summary.LastRunAt) {
+			summary.LastRunAt = run.StartedAt
+		}
+	}
+	return []WorkspaceSummary{summary}, nil
+}
+
+// GetProject returns one derived project summary.
+func (s *Service) GetProject(project string) (ProjectSummary, error) {
+	projects, err := s.ListProjects()
+	if err != nil {
+		return ProjectSummary{}, err
+	}
+	id := projectID(project)
+	for _, item := range projects {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return ProjectSummary{}, os.ErrNotExist
+}
+
+// ListProjects groups runs by product project metadata.
+func (s *Service) ListProjects() ([]ProjectSummary, error) {
+	runs, err := s.ListRuns()
+	if err != nil {
+		return nil, err
+	}
+	projects := map[string]*ProjectSummary{}
+	for _, run := range runs {
+		id := projectID(run.Project)
+		project, ok := projects[id]
+		if !ok {
+			project = &ProjectSummary{ID: id, Name: projectName(run.Project), WorkspaceID: "local", StatusHistogram: map[string]int{}, Derived: true}
+			projects[id] = project
+		}
+		project.Runs++
+		project.Assets += run.AssetCount
+		project.Errors += run.ErrorCount
+		if run.StartedAt.After(project.LastRunAt) {
+			project.LastRunAt = run.StartedAt
+		}
+		status := string(run.Status)
+		project.StatusHistogram[status]++
+		switch run.Status {
+		case model.RunPending, model.RunRunning:
+			project.ActiveRuns++
+		case model.RunSucceeded:
+			project.SucceededRuns++
+		case model.RunFailed:
+			project.FailedRuns++
+		case model.RunStopped:
+			project.StoppedRuns++
+		case model.RunPaused:
+			project.PausedRuns++
+		case model.RunEscalated:
+			project.EscalatedRuns++
+		}
+	}
+	out := make([]ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		out = append(out, *project)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastRunAt.After(out[j].LastRunAt) })
+	return out, nil
+}
+
+// ListRunsByProject returns local runs filtered by project id or name.
+func (s *Service) ListRunsByProject(project string) ([]RunSummary, error) {
+	runs, err := s.ListRuns()
+	if err != nil {
+		return nil, err
+	}
+	id := projectID(project)
+	filtered := make([]RunSummary, 0, len(runs))
+	for _, run := range runs {
+		if projectID(run.Project) == id {
+			filtered = append(filtered, run)
+		}
+	}
+	return filtered, nil
 }
 
 // ListRuns returns local run summaries sorted newest-first.
@@ -314,6 +471,20 @@ func (s *Service) GetScorecard(runID string) (scorecard.Scorecard, error) {
 	return card, nil
 }
 
+// AssetRegistry returns the local product asset registry projection.
+func (s *Service) AssetRegistry() (AssetRegistry, error) {
+	assets, err := s.ListAssets()
+	if err != nil {
+		return AssetRegistry{}, err
+	}
+	registry := AssetRegistry{Workspace: "local", Assets: assets, ByKind: map[string]int{}, ByProject: map[string]int{}}
+	for _, asset := range assets {
+		registry.ByKind[asset.Kind]++
+		registry.ByProject[projectID(asset.Project)]++
+	}
+	return registry, nil
+}
+
 // ListAssets returns the local asset registry projection.
 func (s *Service) ListAssets() ([]AssetSummary, error) {
 	entries, err := os.ReadDir(s.layout.RunsDir())
@@ -333,11 +504,13 @@ func (s *Service) ListAssets() ([]AssetSummary, error) {
 		if err != nil {
 			continue
 		}
+		project := artifacts.TaskPacket.Metadata["project"]
 		for _, artifact := range artifacts.Artifacts {
 			assets = append(assets, AssetSummary{
 				ID:          artifact.ID,
 				Kind:        artifact.Type,
 				RunID:       runID,
+				Project:     projectName(project),
 				Path:        artifact.URI,
 				ContentType: artifact.Metadata["content_type"],
 				CreatedAt:   artifact.CreatedAt,
@@ -346,6 +519,25 @@ func (s *Service) ListAssets() ([]AssetSummary, error) {
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].CreatedAt.After(assets[j].CreatedAt) })
 	return assets, nil
+}
+
+func projectID(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "default"
+	}
+	id := strings.ToLower(project)
+	id = strings.ReplaceAll(id, " ", "-")
+	id = strings.ReplaceAll(id, "_", "-")
+	return id
+}
+
+func projectName(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return "default"
+	}
+	return project
 }
 
 func readJSON(path string, target any) error {

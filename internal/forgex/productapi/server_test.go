@@ -113,7 +113,14 @@ func TestProductAPIServesRunArtifacts(t *testing.T) {
 	assertContains(t, h, "/api/v1/runs/"+runID+"/eval-result", "suite_1")
 	assertContains(t, h, "/api/v1/runs/"+runID+"/scorecard", "pass")
 	assertContains(t, h, "/api/v1/overview", "succeeded_runs")
+	assertContains(t, h, "/api/v1/overview", "projects")
+	assertContains(t, h, "/api/v1/workspaces", "Local Workspace")
+	assertContains(t, h, "/api/v1/projects", "forgex")
+	assertContains(t, h, "/api/v1/projects/forgex", "forgex")
+	assertContains(t, h, "/api/v1/projects/forgex/runs", runID)
+	assertContains(t, h, "/api/v1/runs?project=forgex", runID)
 	assertContains(t, h, "/api/v1/assets", "asset_1")
+	assertContains(t, h, "/api/v1/assets", "by_kind")
 }
 
 func TestProductAPINotFoundAndInvalidRunID(t *testing.T) {
@@ -121,6 +128,8 @@ func TestProductAPINotFoundAndInvalidRunID(t *testing.T) {
 	assertStatus(t, h, "/api/v1/runs/missing", http.StatusNotFound)
 	assertStatus(t, h, "/api/v1/runs/bad%5Cid/events", http.StatusBadRequest)
 	assertStatus(t, h, "/api/v1/runs/missing/unknown", http.StatusNotFound)
+	assertStatus(t, h, "/api/v1/projects/missing", http.StatusNotFound)
+	assertStatus(t, h, "/api/v1/projects/bad%5Cid", http.StatusBadRequest)
 }
 
 func writeTestJSON(path string, value any) error {
