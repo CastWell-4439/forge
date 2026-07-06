@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
+	"github.com/castwell/forge/internal/forgex/productapi"
 	"github.com/castwell/forge/internal/forgex/promotion"
 	"github.com/castwell/forge/internal/forgex/reliability"
 	"github.com/castwell/forge/internal/forgex/scorecard"
@@ -86,6 +88,11 @@ func main() {
 	case "cases":
 		if err := runCases(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "cases: %v\n", err)
+			os.Exit(1)
+		}
+	case "serve":
+		if err := runServe(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 			os.Exit(1)
 		}
 	default:
@@ -637,6 +644,18 @@ func printExpectedInt(name string, value *int) {
 	}
 }
 
+func runServe(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	root := fs.String("root", ".forgex", "root directory for ForgeX run artifacts")
+	addr := fs.String("addr", ":8090", "HTTP listen address")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	server := productapi.New(productapi.Config{Root: *root, Version: version})
+	fmt.Printf("ForgeX Control Plane API listening on %s (root=%s)\n", *addr, *root)
+	return http.ListenAndServe(*addr, server.Handler())
+}
+
 func printHelp() {
 	fmt.Print(`ForgeX - Agent Harness Control Plane
 
@@ -656,6 +675,7 @@ Commands:
   policy     Check tool policy decisions
   lessons    List lessons derived from a run
   cases      List, show, or run registered golden cases
+  serve      Start the local ForgeX Control Plane product API server
 
 run-demo flags:
   --case      Demo case to run: generic-contract-violation | generic-contract-success (default: generic-contract-violation)
@@ -704,6 +724,10 @@ cases flags:
   cases show --case <id> --cases configs/forgex/cases.yaml [--json]
   cases run --case <id> --root .forgex [--cases configs/forgex/cases.yaml] [--rules configs/forgex/eval_rules.yaml]
 
+serve flags:
+  --root  Root directory for ForgeX run artifacts (default: .forgex)
+  --addr  HTTP listen address (default: :8090)
+
 Examples:
   forgex run-demo --case generic-contract-violation --root .forgex
   forgex run-demo --case generic-contract-success --root .forgex
@@ -719,5 +743,6 @@ Examples:
   forgex cases list --cases configs/forgex/cases.yaml
   forgex cases show --case generic-contract-violation --cases configs/forgex/cases.yaml
   forgex cases run --case generic-contract-success --root .forgex
+  forgex serve --root .forgex --addr :8090
 `)
 }
