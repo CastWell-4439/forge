@@ -14,11 +14,16 @@ import (
 )
 
 // Config wires ForgeX policy/gate decisions into Forge worker execution.
+type ReviewResolver interface {
+	LatestReview(ctx context.Context, runID string, gateID string) (model.HITLReview, bool, error)
+}
+
 type Config struct {
 	Mode       model.GateMode
 	Authority  policy.AuthorityLevel
 	Contracts  map[string]toolgw.ToolContract
 	Store      storage.Store
+	Reviews    ReviewResolver
 	CreateHITL bool
 	Now        func() time.Time
 }
@@ -48,10 +53,16 @@ func (g *Gate) BeforeExecute(ctx context.Context, req worker.GateRequest) (worke
 	if g == nil {
 		return worker.GateDecision{Action: worker.GateActionAllow}, nil
 	}
+	runID := runID(req)
+	gateID := gateID(runID, req.TaskID)
+	if decision, ok, err := g.reviewDecision(ctx, runID, gateID); err != nil || ok {
+		return decision, err
+	}
 	contract := g.contractFor(req)
-	policyDecision := g.engine.Decide(runID(req), g.cfg.Authority, contract)
+	policyDecision := g.engine.Decide(runID, g.cfg.Authority, contract)
 	gateDecision := model.GateDecision{
-		RunID:      runID(req),
+		ID:         gateID,
+		RunID:      runID,
 		Mode:       g.cfg.Mode,
 		Action:     gateActionFromPolicy(policyDecision.Action),
 		Scope:      "worker_task",
@@ -88,6 +99,26 @@ func (g *Gate) contractFor(req worker.GateRequest) toolgw.ToolContract {
 	}
 }
 
+func (g *Gate) reviewDecision(ctx context.Context, runID string, gateID string) (worker.GateDecision, bool, error) {
+	if g.cfg.Reviews == nil {
+		return worker.GateDecision{}, false, nil
+	}
+	review, ok, err := g.cfg.Reviews.LatestReview(ctx, runID, gateID)
+	if err != nil || !ok {
+		return worker.GateDecision{}, ok, err
+	}
+	switch review.Status {
+	case model.HITLReviewApproved, model.HITLReviewContinued:
+		return worker.GateDecision{ID: gateID, Action: worker.GateActionAllow, Reason: "approved by HITL review", Enforce: g.cfg.Mode == model.GateModeEnforce}, true, nil
+	case model.HITLReviewRejected:
+		return worker.GateDecision{ID: gateID, Action: worker.GateActionBlock, Reason: "rejected by HITL review", Enforce: g.cfg.Mode == model.GateModeEnforce}, true, nil
+	case model.HITLReviewPending:
+		return worker.GateDecision{ID: gateID, Action: worker.GateActionPause, Reason: "waiting for HITL review", Enforce: g.cfg.Mode == model.GateModeEnforce}, true, nil
+	default:
+		return worker.GateDecision{}, false, nil
+	}
+}
+
 func (g *Gate) persist(ctx context.Context, decision model.GateDecision) error {
 	if g.cfg.Store == nil {
 		return nil
@@ -101,6 +132,23 @@ func (g *Gate) persist(ctx context.Context, decision model.GateDecision) error {
 		}
 	}
 	return nil
+}
+
+func gateID(runID string, taskID string) string {
+	base := strings.TrimSpace(taskID)
+	if base == "" {
+		base = "task"
+	}
+	return "gate-" + sanitizeID(runID) + "-" + sanitizeID(base)
+}
+
+func sanitizeID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	replacer := strings.NewReplacer("\\", "-", "/", "-", " ", "-", ":", "-", "\t", "-")
+	return replacer.Replace(value)
 }
 
 func runID(req worker.GateRequest) string {
