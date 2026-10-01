@@ -24,6 +24,7 @@ type Store interface {
 	AppendContractValidation(ctx context.Context, validation model.ContractValidation) error
 	SaveWorldState(ctx context.Context, state model.WorldState) error
 	AppendStateClaim(ctx context.Context, claim model.StateClaim) error
+	AppendStateValidation(ctx context.Context, validation model.StateValidation) error
 	AppendArtifact(ctx context.Context, artifact model.ArtifactRecord) error
 	AppendLesson(ctx context.Context, lesson model.Lesson) error
 	WriteReport(ctx context.Context, runID string, markdown string) error

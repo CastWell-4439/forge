@@ -105,6 +105,11 @@ func (l Layout) StateClaimsFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "state_claims.jsonl")
 }
 
+// StateValidationsFile returns the state claim validations JSONL file path.
+func (l Layout) StateValidationsFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "state_validations.jsonl")
+}
+
 // ArtifactsFile returns the artifact index JSONL file path.
 func (l Layout) ArtifactsFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "artifacts.jsonl")
