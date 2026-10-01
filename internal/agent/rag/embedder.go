@@ -20,7 +20,7 @@ type Embedder interface {
 }
 
 // LLMEmbedder implements Embedder via an OpenAI-compatible embedding API.
-// TODO(AE-3-deploy): configure baseURL/apiKey from bmc-llm-relay embedding endpoint.
+// TODO(AE-3-deploy): configure baseURL/apiKey from the embedding endpoint.
 type LLMEmbedder struct {
 	client *http.Client
 	// baseURL follows the same convention as harness.LLMConfig.BaseURL and
