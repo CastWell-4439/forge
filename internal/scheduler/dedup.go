@@ -68,7 +68,7 @@ func (d *InMemoryDedup) Count() int {
 // PgDedup implements Deduplicator using PostgreSQL (trigger_checkpoints table).
 // Uses the Forge storage layer for database access.
 type PgDedup struct {
-	queryFn func(ctx context.Context, triggerName, eventID string) (bool, error)
+	queryFn  func(ctx context.Context, triggerName, eventID string) (bool, error)
 	insertFn func(ctx context.Context, triggerName, eventID string) error
 }
 

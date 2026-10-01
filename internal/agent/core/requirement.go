@@ -20,7 +20,7 @@ type VideoRequirement struct {
 	// Basic info
 	Description string        `json:"description"`
 	Duration    time.Duration `json:"-"`
-	DurationSec float64      `json:"duration"` // for JSON marshaling
+	DurationSec float64       `json:"duration"` // for JSON marshaling
 	AspectRatio string        `json:"aspect_ratio"`
 	Resolution  string        `json:"resolution"`
 
@@ -85,7 +85,7 @@ type ScriptReq struct {
 // MediaRef is a reference to a media file.
 type MediaRef struct {
 	URL      string `json:"url"`
-	Type     string `json:"type"`     // "image" | "video" | "audio"
+	Type     string `json:"type"` // "image" | "video" | "audio"
 	Filename string `json:"filename"`
 }
 

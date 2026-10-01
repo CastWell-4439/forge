@@ -41,14 +41,14 @@ const (
 
 // WorkerInfo tracks a worker's registration, status, and heartbeat state.
 type WorkerInfo struct {
-	Registration discovery.NodeInfo
-	Handlers     []string
-	Capacity     int
-	Status       WorkerStatus
+	Registration  discovery.NodeInfo
+	Handlers      []string
+	Capacity      int
+	Status        WorkerStatus
 	LastHeartbeat time.Time
-	ActiveTasks  int
-	Conn         *grpc.ClientConn
-	Client       forgev1.WorkerServiceClient
+	ActiveTasks   int
+	Conn          *grpc.ClientConn
+	Client        forgev1.WorkerServiceClient
 }
 
 // WorkerManager maintains the set of known workers discovered via etcd,
@@ -301,13 +301,13 @@ func (wm *WorkerManager) AddWorkerDirect(id, addr string, handlers []string, cap
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 	wm.workers[id] = &WorkerInfo{
-		Registration: discovery.NodeInfo{ID: id, Addr: addr},
-		Handlers:     handlers,
-		Capacity:     capacity,
-		Status:       WorkerStatusActive,
+		Registration:  discovery.NodeInfo{ID: id, Addr: addr},
+		Handlers:      handlers,
+		Capacity:      capacity,
+		Status:        WorkerStatusActive,
 		LastHeartbeat: time.Now(),
-		Conn:         conn,
-		Client:       forgev1.NewWorkerServiceClient(conn),
+		Conn:          conn,
+		Client:        forgev1.NewWorkerServiceClient(conn),
 	}
 	return nil
 }

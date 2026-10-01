@@ -147,7 +147,7 @@ func AudioBGMSelectDef() *ToolDef {
 		OutputSchema: map[string]ParamDef{
 			"bgm_path": {Type: "string", Description: "Path to the selected BGM file"},
 			"bgm_name": {Type: "string", Description: "Name of the selected BGM track"},
-			"duration":  {Type: "number", Description: "Actual BGM duration in seconds"},
+			"duration": {Type: "number", Description: "Actual BGM duration in seconds"},
 		},
 		RequiredParams:      []string{"style"},
 		RequiresGPU:         false,
@@ -316,7 +316,7 @@ func mockAudioBGMSelect(cfg HandlerConfig) HandlerFunc {
 		return map[string]interface{}{
 			"bgm_path": bgmPath,
 			"bgm_name": fmt.Sprintf("Upbeat_%s_Mix", style),
-			"duration":  35.0,
+			"duration": 35.0,
 		}, nil
 	}
 }

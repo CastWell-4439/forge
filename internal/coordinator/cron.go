@@ -27,7 +27,7 @@ type CronTrigger struct {
 	ID            string
 	WorkflowName  string
 	CronExpr      string
-	DagYAML       string                 // stored workflow definition; if empty, a fallback is generated
+	DagYAML       string // stored workflow definition; if empty, a fallback is generated
 	Params        map[string]interface{}
 	MaxConcurrent int
 	MisfirePolicy MisfirePolicy
@@ -221,11 +221,11 @@ type cronField struct {
 
 // cronExpr is a parsed cron expression with 5 fields.
 type cronExpr struct {
-	minute  cronField
-	hour    cronField
-	dom     cronField // day of month
-	month   cronField
-	dow     cronField // day of week (0=Sunday)
+	minute cronField
+	hour   cronField
+	dom    cronField // day of month
+	month  cronField
+	dow    cronField // day of week (0=Sunday)
 }
 
 // parseCronExpr parses a 5-field cron expression.

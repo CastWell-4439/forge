@@ -10,10 +10,10 @@ import (
 
 func LLMSummarizeDef() *ToolDef {
 	return &ToolDef{
-		Name:           "llm.summarize",
-		DisplayName:    "LLM Summarize",
-		Category:       "llm",
-		Description:    "Use an LLM to summarize text. Useful for condensing long documents or API responses.",
+		Name:        "llm.summarize",
+		DisplayName: "LLM Summarize",
+		Category:    "llm",
+		Description: "Use an LLM to summarize text. Useful for condensing long documents or API responses.",
 		InputSchema: map[string]ParamDef{
 			"text":       {Type: "string", Description: "Text to summarize", Required: true},
 			"max_tokens": {Type: "integer", Description: "Max tokens in summary (default 200)"},

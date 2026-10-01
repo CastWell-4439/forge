@@ -24,7 +24,7 @@ type Request struct {
 	WorkflowID string
 	TaskID     string
 	Message    string
-	Options    []string      // e.g. ["approve", "reject", "modify"]
+	Options    []string // e.g. ["approve", "reject", "modify"]
 	Status     RequestStatus
 	Response   *Response
 	CreatedAt  time.Time

@@ -115,8 +115,8 @@ func (m *KueueManager) SubmitGPUTask(ctx context.Context, workflowID, taskID str
 		TTL:        ttl,
 		Labels: map[string]string{
 			"forge.io/workflow-id": workflowID,
-			"forge.io/task-id":    taskID,
-			"forge.io/handler":    taskDef.Handler,
+			"forge.io/task-id":     taskID,
+			"forge.io/handler":     taskDef.Handler,
 		},
 		Annotations: map[string]string{
 			"kueue.x-k8s.io/queue-name": m.config.QueueName,
