@@ -19,7 +19,7 @@ type AgentResponse struct {
 
 // ToolCallRequest describes a tool the agent wants to invoke.
 type ToolCallRequest struct {
-	// Name is the tool/handler name (e.g. "video.probe", "media.download").
+	// Name is the tool/handler name (e.g. "file.read", "web.fetch").
 	Name string `json:"name" desc:"Tool name to call"`
 
 	// Params is the parameters to pass to the tool, as a JSON object.
