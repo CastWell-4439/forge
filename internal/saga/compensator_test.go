@@ -13,8 +13,8 @@ import (
 
 // mockDAG satisfies DAGView for saga tests, avoiding coordinator import cycle.
 type mockDAG struct {
-	topoOrder   []string
-	compensate  map[string]string // taskName -> compensate handler
+	topoOrder  []string
+	compensate map[string]string // taskName -> compensate handler
 }
 
 func (m *mockDAG) TopologicalSort() ([]string, error) {
@@ -35,21 +35,39 @@ func (m *mockStorage) ListTasksByWorkflow(_ context.Context, _ string) ([]*stora
 }
 
 // Unused methods — satisfy interface.
-func (m *mockStorage) SaveWorkflowDefinition(_ context.Context, _ *storage.WorkflowDefinition) error { return nil }
-func (m *mockStorage) GetWorkflowDefinition(_ context.Context, _ string, _ int) (*storage.WorkflowDefinition, error) { return nil, nil }
+func (m *mockStorage) SaveWorkflowDefinition(_ context.Context, _ *storage.WorkflowDefinition) error {
+	return nil
+}
+func (m *mockStorage) GetWorkflowDefinition(_ context.Context, _ string, _ int) (*storage.WorkflowDefinition, error) {
+	return nil, nil
+}
 func (m *mockStorage) SaveWorkflow(_ context.Context, _ *storage.Workflow) error { return nil }
-func (m *mockStorage) GetWorkflow(_ context.Context, _ string) (*storage.Workflow, error) { return nil, nil }
-func (m *mockStorage) ListWorkflows(_ context.Context, _ storage.WorkflowStatus, _ int, _ int) ([]*storage.Workflow, error) { return nil, nil }
-func (m *mockStorage) UpdateWorkflowStatus(_ context.Context, _ string, _ storage.WorkflowStatus) error { return nil }
-func (m *mockStorage) SaveTask(_ context.Context, _ *storage.Task) error { return nil }
+func (m *mockStorage) GetWorkflow(_ context.Context, _ string) (*storage.Workflow, error) {
+	return nil, nil
+}
+func (m *mockStorage) ListWorkflows(_ context.Context, _ storage.WorkflowStatus, _ int, _ int) ([]*storage.Workflow, error) {
+	return nil, nil
+}
+func (m *mockStorage) UpdateWorkflowStatus(_ context.Context, _ string, _ storage.WorkflowStatus) error {
+	return nil
+}
+func (m *mockStorage) SaveTask(_ context.Context, _ *storage.Task) error          { return nil }
 func (m *mockStorage) GetTask(_ context.Context, _ string) (*storage.Task, error) { return nil, nil }
-func (m *mockStorage) ClaimTask(_ context.Context, _ string, _ []string) (*storage.Task, error) { return nil, nil }
-func (m *mockStorage) UpdateTaskStatus(_ context.Context, _ string, _ storage.TaskStatus) error { return nil }
+func (m *mockStorage) ClaimTask(_ context.Context, _ string, _ []string) (*storage.Task, error) {
+	return nil, nil
+}
+func (m *mockStorage) UpdateTaskStatus(_ context.Context, _ string, _ storage.TaskStatus) error {
+	return nil
+}
 func (m *mockStorage) CompleteTask(_ context.Context, _ string, _ json.RawMessage) error { return nil }
-func (m *mockStorage) FailTask(_ context.Context, _ string, _ string) error { return nil }
-func (m *mockStorage) SaveEvent(_ context.Context, _ *storage.Event) error { return nil }
-func (m *mockStorage) GetWorkflowHistory(_ context.Context, _ string) ([]*storage.Event, error) { return nil, nil }
-func (m *mockStorage) CountWorkflows(_ context.Context) (map[storage.WorkflowStatus]int32, error) { return nil, nil }
+func (m *mockStorage) FailTask(_ context.Context, _ string, _ string) error              { return nil }
+func (m *mockStorage) SaveEvent(_ context.Context, _ *storage.Event) error               { return nil }
+func (m *mockStorage) GetWorkflowHistory(_ context.Context, _ string) ([]*storage.Event, error) {
+	return nil, nil
+}
+func (m *mockStorage) CountWorkflows(_ context.Context) (map[storage.WorkflowStatus]int32, error) {
+	return nil, nil
+}
 func (m *mockStorage) Close() error { return nil }
 
 func TestBuildCompensationPlan(t *testing.T) {
