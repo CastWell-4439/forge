@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/castwell/forge/internal/agent/core"
@@ -58,6 +59,10 @@ type AgentLoop struct {
 
 	// checkpointPolicy decides whether a failed checkpoint write is fatal.
 	checkpointPolicy CheckpointFailurePolicy
+
+	// memoryJudge decides whether a finished run is worth remembering; nil
+	// means the default gate (see SetMemoryWriteJudge).
+	memoryJudge MemoryWriteJudge
 }
 
 // NewAgentLoop creates a new ReAct loop.
@@ -90,6 +95,16 @@ func (l *AgentLoop) SetCheckpointFailurePolicy(p CheckpointFailurePolicy) {
 
 // SetMemory enables M5 memory.
 func (l *AgentLoop) SetMemory(m core.MemoryStore) { l.memory = m }
+
+// MemoryWriteJudge decides whether a finished run is worth remembering. It is
+// called before the lesson-extraction step, so a "no" also saves the LLM call
+// that extraction would have cost.
+type MemoryWriteJudge func(ctx context.Context, sessionID string, result *RunResult) bool
+
+// SetMemoryWriteJudge overrides the default gate. The default (see
+// defaultMemoryWriteJudge) keeps runs that actually did something and skips
+// one-shot answers, which have no experience to store.
+func (l *AgentLoop) SetMemoryWriteJudge(j MemoryWriteJudge) { l.memoryJudge = j }
 
 // SetVerifier enables D5 self-verification loop.
 func (l *AgentLoop) SetVerifier(v core.Verifier) { l.verifier = v }
@@ -193,6 +208,15 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				ledger = ledger[:len(ledger)-1]
 			}
 		}
+	}
+
+	// --- Long-term memory recall (M5, optional) ---
+	// A fresh run brings a fresh prompt, so this is where the agent "remembers
+	// what it learned before". Knowledge retrieval stays agentic (the tool); a
+	// run's own past experience is recalled automatically because it is local,
+	// bounded (top 3) and cheap. Resumed runs already carry their history.
+	if !resume && l.memory != nil && userInput != "" {
+		l.recallInto(ctx, &messages, userInput)
 	}
 
 	var steps []StepRecord
@@ -527,6 +551,16 @@ func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string,
 		return
 	}
 
+	// The gate runs before extraction: a run judged not worth remembering also
+	// skips the lesson-extraction LLM call that used to be paid unconditionally.
+	judge := l.memoryJudge
+	if judge == nil {
+		judge = defaultMemoryWriteJudge
+	}
+	if !judge(ctx, sessionID, result) {
+		return
+	}
+
 	lesson := l.extractLesson(ctx, userInput, result)
 
 	entry := core.MemoryEntry{
@@ -538,6 +572,48 @@ func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string,
 	if err := l.memory.SaveLongTerm(ctx, entry); err != nil {
 		log.Printf("[harness] save memory failed: %v", err)
 	}
+}
+
+// defaultMemoryWriteJudge remembers a completed run only when it actually used
+// tools. A terminal answer also produces a StepRecord, so counting steps is not
+// enough - the gate looks for an action. A run that answered in the first turn
+// produced an answer, not experience; storing it would add noise and cost an
+// extraction call for nothing.
+func defaultMemoryWriteJudge(_ context.Context, _ string, result *RunResult) bool {
+	if result == nil || result.Reason != "completed" {
+		return false
+	}
+	for _, step := range result.Steps {
+		if step.Action != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// recallInto inserts the top matching long-term memories as a system block
+// directly after the prompt. Recall failures are logged, never fatal: memory is
+// an enhancement, and a broken index must not stop a run.
+func (l *AgentLoop) recallInto(ctx context.Context, messages *[]core.Message, userInput string) {
+	entries, err := l.memory.SearchLongTerm(ctx, userInput, 3)
+	if err != nil {
+		log.Printf("[harness] memory recall failed: %v", err)
+		return
+	}
+	if len(entries) == 0 {
+		return
+	}
+
+	var block strings.Builder
+	block.WriteString("Relevant experience from previous runs (use only where it applies):\n")
+	for _, entry := range entries {
+		fmt.Fprintf(&block, "- [%s] %s\n", entry.Category, truncate(entry.Content, 300))
+	}
+
+	msgs := *messages
+	rest := make([]core.Message, 0, len(msgs))
+	rest = append(rest, msgs[1:]...)
+	*messages = append([]core.Message{msgs[0], {Role: "system", Content: block.String()}}, rest...)
 }
 
 // extractLesson uses the LLM to distill a reusable lesson from the completed run.
