@@ -30,6 +30,10 @@ func KnowledgeSearchDef() *core.ToolDef {
 
 // NewKnowledgeSearchHandler creates a handler backed by a core.Retriever.
 // If retriever is nil, returns an error handler.
+//
+// When the retriever reports how the search ran (SearchMode), the result
+// carries it: hybrid, BM25-only fallbacks, and rerank participation are part of
+// the answer, not hidden plumbing.
 func NewKnowledgeSearchHandler(retriever core.Retriever) core.HandlerFunc {
 	if retriever == nil {
 		return func(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
@@ -65,8 +69,12 @@ func NewKnowledgeSearchHandler(retriever core.Retriever) core.HandlerFunc {
 			}
 		}
 
-		return map[string]interface{}{
+		out := map[string]interface{}{
 			"results": results,
-		}, nil
+		}
+		if moded, ok := retriever.(interface{ SearchMode() string }); ok {
+			out["mode"] = moded.SearchMode()
+		}
+		return out, nil
 	}
 }
