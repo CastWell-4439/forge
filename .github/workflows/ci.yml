@@ -121,6 +121,11 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    # The failure path pushes test-output.log to the ci-test-logs branch so the
+    # raw output is readable without repository access. Job-level permissions
+    # override the workflow-wide read-only default for this job alone.
+    permissions:
+      contents: write
     services:
       postgres:
         image: postgres:17
@@ -160,19 +165,21 @@ jobs:
           FORGE_PG_DSN: "postgres://forge:forge@localhost:5432/forge_test?sslmode=disable"
           FORGE_REDIS_ADDR: "localhost:6379"
         run: |
-          # pipefail so tee cannot swallow the test exit status. Failures become
-          # annotations and a step summary: job logs need repository access, so
-          # without these a red test says nothing readable from outside.
+          # pipefail so tee cannot swallow the test exit status. On failure the
+          # output is (a) annotated with a file location, because annotations
+          # without one were not surfaced, (b) pushed verbatim to the
+          # ci-test-logs branch, whose raw file is readable without repository
+          # access, and (c) summarised on the run page.
           set -o pipefail
           go test -v -race -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee test-output.log
           STATUS=$?
           if [ "$STATUS" -ne 0 ]; then
             grep -E -- '--- FAIL|^FAIL[[:space:]]' test-output.log | head -n 15 | while IFS= read -r line; do
-              echo "::error title=go test::${line}"
+              echo "::error file=.github/workflows/ci.yml,line=158,title=go test::${line}"
             done
             if grep -q 'DATA RACE' test-output.log; then
               grep -m 3 -B 2 -A 12 'DATA RACE' test-output.log | head -n 60 | while IFS= read -r line; do
-                echo "::error title=Data Race::${line}"
+                echo "::error file=.github/workflows/ci.yml,line=158,title=Data Race::${line}"
               done
             fi
             {
@@ -181,6 +188,13 @@ jobs:
               grep -E -A 20 -- '--- FAIL|DATA RACE|^FAIL[[:space:]]' test-output.log | tail -n 500
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            {
+              git config user.name "ci-log"
+              git config user.email "ci-log@localhost"
+              git add -f test-output.log
+              git commit -m "test output for run ${GITHUB_RUN_ID}" -q
+              git push --force origin HEAD:ci-test-logs -q
+            } || echo "::warning file=.github/workflows/ci.yml,line=158,title=Log export::could not push the test log"
           fi
           exit "$STATUS"
       - name: Upload coverage
