@@ -350,7 +350,7 @@ func TestManager_CallTool_Routes(t *testing.T) {
 
 	mgr := NewManager(nil)
 	mgr.clients["server-a"] = client
-	mgr.tools["my.tool"] = "server-a"
+	mgr.tools["my.tool"] = toolEntry{server: "server-a", def: ToolDefinition{Name: "my.tool"}}
 
 	result, err := mgr.CallTool(context.Background(), "my.tool", nil)
 	if err != nil {
@@ -375,7 +375,7 @@ func TestManager_Stop(t *testing.T) {
 
 	mgr := NewManager(nil)
 	mgr.clients["s"] = client
-	mgr.tools["t"] = "s"
+	mgr.tools["t"] = toolEntry{server: "s", def: ToolDefinition{Name: "t"}}
 
 	if err := mgr.Stop(); err != nil {
 		t.Fatalf("Stop error: %v", err)
@@ -404,8 +404,25 @@ func TestBridge_Sync(t *testing.T) {
 
 	mgr := NewManager(nil)
 	mgr.clients["test"] = client
-	mgr.tools["mcp.file_read"] = "test"
-	mgr.tools["mcp.web_search"] = "test"
+	mgr.tools["mcp.file_read"] = toolEntry{server: "test", def: ToolDefinition{
+		Name:        "mcp.file_read",
+		Description: "Read a file from the workspace",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Absolute path to read",
+				},
+				"encoding": map[string]interface{}{"type": "string"},
+			},
+			"required": []interface{}{"path"},
+		},
+	}}
+	mgr.tools["mcp.web_search"] = toolEntry{server: "test", def: ToolDefinition{
+		Name:        "mcp.web_search",
+		Description: "Search the web",
+	}}
 
 	registry := core.NewToolRegistry()
 	bridge := NewBridge(mgr, registry)
@@ -423,6 +440,28 @@ func TestBridge_Sync(t *testing.T) {
 	if !registry.HasHandler("mcp.web_search") {
 		t.Error("mcp.web_search not registered")
 	}
+
+	// The description and input schema discovered from the server must reach
+	// the registry; dropping them left the model guessing argument names.
+	def := registry.GetTool("mcp.file_read")
+	if def == nil {
+		t.Fatal("mcp.file_read definition missing")
+	}
+	if def.Description != "Read a file from the workspace" {
+		t.Errorf("description = %q, want the discovered description", def.Description)
+	}
+	if got := def.InputSchema["path"].Type; got != "string" {
+		t.Errorf("path type = %q, want string", got)
+	}
+	if got := def.InputSchema["path"].Description; got != "Absolute path to read" {
+		t.Errorf("path description = %q, want %q", got, "Absolute path to read")
+	}
+	if len(def.RequiredParams) != 1 || def.RequiredParams[0] != "path" {
+		t.Errorf("required params = %v, want [path]", def.RequiredParams)
+	}
+	if len(def.InputSchema) != 2 {
+		t.Errorf("schema has %d params, want 2", len(def.InputSchema))
+	}
 }
 
 func TestBridge_Sync_NativeToolTakesPrecedence(t *testing.T) {
@@ -439,7 +478,7 @@ func TestBridge_Sync_NativeToolTakesPrecedence(t *testing.T) {
 
 	mgr := NewManager(nil)
 	mgr.clients["test"] = client
-	mgr.tools["native_tool"] = "test"
+	mgr.tools["native_tool"] = toolEntry{server: "test", def: ToolDefinition{Name: "native_tool"}}
 
 	registry := core.NewToolRegistry()
 	// Pre-register a native tool — should NOT be overwritten.

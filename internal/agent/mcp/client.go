@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Client is an MCP protocol client that communicates with a single MCP server
@@ -172,11 +173,22 @@ func (c *Client) nextID() int64 {
 	return 1
 }
 
+// extractText flattens an MCP tool result into text for the model.
+//
+// It joins every text block rather than returning only the first one, and keeps a
+// placeholder for non-text blocks (image/audio/resource). The previous version
+// returned the first text block and silently dropped everything else, so a server
+// that returned several blocks or only non-text content looked like an empty reply.
 func extractText(content []toolContent) string {
+	parts := make([]string, 0, len(content))
 	for _, c := range content {
 		if c.Type == "text" {
-			return c.Text
+			if c.Text != "" {
+				parts = append(parts, c.Text)
+			}
+			continue
 		}
+		parts = append(parts, fmt.Sprintf("[%s content omitted]", c.Type))
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }

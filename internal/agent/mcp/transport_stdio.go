@@ -34,9 +34,17 @@ type StdioTransport struct {
 	// pending maps request IDs to response channels.
 	pending sync.Map // int64 -> chan Response
 
-	nextID atomic.Int64
-	done   chan struct{}
+	nextID    atomic.Int64
+	done      chan struct{}
 	closeOnce sync.Once
+
+	// doneOnce guards done so that both Close and readLoop can signal completion
+	// without risking a double close.
+	doneOnce sync.Once
+
+	// writeMu serializes stdin writes. Without it two concurrent Send/Notify
+	// calls interleave their JSON-RPC frames on the same pipe.
+	writeMu sync.Mutex
 }
 
 // StdioConfig holds configuration for starting an MCP server process.
@@ -114,7 +122,7 @@ func (t *StdioTransport) Notify(_ context.Context, n Notification) error {
 func (t *StdioTransport) Close() error {
 	var closeErr error
 	t.closeOnce.Do(func() {
-		close(t.done)
+		t.signalDone()
 		_ = t.stdin.Close()
 
 		// Give the process a chance to exit gracefully.
@@ -131,9 +139,20 @@ func (t *StdioTransport) NextID() int64 {
 	return t.nextID.Add(1)
 }
 
+// signalDone marks the transport as finished, unblocking every pending Send.
+// Safe to call more than once and from both Close and readLoop.
+func (t *StdioTransport) signalDone() {
+	t.doneOnce.Do(func() { close(t.done) })
+}
+
 // readLoop reads lines from stdout, parses them as JSON-RPC responses,
 // and dispatches to waiting callers.
 func (t *StdioTransport) readLoop() {
+	// When the child process dies, stdout reaches EOF and the loop ends. Signal
+	// completion so pending Send calls fail immediately instead of blocking until
+	// their own context deadline expires.
+	defer t.signalDone()
+
 	for t.scanner.Scan() {
 		line := t.scanner.Bytes()
 		if len(line) == 0 {
@@ -159,6 +178,11 @@ func (t *StdioTransport) writeMessage(msg json.Marshaler) error {
 		return fmt.Errorf("marshal message: %w", err)
 	}
 	data = append(data, '\n')
+
+	// A JSON-RPC frame must reach the pipe in one piece. Concurrent writers would
+	// otherwise interleave and corrupt the stream for every caller.
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
 
 	_, err = t.stdin.Write(data)
 	return err
