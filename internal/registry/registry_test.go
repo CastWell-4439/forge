@@ -306,7 +306,7 @@ func TestRenderParams_Nested(t *testing.T) {
 
 func TestRenderInputs(t *testing.T) {
 	ctx := TemplateContext{
-		"event": map[string]any{"work_item_id": "WI-456", "project_key": "avp"},
+		"event": map[string]any{"work_item_id": "WI-456", "project_key": "example"},
 	}
 	inputs := map[string]string{
 		"work_item_id": "{{.event.work_item_id}}",
@@ -319,7 +319,7 @@ func TestRenderInputs(t *testing.T) {
 	if result["work_item_id"] != "WI-456" {
 		t.Errorf("work_item_id = %v", result["work_item_id"])
 	}
-	if result["project"] != "avp" {
+	if result["project"] != "example" {
 		t.Errorf("project = %v", result["project"])
 	}
 }

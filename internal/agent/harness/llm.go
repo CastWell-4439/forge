@@ -18,7 +18,7 @@ import (
 
 // LLMConfig holds configuration for the LLM API client.
 type LLMConfig struct {
-	BaseURL     string // e.g. "https://bmc-llm-relay.bluemediagroup.cn/v1"
+	BaseURL     string // e.g. "https://api.example.com/v1"
 	APIKey      string
 	Model       string // e.g. "claude-opus-4-6-v1"
 	Temperature float64
