@@ -10,14 +10,15 @@ import (
 	"testing"
 	"time"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
-	"github.com/castwell/forge/internal/coordinator"
-	"github.com/castwell/forge/internal/storage"
-	"github.com/castwell/forge/internal/worker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/coordinator"
+	"github.com/castwell/forge/internal/storage"
+	"github.com/castwell/forge/internal/worker"
 )
 
 // TestLinearDAGEndToEnd starts a Coordinator and Worker in-process,
