@@ -66,6 +66,11 @@ func main() {
 
 	w := worker.NewWorker(workerID, grpcAddr, coordAddr, capacity, registry)
 
+	// --- ForgeX runtime gate ---
+	// Evaluates every task against the tool contracts and the current authority
+	// level before its handler runs. Shadow by default; enforcement is opt-in.
+	installRuntimeGate(w)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
