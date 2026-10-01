@@ -2,12 +2,13 @@ package workers
 
 import "fmt"
 
-// RegisterAll registers all 15 agent tool handlers into the given ToolRegistry.
+// RegisterAll registers all 16 agent tool handlers into the given ToolRegistry.
 // The HandlerConfig controls whether mock or real implementations are used.
 //
 // The set is the generic work every coding agent is given - files, shell, code,
-// git reads, web, data, and one human channel. Domain-specific capabilities
-// belong to the workflow plane's workers, not to this registry.
+// git reads, web, data - plus one human channel and one skill channel.
+// Domain-specific capabilities belong to the workflow plane's workers, not to
+// this registry.
 func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 	registrations := []struct {
 		def     *ToolDef
@@ -41,6 +42,9 @@ func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 
 		// Human channel (1)
 		{AskUserDef(), NewAskUserHandler(cfg)},
+
+		// Skill channel (1)
+		{SkillActivateDef(), NewSkillActivateHandler(cfg)},
 	}
 
 	for _, r := range registrations {
