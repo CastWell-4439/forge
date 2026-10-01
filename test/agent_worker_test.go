@@ -19,7 +19,7 @@ import (
 	"github.com/castwell/forge/internal/worker"
 )
 
-// TestAgentToolRegistry verifies that all 16 handlers are registered in mock mode.
+// TestAgentToolRegistry verifies that all 17 handlers are registered in mock mode.
 func TestAgentToolRegistry(t *testing.T) {
 	registry := agentworkers.NewToolRegistry()
 	cfg := agentworkers.HandlerConfig{
@@ -30,7 +30,7 @@ func TestAgentToolRegistry(t *testing.T) {
 	err := agentworkers.RegisterAll(registry, cfg)
 	require.NoError(t, err)
 
-	assert.Equal(t, 16, registry.Count(), "should have 16 registered tools")
+	assert.Equal(t, 17, registry.Count(), "should have 17 registered tools")
 
 	// Verify all expected handler names are present
 	expectedHandlers := []string{
@@ -42,6 +42,7 @@ func TestAgentToolRegistry(t *testing.T) {
 		"data.query",
 		"ask.user",
 		"skill.activate",
+		"knowledge.search",
 	}
 
 	for _, name := range expectedHandlers {
@@ -81,6 +82,7 @@ func TestAgentMockHandlers(t *testing.T) {
 		{"data.query", map[string]interface{}{"sql": "SELECT 1"}},
 		{"ask.user", map[string]interface{}{"question": "which branch?", "options": []string{"main", "dev"}}},
 		{"skill.activate", map[string]interface{}{"id": "bugfix-triage"}},
+		{"knowledge.search", map[string]interface{}{"query": "how to release"}},
 	}
 
 	for _, tc := range cases {

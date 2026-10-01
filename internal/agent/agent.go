@@ -34,6 +34,10 @@ type Agent struct {
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
 	CheckpointFailurePolicy harness.CheckpointFailurePolicy
+
+	// MemoryWriteJudge overrides the default gate that decides whether a
+	// finished run is worth remembering.
+	MemoryWriteJudge harness.MemoryWriteJudge
 }
 
 // Option configures an optional module on the Agent.
@@ -48,8 +52,15 @@ func WithOutputGuard(g core.OutputGuard) Option { return func(a *Agent) { a.Outp
 // WithBudget enables M6 token budget enforcement.
 func WithBudget(b core.BudgetChecker) Option { return func(a *Agent) { a.Budget = b } }
 
-// WithRetriever enables M3 RAG knowledge retrieval.
+// WithRetriever enables M3 RAG knowledge retrieval. The retriever backs the
+// knowledge.search tool; retrieval itself stays agentic - the model decides
+// when to search rather than having results pushed into every prompt.
 func WithRetriever(r core.Retriever) Option { return func(a *Agent) { a.Retriever = r } }
+
+// WithMemoryWriteJudge overrides the default gate on memory writes.
+func WithMemoryWriteJudge(j harness.MemoryWriteJudge) Option {
+	return func(a *Agent) { a.MemoryWriteJudge = j }
+}
 
 // WithMemory enables M5 short-term and long-term memory.
 func WithMemory(m core.MemoryStore) Option { return func(a *Agent) { a.Memory = m } }
@@ -116,6 +127,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	cfg := workers.HandlerConfig{
 		Mode:      workers.HandlerModeMock, // TODO: make configurable
 		Workspace: "/tmp/forge-workspace",
+		// The retriever reaches the agent through knowledge.search only;
+		// retrieval stays agentic rather than being pushed into every prompt.
+		Retriever: a.Retriever,
 	}
 	if err := workers.RegisterAll(registry, cfg); err != nil {
 		return nil, nil, fmt.Errorf("register tools: %w", err)
@@ -171,6 +185,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	}
 	if a.Verifier != nil {
 		loop.SetVerifier(a.Verifier)
+	}
+	if a.MemoryWriteJudge != nil {
+		loop.SetMemoryWriteJudge(a.MemoryWriteJudge)
 	}
 
 	return loop, stop, nil
