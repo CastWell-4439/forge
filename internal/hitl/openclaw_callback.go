@@ -24,9 +24,9 @@ type OpenClawConfig struct {
 
 // OpenClawCallback implements HITLCallback by sending messages via OpenClaw.
 type OpenClawCallback struct {
-	config     OpenClawConfig
-	client     HTTPClient
-	formatter  *MessageFormatter
+	config    OpenClawConfig
+	client    HTTPClient
+	formatter *MessageFormatter
 }
 
 // HTTPClient interface for testability.

@@ -21,3 +21,59 @@ rules:
       message_contains:
         - timeout
     recommendation: Retry with budget; escalate if retry budget is exhausted.
+
+  # --- World State claim pipeline -------------------------------------------
+  # Submitted claims carry source "state_claim"; permission refusals carry
+  # "state_authority". The first matching rule wins, so the specific messages are
+  # listed before the catch-all authority rule.
+
+  - id: STATE_CLAIM_MISSING_EVIDENCE
+    category: state_claim_violation
+    severity: high
+    retryable: false
+    source: builtin
+    match:
+      message_contains:
+        - claim has no evidence
+      source_contains: state_claim
+    recommendation: A claim must carry evidence before it can become a fact. Attach the artifact id or tool call id that supports it.
+
+  - id: STATE_CLAIM_SCOPE_INVALID
+    category: state_claim_violation
+    severity: medium
+    retryable: false
+    source: builtin
+    match:
+      message_contains:
+        - claim scope
+      source_contains: state_claim
+    recommendation: State the claim scope explicitly as one of global, scene, shot, agent-local or tentative-only.
+
+  - id: STATE_CLAIM_KEY_MISSING
+    category: state_claim_violation
+    severity: high
+    retryable: false
+    source: builtin
+    match:
+      message_contains:
+        - claim key is empty
+      source_contains: state_claim
+    recommendation: A claim must name the state key it proposes to update.
+
+  - id: STATE_CLAIM_VALIDATION_FAILED
+    category: state_claim_violation
+    severity: high
+    retryable: false
+    source: builtin
+    match:
+      source_contains: state_claim
+    recommendation: The claim failed validation and was rejected. Fix the claim and resubmit; do not write state directly.
+
+  - id: STATE_AUTHORITY_DENIED
+    category: state_authority_violation
+    severity: high
+    retryable: false
+    source: builtin
+    match:
+      source_contains: state_authority
+    recommendation: An actor tried to write state it does not own. Route the claim through the owner, or extend the state authority rules deliberately.

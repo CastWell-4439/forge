@@ -7,7 +7,7 @@ import (
 
 // DAGNode represents a node in the compiled DAG graph.
 type DAGNode struct {
-	ID        string         // unique: "stage_name.task_index" or "stage_name" for parallel
+	ID        string // unique: "stage_name.task_index" or "stage_name" for parallel
 	StageName string
 	TaskIndex int
 	Worker    string

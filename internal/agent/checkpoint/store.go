@@ -13,9 +13,9 @@ import (
 // InMemoryStore is a test implementation of core.CheckpointStore.
 // TODO(AE-4-deploy): implement PGCheckpointStore with pgxpool (UPSERT + Latest by step_index DESC).
 type InMemoryStore struct {
-	mu          sync.Mutex
-	checkpoints map[string]*core.Checkpoint            // id → checkpoint
-	sessions    map[string][]*core.Checkpoint           // session_id → ordered checkpoints
+	mu            sync.Mutex
+	checkpoints   map[string]*core.Checkpoint   // id → checkpoint
+	sessions      map[string][]*core.Checkpoint // session_id → ordered checkpoints
 	maxPerSession int
 }
 

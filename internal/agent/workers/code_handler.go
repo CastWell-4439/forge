@@ -10,10 +10,10 @@ import (
 
 func CodeExecuteDef() *ToolDef {
 	return &ToolDef{
-		Name:           "code.execute",
-		DisplayName:    "Code Execute",
-		Category:       "code",
-		Description:    "Execute a code snippet in a sandboxed environment. Supports Go, Python, Shell.",
+		Name:        "code.execute",
+		DisplayName: "Code Execute",
+		Category:    "code",
+		Description: "Execute a code snippet in a sandboxed environment. Supports Go, Python, Shell.",
 		InputSchema: map[string]ParamDef{
 			"language": {Type: "string", Description: "Programming language: go, python, shell", Required: true},
 			"code":     {Type: "string", Description: "Source code to execute", Required: true},

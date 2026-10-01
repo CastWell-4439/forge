@@ -18,6 +18,10 @@ type TokenUsage struct {
 type ChatResult struct {
 	Content string
 	Usage   TokenUsage
+	// FinishReason is the provider's stop reason, e.g. "stop" or "length".
+	// Callers must check it: "length" means the response was cut off by the
+	// token limit and its content is incomplete.
+	FinishReason string
 }
 
 // LLMClient is the interface for communicating with a Large Language Model.
@@ -32,7 +36,7 @@ type LLMClient interface {
 
 // Message represents a single message in an LLM conversation.
 type Message struct {
-	Role    string `json:"role"`    // "user" | "assistant" | "system"
+	Role    string `json:"role"` // "user" | "assistant" | "system"
 	Content string `json:"content"`
 }
 

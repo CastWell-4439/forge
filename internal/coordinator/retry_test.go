@@ -82,9 +82,9 @@ func TestCalculateBackoff_ExponentialNoJitter(t *testing.T) {
 
 func TestShouldRetry(t *testing.T) {
 	tests := []struct {
-		name    string
-		task    *RetryableTask
-		want    bool
+		name string
+		task *RetryableTask
+		want bool
 	}{
 		{
 			name: "has retries left",

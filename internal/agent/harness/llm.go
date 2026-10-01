@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/castwell/forge/internal/agent/core"
@@ -17,13 +18,13 @@ import (
 
 // LLMConfig holds configuration for the LLM API client.
 type LLMConfig struct {
-	BaseURL     string        // e.g. "https://bmc-llm-relay.bluemediagroup.cn/v1"
+	BaseURL     string // e.g. "https://bmc-llm-relay.bluemediagroup.cn/v1"
 	APIKey      string
-	Model       string        // e.g. "claude-opus-4-6-v1"
+	Model       string // e.g. "claude-opus-4-6-v1"
 	Temperature float64
 	MaxTokens   int
 	Timeout     time.Duration
-	MaxRetries  int           // max retry attempts on transient errors (default 3)
+	MaxRetries  int // max retry attempts on transient errors (default 3)
 }
 
 // DefaultLLMConfig returns config with sensible defaults.
@@ -170,15 +171,25 @@ func (c *LLMClient) doRequest(ctx context.Context, body []byte) (core.ChatResult
 		return core.ChatResult{}, fmt.Errorf("read response: %w", err)
 	}
 
-	// Rate limited or server error → retryable.
-	if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-		return core.ChatResult{}, &retryableError{
-			err: fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBody)),
-		}
-	}
-
+	// Classify non-OK responses.
 	if resp.StatusCode != http.StatusOK {
-		return core.ChatResult{}, fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBody))
+		apiErr := fmt.Errorf("LLM API returned status %d: %s", resp.StatusCode, string(respBody))
+
+		// Transient conditions are worth another attempt.
+		if isRetryableStatus(resp.StatusCode) {
+			return core.ChatResult{}, &retryableError{err: apiErr}
+		}
+
+		// 400/413 raised because the request exceeded the context window can
+		// never succeed on retry, so say why instead of dumping a raw status.
+		if isContextOverflow(resp.StatusCode, respBody) {
+			return core.ChatResult{}, fmt.Errorf(
+				"LLM context window exceeded (status %d); the request is too large — "+
+					"reduce the prompt or lower the compaction threshold: %w",
+				resp.StatusCode, apiErr)
+		}
+
+		return core.ChatResult{}, apiErr
 	}
 
 	var chatResp chatResponse
@@ -195,13 +206,51 @@ func (c *LLMClient) doRequest(ctx context.Context, body []byte) (core.ChatResult
 	}
 
 	return core.ChatResult{
-		Content: chatResp.Choices[0].Message.Content,
+		Content:      chatResp.Choices[0].Message.Content,
+		FinishReason: chatResp.Choices[0].FinishReason,
 		Usage: core.TokenUsage{
 			PromptTokens:     chatResp.Usage.PromptTokens,
 			CompletionTokens: chatResp.Usage.CompletionTokens,
 			TotalTokens:      chatResp.Usage.TotalTokens,
 		},
 	}, nil
+}
+
+// isRetryableStatus reports whether an HTTP status is worth retrying.
+// 429 (rate limited), 408 (request timeout), 409 (conflict) and all 5xx are
+// transient; 413 is not, because resending the same payload cannot shrink it.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests,
+		http.StatusRequestTimeout,
+		http.StatusConflict:
+		return true
+	}
+	return code >= 500
+}
+
+// isContextOverflow reports whether a 400/413 response is the provider
+// complaining that the request exceeded its context window.
+func isContextOverflow(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusRequestEntityTooLarge {
+		return false
+	}
+	text := strings.ToLower(string(body))
+	for _, marker := range []string{
+		"context length",
+		"context_length",
+		"context window",
+		"maximum context",
+		"too many tokens",
+		"token limit",
+		"prompt is too long",
+		"request too large",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Retry helpers ---

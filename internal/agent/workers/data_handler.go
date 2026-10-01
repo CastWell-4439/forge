@@ -10,17 +10,17 @@ import (
 
 func DataQueryDef() *ToolDef {
 	return &ToolDef{
-		Name:           "data.query",
-		DisplayName:    "Data Query",
-		Category:       "data",
-		Description:    "Execute a SQL query against the configured database. Returns rows as JSON.",
+		Name:        "data.query",
+		DisplayName: "Data Query",
+		Category:    "data",
+		Description: "Execute a SQL query against the configured database. Returns rows as JSON.",
 		InputSchema: map[string]ParamDef{
 			"sql":    {Type: "string", Description: "SQL query to execute", Required: true},
 			"params": {Type: "array", Description: "Query parameters for prepared statement"},
 		},
 		OutputSchema: map[string]ParamDef{
-			"rows":     {Type: "array", Description: "Result rows as array of objects"},
-			"columns":  {Type: "array", Description: "Column names"},
+			"rows":      {Type: "array", Description: "Result rows as array of objects"},
+			"columns":   {Type: "array", Description: "Column names"},
 			"row_count": {Type: "integer", Description: "Number of rows returned"},
 		},
 		RequiredParams: []string{"sql"},

@@ -1,0 +1,29 @@
+# World State authority: who may turn a claim into a fact.
+#
+# "enabled" is the single switch. It exists so that turning permission checks off
+# is always an explicit, written-down decision instead of something inferred from a
+# missing file — the loader treats a missing file as an error.
+#
+# When enabled is true:
+#   - only the owner of the first matching rule may write a key;
+#   - the owner and the listed readers may read it;
+#   - a key that matches no rule is DENIED (deny by default).
+#
+# When enabled is false, permission is not checked. Claim validation always runs.
+version: 1
+enabled: true
+
+rules:
+  # The contract validator produces the two facts the generic cases assert on.
+  - pattern: "required_assets.*"
+    owner: contract_validator
+    readers:
+      - planner
+      - evaluator
+
+  - pattern: "generated_result.*"
+    owner: contract_validator
+    readers:
+      - planner
+      - evaluator
+      - renderer

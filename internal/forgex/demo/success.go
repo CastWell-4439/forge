@@ -6,6 +6,7 @@ import (
 	"time"
 
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
+	"github.com/castwell/forge/internal/forgex/failure"
 	"github.com/castwell/forge/internal/forgex/lessons"
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexpolicy "github.com/castwell/forge/internal/forgex/policy"
@@ -179,10 +180,26 @@ func RunGenericContractSuccessDemoWithControl(ctx context.Context, root, taxonom
 		"result_url": successGeneratedURI,
 		"tool":       defaultExpensiveTool,
 	}, []string{generatedArtifact.ID, "contract_validations.jsonl"})
+	claim.Scope = forgexstate.ScopeGlobal
 	if err := store.AppendStateClaim(ctx, claim); err != nil {
 		return "", fmt.Errorf("append state claim: %w", err)
 	}
-	worldState := forgexstate.AcceptClaim(model.WorldState{RunID: runID, Version: 1, UpdatedAt: now}, claim)
+	// Move the claim through the Claim -> permission -> validation -> Fact
+	// pipeline rather than writing state directly.
+	outcome := forgexstate.SubmitClaim(ctx, forgexstate.SubmitInput{
+		World:     model.WorldState{RunID: runID, Version: 1, UpdatedAt: now},
+		Actor:     claim.Producer,
+		Claim:     claim,
+		Authority: inputs.stateAuthority,
+		Classify:  func(env model.ErrorEnvelope) model.ErrorEnvelope { return failure.Classify(inputs.taxonomy, env) },
+	})
+	if err := persistClaimOutcome(ctx, store, runID, outcome); err != nil {
+		return "", err
+	}
+	if outcome.Rejected {
+		return "", fmt.Errorf("state claim rejected: %s", outcome.Claim.Reason)
+	}
+	worldState := outcome.World
 	if err := store.SaveWorldState(ctx, worldState); err != nil {
 		return "", fmt.Errorf("save world state: %w", err)
 	}

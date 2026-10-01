@@ -28,6 +28,8 @@ func AcceptClaim(ws model.WorldState, claim model.StateClaim) model.WorldState {
 		Confidence: 1.0,
 		Evidence:   append([]string(nil), claim.Evidence...),
 		Version:    entryVersion,
+		// Scope travels with the claim so the fact records how far it applies.
+		Scope: claim.Scope,
 	})
 	ws.Version++
 	ws.UpdatedAt = now

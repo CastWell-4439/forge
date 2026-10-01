@@ -7,13 +7,13 @@ import "time"
 // Workflow represents the top-level YAML schema for a Forge workflow definition.
 // Maps to: apiVersion/kind/metadata/triggers/config/inputs/stages
 type Workflow struct {
-	APIVersion string         `yaml:"apiVersion"`
-	Kind       string         `yaml:"kind"`
-	Metadata   Metadata       `yaml:"metadata"`
-	Triggers   []TriggerDef   `yaml:"triggers"`
-	Config     WorkflowConfig `yaml:"config"`
+	APIVersion string            `yaml:"apiVersion"`
+	Kind       string            `yaml:"kind"`
+	Metadata   Metadata          `yaml:"metadata"`
+	Triggers   []TriggerDef      `yaml:"triggers"`
+	Config     WorkflowConfig    `yaml:"config"`
 	Inputs     map[string]string `yaml:"inputs"`
-	Stages     []Stage        `yaml:"stages"`
+	Stages     []Stage           `yaml:"stages"`
 }
 
 // Metadata contains workflow identification.
@@ -25,10 +25,10 @@ type Metadata struct {
 
 // TriggerDef defines how a workflow is triggered.
 type TriggerDef struct {
-	Type     string `yaml:"type"`     // "poll", "webhook", "cron", "manual"
-	Source   string `yaml:"source"`   // e.g. "feishu_mcp"
-	Interval string `yaml:"interval"` // e.g. "2m"
-	Query    string `yaml:"query"`    // filter expression
+	Type     string `yaml:"type"`      // "poll", "webhook", "cron", "manual"
+	Source   string `yaml:"source"`    // e.g. "feishu_mcp"
+	Interval string `yaml:"interval"`  // e.g. "2m"
+	Query    string `yaml:"query"`     // filter expression
 	DedupKey string `yaml:"dedup_key"` // template for deduplication
 }
 
@@ -53,13 +53,13 @@ type Stage struct {
 
 // TaskDef defines a single task within a stage.
 type TaskDef struct {
-	Worker    string            `yaml:"worker"`    // worker type: "ai", "git", "mcp", "shell", etc.
-	Action    string            `yaml:"action"`    // action to perform
-	Params    map[string]any    `yaml:"params"`    // action parameters (may contain templates)
-	Output    string            `yaml:"output"`    // variable name for task result
-	Condition string            `yaml:"condition"` // CEL expression; task runs only if true
-	Timeout   string            `yaml:"timeout"`   // task-level timeout override
-	Retry     *TaskRetryConfig  `yaml:"retry"`     // task-level retry override
+	Worker    string           `yaml:"worker"`    // worker type: "ai", "git", "mcp", "shell", etc.
+	Action    string           `yaml:"action"`    // action to perform
+	Params    map[string]any   `yaml:"params"`    // action parameters (may contain templates)
+	Output    string           `yaml:"output"`    // variable name for task result
+	Condition string           `yaml:"condition"` // CEL expression; task runs only if true
+	Timeout   string           `yaml:"timeout"`   // task-level timeout override
+	Retry     *TaskRetryConfig `yaml:"retry"`     // task-level retry override
 }
 
 // TaskRetryConfig defines per-task retry settings.

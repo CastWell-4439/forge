@@ -10,8 +10,9 @@ import (
 
 // Executor executes tasks by looking up handlers in the registry and invoking them.
 type Executor struct {
-	registry *Registry
-	gate     RuntimeGate
+	registry          *Registry
+	gate              RuntimeGate
+	gateFailurePolicy GateFailurePolicy
 }
 
 // NewExecutor creates a new Executor with the given handler registry.
@@ -53,11 +54,25 @@ func (e *Executor) Execute(ctx context.Context, req *forgev1.TaskRequest) *forge
 			Handler:    req.GetHandler(),
 			Params:     params,
 		})
-		if err != nil {
-			return &forgev1.TaskResponse{TaskId: req.GetTaskId(), Success: false, ErrorMsg: fmt.Sprintf("runtime gate failed: %v", err)}
-		}
-		if decision.Enforce && decision.Action != GateActionAllow {
-			return &forgev1.TaskResponse{TaskId: req.GetTaskId(), Success: false, ErrorMsg: fmt.Sprintf("runtime gate %s: %s", decision.Action, decision.Reason)}
+		switch {
+		case err != nil:
+			// The gate could not decide. The default is fail-open: a broken policy
+			// file or review resolver must not take the runtime down. Deployments
+			// that prefer to stop on gate failure opt in with WithGateFailurePolicy.
+			if e.gateFailurePolicy == GateFailureClosed {
+				return &forgev1.TaskResponse{
+					TaskId:   req.GetTaskId(),
+					Success:  false,
+					ErrorMsg: fmt.Sprintf("runtime gate failed (fail-closed): %v", err),
+				}
+			}
+		case !GateActionExecutesHandler(decision.Action) && decision.Enforce:
+			action := NormalizeGateAction(decision.Action)
+			return &forgev1.TaskResponse{
+				TaskId:   req.GetTaskId(),
+				Success:  false,
+				ErrorMsg: fmt.Sprintf("runtime gate %s: %s", action, decision.Reason),
+			}
 		}
 	}
 

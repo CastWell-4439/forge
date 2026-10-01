@@ -64,7 +64,7 @@ func NewPollTrigger(cfg PollTriggerConfig) *PollTrigger {
 	}
 }
 
-func (t *PollTrigger) Name() string           { return t.name }
+func (t *PollTrigger) Name() string            { return t.name }
 func (t *PollTrigger) Interval() time.Duration { return t.interval }
 func (t *PollTrigger) WorkflowName() string    { return t.workflowName }
 func (t *PollTrigger) Source() string          { return t.source }

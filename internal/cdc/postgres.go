@@ -13,21 +13,21 @@ import (
 //
 // Current status: POLLING-BASED FALLBACK.
 // Production migration path to real WAL streaming:
-//   1. Add dependency: go get github.com/jackc/pglogrepl
-//   2. Replace pollChanges() with pglogrepl.StartReplication()
-//   3. Create a replication slot: SELECT pg_create_logical_replication_slot('forge_cdc', 'pgoutput')
-//   4. Parse pgoutput messages in a streaming loop (INSERT/UPDATE/DELETE → ChangeEvent)
-//   5. Track confirmed_flush_lsn for at-least-once delivery
-//   6. Remove the polling ticker and simulateChange helper
+//  1. Add dependency: go get github.com/jackc/pglogrepl
+//  2. Replace pollChanges() with pglogrepl.StartReplication()
+//  3. Create a replication slot: SELECT pg_create_logical_replication_slot('forge_cdc', 'pgoutput')
+//  4. Parse pgoutput messages in a streaming loop (INSERT/UPDATE/DELETE → ChangeEvent)
+//  5. Track confirmed_flush_lsn for at-least-once delivery
+//  6. Remove the polling ticker and simulateChange helper
 //
 // The polling implementation exercises the full Source interface
 // (Subscribe, GetChanges, Commit, GetLag, Snapshot) so that
 // consumers don't need to change when WAL streaming is integrated.
 type PGCDCSource struct {
-	config   SourceConfig
-	connStr  string
-	closed   chan struct{}
-	queryFn  func(ctx context.Context, query string) ([]map[string]interface{}, error)
+	config  SourceConfig
+	connStr string
+	closed  chan struct{}
+	queryFn func(ctx context.Context, query string) ([]map[string]interface{}, error)
 }
 
 // PGCDCOption configures a PGCDCSource.

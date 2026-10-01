@@ -87,7 +87,7 @@ func TestWorkerManager_ActiveWorkers(t *testing.T) {
 func TestWorkerManager_Labels(t *testing.T) {
 	mgr := NewWorkerManager()
 	mgr.Register("w-gpu-1", "host1", 1, []string{"ai.tts"}, map[string]string{
-		"gpu": "A100",
+		"gpu":  "A100",
 		"zone": "us-east-1",
 	})
 

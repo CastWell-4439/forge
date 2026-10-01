@@ -38,7 +38,7 @@ func TestLeastActiveScheduler_TieBreakByWeight(t *testing.T) {
 func TestLeastActiveScheduler_SkipsAtCapacity(t *testing.T) {
 	sched := NewLeastActiveScheduler()
 	workers := []*SchedulerWorkerInfo{
-		{ID: "w1", ActiveTasks: 0, Capacity: 0},  // at capacity (0/0)
+		{ID: "w1", ActiveTasks: 0, Capacity: 0}, // at capacity (0/0)
 		{ID: "w2", ActiveTasks: 5, Capacity: 10, Weight: 1},
 	}
 	task := &SchedulerTask{ID: "t1", Handler: "test"}

@@ -13,7 +13,7 @@ import (
 // TriggerConfig defines a CDC trigger from YAML configuration.
 type TriggerConfig struct {
 	Name          string            `yaml:"name"`
-	Type          string            `yaml:"type"`  // "cdc"
+	Type          string            `yaml:"type"` // "cdc"
 	Source        TriggerSource     `yaml:"source"`
 	Workflow      string            `yaml:"workflow"`
 	ParamsMapping map[string]string `yaml:"params_mapping"`
@@ -21,10 +21,10 @@ type TriggerConfig struct {
 
 // TriggerSource defines the CDC source in a trigger configuration.
 type TriggerSource struct {
-	Type    string   `yaml:"type"`   // "postgres", "redis", etc.
+	Type    string   `yaml:"type"` // "postgres", "redis", etc.
 	Table   string   `yaml:"table"`
-	Events  []string `yaml:"events"` // ["INSERT", "UPDATE", "DELETE"]
-	Filter  string   `yaml:"filter"` // SQL-like filter
+	Events  []string `yaml:"events"`  // ["INSERT", "UPDATE", "DELETE"]
+	Filter  string   `yaml:"filter"`  // SQL-like filter
 	Pattern string   `yaml:"pattern"` // Redis key pattern
 }
 

@@ -13,7 +13,7 @@ type ProjectConfig struct {
 	LocalPath   string `yaml:"local_path"`
 	RemoteURL   string `yaml:"remote_url"`
 	MainBranch  string `yaml:"main_branch"`
-	TestTarget  string `yaml:"test_target"`  // branch for MRs (e.g. "dev-offline")
+	TestTarget  string `yaml:"test_target"` // branch for MRs (e.g. "dev-offline")
 	GitLabURL   string `yaml:"gitlab_url"`
 	GitLabToken string `yaml:"gitlab_token"`
 	ProjectID   string `yaml:"project_id"` // GitLab project ID (URL-encoded)

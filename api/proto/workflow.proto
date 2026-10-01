@@ -2,7 +2,10 @@ syntax = "proto3";
 
 package forge.workflow.v1;
 
-option go_package = "github.com/castwell/forge/api/proto/workflowpb";
+// workflow.proto declares messages that also exist in coordinator.proto
+// (TaskStatus, ListWorkflows*, CancelWorkflow*), so it cannot share a Go
+// package with them. It keeps its own package under api/proto/gen/.
+option go_package = "github.com/castwell/forge/api/proto/gen/workflowpb;workflowpb";
 
 import "google/protobuf/timestamp.proto";
 

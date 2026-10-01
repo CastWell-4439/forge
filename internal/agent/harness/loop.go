@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -41,10 +42,10 @@ func DefaultLoopConfig() LoopConfig {
 //
 // This is the heart of the Agent system.
 type AgentLoop struct {
-	llm     core.LLMClient
-	router  *ToolRouter
-	ctxMgr  *ContextManager
-	config  LoopConfig
+	llm    core.LLMClient
+	router *ToolRouter
+	ctxMgr *ContextManager
+	config LoopConfig
 
 	// Optional enhancement modules (injected from Agent).
 	inputGuard  core.InputGuard
@@ -85,18 +86,20 @@ func (l *AgentLoop) SetVerifier(v core.Verifier) { l.verifier = v }
 
 // StepRecord captures one iteration of the ReAct loop for observability.
 type StepRecord struct {
-	Step     int
-	Thought  string
-	Action   *structured.ToolCallRequest // nil if terminal
-	Result   *core.ToolResult            // nil if terminal
-	Answer   string                      // non-empty if terminal
+	Step    int
+	Thought string
+	Action  *structured.ToolCallRequest // nil if terminal
+	Result  *core.ToolResult            // nil if terminal
+	Answer  string                      // non-empty if terminal
 }
 
 // RunResult is the output of a complete agent run.
 type RunResult struct {
-	Answer   string
-	Steps    []StepRecord
-	Reason   string // "completed", "max_steps", "budget_exceeded", "error"
+	Answer string
+	Steps  []StepRecord
+	// Reason is one of: "completed", "max_steps", "budget_exceeded",
+	// "input_blocked", "truncated", "error".
+	Reason string
 }
 
 // Run executes the full ReAct loop for a user input.
@@ -141,10 +144,33 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 		}
 
 		// --- Call LLM ---
-		raw, err := l.llm.Chat(ctx, messages)
+		chatResult, err := l.llm.ChatWithUsage(ctx, messages)
 		if err != nil {
-			return nil, fmt.Errorf("step %d: LLM call failed: %w", step, err)
+			// Keep the steps accumulated so far. Returning nil here discarded
+			// the entire trace and made failures impossible to diagnose.
+			return &RunResult{Steps: steps, Reason: "error"},
+				fmt.Errorf("step %d: LLM call failed: %w", step, err)
 		}
+
+		// --- Budget accounting (M6, optional) ---
+		// Record must be called, otherwise usage stays at zero and the budget
+		// check above can never trip.
+		if l.budget != nil && chatResult.Usage.TotalTokens > 0 {
+			if err := l.budget.Record(ctx, sessionID, int64(chatResult.Usage.TotalTokens)); err != nil {
+				log.Printf("[harness] budget record failed: %v", err)
+			}
+		}
+
+		// A response cut short by the token limit is incomplete. Treating it as
+		// a complete answer silently produced wrong results.
+		if chatResult.FinishReason == "length" {
+			return &RunResult{Steps: steps, Reason: "truncated"},
+				fmt.Errorf("step %d: LLM response truncated (finish_reason=length, %d completion tokens); "+
+					"raise MaxTokens or lower the compaction threshold",
+					step, chatResult.Usage.CompletionTokens)
+		}
+
+		raw := chatResult.Content
 
 		// --- Parse Structured Output (M8) with retry ---
 		agentResp, err := structured.ParseWithRetry(raw, func(feedback string) (string, error) {
@@ -200,15 +226,12 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 				Result:  toolResult,
 			})
 
-			// Append assistant message (the agent's response) and tool result
-			// as observation for the next iteration.
-			assistantContent := fmt.Sprintf(
-				`{"thought": %q, "action": {"name": %q}}`,
-				agentResp.Thought, agentResp.Action.Name,
-			)
+			// Echo the assistant turn back losslessly. The previous hand-built
+			// string kept only the tool name, so the model could not see which
+			// arguments it had just supplied.
 			messages = append(messages, core.Message{
 				Role:    "assistant",
-				Content: assistantContent,
+				Content: marshalAssistantTurn(agentResp),
 			})
 
 			// Format tool result as observation.
@@ -300,6 +323,17 @@ Rules:
 3. To give a final answer, set "answer" (no action)
 4. Never set both "action" and "answer"
 5. If a tool returns an error, try an alternative approach or explain the issue`, base, toolList, schema)
+}
+
+// marshalAssistantTurn renders an assistant tool-calling turn back into the
+// conversation. Re-marshalling the parsed response preserves the tool
+// parameters; the fallback omits them but keeps the turn well-formed.
+func marshalAssistantTurn(resp *structured.AgentResponse) string {
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Sprintf(`{"thought": %q, "action": {"name": %q}}`, resp.Thought, resp.Action.Name)
+	}
+	return string(encoded)
 }
 
 // formatObservation formats a tool result as an observation message for the LLM.

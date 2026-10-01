@@ -10,18 +10,18 @@ import (
 
 func FileReadDef() *ToolDef {
 	return &ToolDef{
-		Name:           "file.read",
-		DisplayName:    "File Read",
-		Category:       "file",
-		Description:    "Read the contents of a file. Returns the file content as text.",
+		Name:        "file.read",
+		DisplayName: "File Read",
+		Category:    "file",
+		Description: "Read the contents of a file. Returns the file content as text.",
 		InputSchema: map[string]ParamDef{
 			"path":   {Type: "string", Description: "File path to read", Required: true},
 			"offset": {Type: "integer", Description: "Byte offset to start reading from (default 0)"},
 			"limit":  {Type: "integer", Description: "Max bytes to read (default: entire file)"},
 		},
 		OutputSchema: map[string]ParamDef{
-			"content":  {Type: "string", Description: "File content"},
-			"size":     {Type: "integer", Description: "Total file size in bytes"},
+			"content":   {Type: "string", Description: "File content"},
+			"size":      {Type: "integer", Description: "Total file size in bytes"},
 			"truncated": {Type: "boolean", Description: "True if content was truncated by limit"},
 		},
 		RequiredParams: []string{"path"},
@@ -31,10 +31,10 @@ func FileReadDef() *ToolDef {
 
 func FileWriteDef() *ToolDef {
 	return &ToolDef{
-		Name:           "file.write",
-		DisplayName:    "File Write",
-		Category:       "file",
-		Description:    "Write content to a file. Creates parent directories if needed. Overwrites existing files.",
+		Name:        "file.write",
+		DisplayName: "File Write",
+		Category:    "file",
+		Description: "Write content to a file. Creates parent directories if needed. Overwrites existing files.",
 		InputSchema: map[string]ParamDef{
 			"path":    {Type: "string", Description: "File path to write", Required: true},
 			"content": {Type: "string", Description: "Content to write", Required: true},
@@ -50,10 +50,10 @@ func FileWriteDef() *ToolDef {
 
 func FileListDef() *ToolDef {
 	return &ToolDef{
-		Name:           "file.list",
-		DisplayName:    "File List",
-		Category:       "file",
-		Description:    "List files and directories at the given path. Returns names, sizes, and types.",
+		Name:        "file.list",
+		DisplayName: "File List",
+		Category:    "file",
+		Description: "List files and directories at the given path. Returns names, sizes, and types.",
 		InputSchema: map[string]ParamDef{
 			"path":    {Type: "string", Description: "Directory path to list", Required: true},
 			"pattern": {Type: "string", Description: "Glob pattern filter (e.g. '*.go')"},

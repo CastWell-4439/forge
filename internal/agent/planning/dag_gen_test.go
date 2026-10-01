@@ -1,4 +1,4 @@
-﻿package planning
+package planning
 
 import (
 	"context"
@@ -69,7 +69,7 @@ tasks:
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
-	// No template match �?will use LLM.
+	// No template match —will use LLM.
 	req := &core.VideoRequirement{
 		Description: "trim a video",
 		SourceVideos: []core.MediaRef{
@@ -90,7 +90,7 @@ func TestDAGGeneratorLLMRetry(t *testing.T) {
 	callCount := 0
 	mock := &countingMockLLM{
 		responses: []string{
-			// First attempt: invalid �?missing handler.
+			// First attempt: invalid —missing handler.
 			`name: bad
 tasks:
   t1:

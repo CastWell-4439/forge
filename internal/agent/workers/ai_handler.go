@@ -46,7 +46,7 @@ func AIMultiFaceSwapDef() *ToolDef {
 		Category:    "ai",
 		Description: "Replace multiple faces in a video. Each face mapping specifies a source face image and target face index. Requires GPU.",
 		InputSchema: map[string]ParamDef{
-			"video_path":   {Type: "string", Description: "Input video local path", Required: true},
+			"video_path":    {Type: "string", Description: "Input video local path", Required: true},
 			"face_mappings": {Type: "array", Description: "Array of {face_image_path, face_index} objects", Required: true},
 		},
 		OutputSchema: map[string]ParamDef{

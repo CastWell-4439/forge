@@ -2,7 +2,9 @@ syntax = "proto3";
 
 package forge.v1;
 
-option go_package = "github.com/castwell/forge/api/proto/gen/forgepb";
+// All four protos share one Go package: the code imports the single path
+// github.com/castwell/forge/api/proto/gen as `forgev1`.
+option go_package = "github.com/castwell/forge/api/proto/gen;forgev1";
 
 // TaskStatus represents the lifecycle state of a task instance.
 enum TaskStatus {
