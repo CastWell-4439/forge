@@ -36,15 +36,20 @@ type HandlerConfig struct {
 	// AskUser answers ask.user in real mode. When nil the tool reports that no
 	// interactive channel is configured instead of pretending a human replied.
 	AskUser AskUserFunc
+
+	// LoadSkill loads a published SkillPack for skill.activate. When nil the
+	// tool reports that no skill store is wired instead of inventing one.
+	LoadSkill LoadSkillFunc
 }
 
 // ErrNotConfigured is returned when a real-mode handler is called but the
 // underlying service is not configured. Each handler group documents its
 // required external dependencies:
-//   - data.*:        a database DSN
-//   - web.*:         outbound network access
-//   - code.execute:  a code execution sandbox
-//   - ask.user:      an interactive channel (HandlerConfig.AskUser)
+//   - data.*:         a database DSN
+//   - web.*:          outbound network access
+//   - code.execute:   a code execution sandbox
+//   - ask.user:       an interactive channel (HandlerConfig.AskUser)
+//   - skill.activate: a skill store (HandlerConfig.LoadSkill)
 //
 // Handlers with no external dependency - file.*, git.*, shell.run (whitelisted)
 // - are implemented for real mode.

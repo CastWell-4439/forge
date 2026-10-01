@@ -90,6 +90,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "cases: %v\n", err)
 			os.Exit(1)
 		}
+	case "skills":
+		if err := runSkills(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "skills: %v\n", err)
+			os.Exit(1)
+		}
 	case "serve":
 		if err := runServe(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
@@ -807,6 +812,15 @@ cases flags:
   cases run --case <id> --root .forgex [--cases configs/forgex/cases.yaml] [--rules configs/forgex/eval_rules.yaml]
             [--strict]  exit non-zero when the run does not match the case's expected outcome
 
+skills flags:
+  skills list    [--skills-dir configs/forgex/skills]
+  skills show    --skill <id> [--json]
+  skills distill --run <run_dir> [--llm] [--cases configs/forgex/cases.yaml]
+                 distills a verified replay (needs replay_result.json) into a draft
+  skills publish <draft_path>   runs the gates, moves the draft to published/
+  skills verify  --skill <id>   re-runs every bound case and requires both gates
+  skills export  [--json]       machine-facing dump for the external orchestrator
+
 serve flags:
   --root  Root directory for ForgeX run artifacts (default: .forgex)
   --addr  HTTP listen address (default: :8090)
@@ -826,6 +840,9 @@ Examples:
   forgex cases list --cases configs/forgex/cases.yaml
   forgex cases show --case generic-contract-violation --cases configs/forgex/cases.yaml
   forgex cases run --case generic-contract-success --root .forgex
+  forgex skills distill --run .forgex/runs/<run_id>
+  forgex skills publish configs/forgex/skills/drafts/<id>.yaml
+  forgex skills verify --skill generic-contract-success
   forgex serve --root .forgex --addr :8090
 `)
 }
