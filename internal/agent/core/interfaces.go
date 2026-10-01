@@ -3,8 +3,13 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// ErrNoCheckpoint reports that no checkpoint exists for the requested ID or
+// session. Callers distinguish "nothing to resume" from a real read failure.
+var ErrNoCheckpoint = errors.New("no checkpoint")
 
 // ---------- Enhancement Module Interfaces (Plugin Slots) ----------
 // Each interface is optional. Agent assembles them via WithXxx options.
@@ -73,13 +78,62 @@ type MCPToolDef struct {
 	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
 }
 
+// Tool call statuses recorded in a checkpoint's side-effect ledger.
+const (
+	ToolCallStarted   = "started"
+	ToolCallCompleted = "completed"
+)
+
+// ToolCallRecord is one entry of a checkpoint's side-effect ledger.
+//
+// Recovery needs to know which tools already ran: replaying a non-idempotent
+// tool would produce its side effect a second time. A record is written with
+// ToolCallStarted before the tool is invoked and rewritten to ToolCallCompleted
+// afterwards, so a record left in ToolCallStarted is precisely the "it may or
+// may not have happened" case that a resume must not resolve by guessing.
+type ToolCallRecord struct {
+	ID          string    `json:"id"`
+	StepIndex   int       `json:"step_index"`
+	Tool        string    `json:"tool"`
+	Idempotent  bool      `json:"idempotent"`
+	Status      string    `json:"status"`
+	Result      string    `json:"result,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+}
+
 // Checkpoint represents a saved agent state for recovery.
 type Checkpoint struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"session_id"`
 	StepIndex int       `json:"step_index"`
 	Messages  []Message `json:"messages"`
+
+	// ToolCalls is the side-effect ledger. See ToolCallRecord.
+	ToolCalls []ToolCallRecord `json:"tool_calls,omitempty"`
+	// RetryCount and ApprovalState carry the rest of the recovery context so a
+	// resumed run does not silently restart from a clean slate.
+	RetryCount    int    `json:"retry_count,omitempty"`
+	ApprovalState string `json:"approval_state,omitempty"`
+	// Completed and Answer record that the run already reached its final answer.
+	// Without them a resume would redo work that was already finished.
+	Completed bool      `json:"completed,omitempty"`
+	Answer    string    `json:"answer,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// UnresolvedToolCall returns the ledger's trailing record when it is still in
+// the started state, meaning the process may have died mid-invocation.
+func (c *Checkpoint) UnresolvedToolCall() (ToolCallRecord, bool) {
+	if c == nil || len(c.ToolCalls) == 0 {
+		return ToolCallRecord{}, false
+	}
+	last := c.ToolCalls[len(c.ToolCalls)-1]
+	if last.Status != ToolCallStarted {
+		return ToolCallRecord{}, false
+	}
+	return last, true
 }
 
 // Document represents a retrievable document for RAG.
