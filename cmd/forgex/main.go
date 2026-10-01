@@ -599,6 +599,7 @@ func runRegisteredCase(args []string) error {
 	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
 	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
 	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level override for tool policy decisions")
+	strict := fs.Bool("strict", false, "exit non-zero when the run does not match the case's expected outcome")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -622,14 +623,84 @@ func runRegisteredCase(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// The suite checks rules that hold for a family of runs. The verdict checks
+	// this case's own expectations. They are reported separately, so a failure
+	// says which of the two moved.
+	verdict, err := replayCase(runDir, spec)
+	if err != nil {
+		return err
+	}
+
 	fmt.Printf("case completed: case=%s run_id=%s suite=%s eval=%s\n", spec.ID, runID, spec.Suite, result.Status)
 	fmt.Printf("artifacts: %s\n", runDir)
 	fmt.Printf("result: %s\n", filepath.Join(runDir, "eval_result.json"))
 	fmt.Printf("scorecard: %s\n", filepath.Join(runDir, "scorecard.json"))
+	fmt.Printf("replay: %s\n", filepath.Join(runDir, "replay_result.json"))
+	fmt.Printf("expected outcome: %s\n", verdict.Summary())
+	for _, field := range verdict.Fields {
+		mark := "ok  "
+		if !field.Passed {
+			mark = "FAIL"
+		}
+		fmt.Printf("  [%s] %-22s expected %s, got %s\n",
+			mark, field.Field, cases.Describe(field.Expected, field.AtLeast), field.Actual)
+	}
+
+	if *strict && !verdict.Passed {
+		return fmt.Errorf("case %s did not match its expected outcome", spec.ID)
+	}
 	if result.Status == model.EvalFailed {
 		return fmt.Errorf("case eval failed")
 	}
 	return nil
+}
+
+// replayCase compares a run against the outcome its case declares and records the
+// verdict next to the run.
+func replayCase(runDir string, spec cases.CaseSpec) (cases.Verdict, error) {
+	artifacts, err := forgexeval.LoadRunArtifacts(runDir)
+	if err != nil {
+		return cases.Verdict{}, fmt.Errorf("load run artifacts: %w", err)
+	}
+	verdict := cases.Compare(spec, caseActual(artifacts, countLessons(filepath.Join(runDir, "lessons.jsonl"))))
+
+	encoded, err := json.MarshalIndent(verdict, "", "  ")
+	if err != nil {
+		return cases.Verdict{}, fmt.Errorf("marshal replay verdict: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "replay_result.json"), append(encoded, '\n'), 0o644); err != nil {
+		return cases.Verdict{}, fmt.Errorf("write replay verdict: %w", err)
+	}
+	return verdict, nil
+}
+
+// caseActual derives the observable outcome of a run.
+//
+// It follows the rules the report layer already uses: the final decision is the
+// last stop decision, or "(none)" when the run never reached one. Keeping the two
+// in step means a replay verdict and a generated report cannot disagree.
+func caseActual(artifacts forgexeval.RunArtifacts, lessons int) cases.Actual {
+	actual := cases.Actual{
+		Status:        string(artifacts.Run.Status),
+		FinalDecision: "(none)",
+		Lessons:       lessons,
+	}
+	if n := len(artifacts.StopDecisions); n > 0 {
+		actual.FinalDecision = string(artifacts.StopDecisions[n-1].Action)
+	}
+	actual.Errors = len(artifacts.Errors)
+	for _, validation := range artifacts.ContractValidations {
+		if string(validation.Status) == "failed" {
+			actual.ValidationFailed++
+		}
+	}
+	for _, artifact := range artifacts.Artifacts {
+		if artifact.Status == model.ArtifactMissing {
+			actual.ArtifactsMissing++
+		}
+	}
+	return actual
 }
 
 func printExpectedField(name, value string) {
@@ -723,6 +794,7 @@ cases flags:
   cases list --cases configs/forgex/cases.yaml [--json]
   cases show --case <id> --cases configs/forgex/cases.yaml [--json]
   cases run --case <id> --root .forgex [--cases configs/forgex/cases.yaml] [--rules configs/forgex/eval_rules.yaml]
+            [--strict]  exit non-zero when the run does not match the case's expected outcome
 
 serve flags:
   --root  Root directory for ForgeX run artifacts (default: .forgex)
