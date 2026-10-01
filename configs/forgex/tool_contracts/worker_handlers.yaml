@@ -1,0 +1,72 @@
+version: 1
+# Contracts for the built-in Forge worker handlers.
+#
+# The runtime gate looks a handler up by name. A handler with no contract falls
+# back to a low-risk local-write default, so every handler that can reach outside
+# the workspace declares its side effect here. The policy engine then decides from
+# side_effect + risk_level + the current authority level, which is what makes
+# FORGEX_RUNTIME_AUTHORITY a meaningful knob rather than a label.
+tools:
+  - name: shell
+    capability: command.execution
+    description: Runs a whitelisted command inside a sandboxed working directory.
+    risk_level: medium
+    side_effect: local_write
+    idempotent: false
+    timeout_seconds: 600
+
+  - name: claude_code
+    capability: code.editing
+    description: Drives a coding agent that edits files in the workspace.
+    risk_level: medium
+    side_effect: local_write
+    idempotent: false
+    timeout_seconds: 900
+
+  - name: git
+    capability: version_control
+    description: Reads repository state and writes branches, commits and merge requests.
+    risk_level: high
+    side_effect: external_write
+    idempotent: false
+    required_authority_level: L3
+    timeout_seconds: 120
+
+  - name: mcp
+    capability: external.tool_call
+    description: Calls a tool exposed by an external MCP server.
+    risk_level: high
+    side_effect: external_api_call
+    idempotent: false
+    timeout_seconds: 120
+
+  - name: ai
+    capability: llm.inference
+    description: Calls a language model to analyse, classify or plan.
+    risk_level: medium
+    side_effect: external_api_call
+    idempotent: true
+    timeout_seconds: 300
+
+  - name: review
+    capability: llm.review
+    description: Reviews a plan or a diff, optionally against retrieved conventions.
+    risk_level: medium
+    side_effect: external_api_call
+    idempotent: true
+    timeout_seconds: 300
+
+  - name: database
+    capability: data.read
+    description: Runs read-only queries. The worker rejects anything that writes.
+    risk_level: low
+    side_effect: read_only
+    idempotent: true
+    timeout_seconds: 30
+
+  - name: hitl
+    capability: human.approval
+    description: Asks a human to approve, supply input, or merely be notified.
+    risk_level: low
+    side_effect: none
+    idempotent: true
