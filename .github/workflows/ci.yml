@@ -2,14 +2,100 @@ name: CI
 
 on:
   push:
-    branches: [master, develop, "feature/**"]
+    branches: [main, master, develop, "feature/**"]
   pull_request:
-    branches: [master, develop]
+    branches: [main, master, develop]
 
 permissions:
   contents: read
 
+# api/proto/gen/ is gitignored (.gitignore:94) but imported by every layer
+# (cmd/*, internal/coordinator, internal/worker, internal/agent/session, test/*).
+# Nothing checked it in, so a fresh checkout could not compile. Every job below
+# therefore installs buf and generates the code first. buf is pinned so CI does
+# not silently pick up a new generator version.
 jobs:
+  # These are the "hard acceptance" gates the design docs promised but never
+  # wired up. They are deliberately separate from lint/test so a style or
+  # encoding regression reports itself instead of hiding inside a test failure.
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.73.0"
+      - name: Generate protobuf code
+        run: buf generate
+      - name: gofmt must be clean
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "ERROR: not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: clean"
+      - name: No whitespace errors in the pushed range
+        run: |
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            git diff --check HEAD~1 HEAD
+            echo "git diff --check: clean"
+          else
+            echo "single-commit history; skipping range check"
+          fi
+      - name: No merge conflict markers
+        run: |
+          if grep -rnE '^(<<<<<<<|>>>>>>>|=======)$' \
+               --include='*.go' --include='*.yaml' --include='*.yml' \
+               --include='*.proto' --include='*.md' \
+               internal cmd api workflows test 2>/dev/null; then
+            echo "ERROR: merge conflict markers found"
+            exit 1
+          fi
+          echo "conflict markers: none"
+      - name: No BOM or U+FFFD replacement characters
+        run: |
+          # A recurring accident class in this repo: editors and PowerShell
+          # Set-Content introduced UTF-8 BOMs and U+FFFD into Go sources, which
+          # once shipped a SyntaxError to production. Gate it instead of
+          # relying on remembering.
+          fail=0
+          if grep -rlP '^\xEF\xBB\xBF' --include='*.go' --include='*.yaml' \
+               --include='*.yml' --include='*.proto' internal cmd api workflows test; then
+            echo "ERROR: UTF-8 BOM found in the files above"; fail=1
+          fi
+          if grep -rlP '\xEF\xBF\xBD' --include='*.go' --include='*.yaml' \
+               --include='*.yml' --include='*.proto' internal cmd api workflows test; then
+            echo "ERROR: U+FFFD replacement character found in the files above"; fail=1
+          fi
+          [ "$fail" -eq 0 ] && echo "encoding: clean"
+          exit $fail
+      - name: ForgeX core must stay de-domainised
+        run: |
+          # The control plane is domain-agnostic by design: domain terms belong in
+          # adapters and workers, never in ForgeX core or its CLI. This is the
+          # author's own acceptance rule, now enforced.
+          if grep -rniE 'video|ffmpeg|face_swap|faceswap|lipsync|subtitle|bgm|tts|avatar|xinying|avp_' \
+               --include='*.go' internal/forgex cmd/forgex; then
+            echo "ERROR: business-domain vocabulary leaked into ForgeX core"
+            exit 1
+          fi
+          echo "forgex core: de-domainised"
+      - name: Build and smoke-test the forgex CLI
+        run: |
+          go build -o bin/forgex ./cmd/forgex
+          ./bin/forgex version
+          ./bin/forgex help
+          echo "forgex smoke: ok"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -19,6 +105,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.73.0"
+      - name: Generate protobuf code
+        run: buf generate
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
@@ -58,6 +149,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.73.0"
+      - name: Generate protobuf code
+        run: buf generate
       - name: Run tests
         env:
           FORGE_PG_DSN: "postgres://forge:forge@localhost:5432/forge_test?sslmode=disable"
@@ -80,6 +176,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.73.0"
+      - name: Generate protobuf code
+        run: buf generate
       - name: Build binaries
         run: |
           CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/coordinator ./cmd/coordinator
