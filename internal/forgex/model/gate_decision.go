@@ -27,15 +27,18 @@ const (
 // decisions may be applied by a runtime gate integration before handler/tool
 // execution and should remain fully explainable through this artifact.
 type GateDecision struct {
-	ID         string     `json:"id" yaml:"id"`
-	RunID      string     `json:"run_id" yaml:"run_id"`
-	Mode       GateMode   `json:"mode" yaml:"mode"`
-	Action     GateAction `json:"action" yaml:"action"`
-	Scope      string     `json:"scope,omitempty" yaml:"scope,omitempty"`
-	SubjectID  string     `json:"subject_id,omitempty" yaml:"subject_id,omitempty"`
-	Reason     string     `json:"reason" yaml:"reason"`
-	Evidence   []string   `json:"evidence,omitempty" yaml:"evidence,omitempty"`
-	Source     string     `json:"source,omitempty" yaml:"source,omitempty"`
-	NeedsHuman bool       `json:"needs_human,omitempty" yaml:"needs_human,omitempty"`
-	CreatedAt  time.Time  `json:"created_at" yaml:"created_at"`
+	ID        string     `json:"id" yaml:"id"`
+	RunID     string     `json:"run_id" yaml:"run_id"`
+	Mode      GateMode   `json:"mode" yaml:"mode"`
+	Action    GateAction `json:"action" yaml:"action"`
+	Scope     string     `json:"scope,omitempty" yaml:"scope,omitempty"`
+	SubjectID string     `json:"subject_id,omitempty" yaml:"subject_id,omitempty"`
+	// ToolName is the handler or tool the decision applies to. Without it a
+	// decision cannot be traced back to what was about to run.
+	ToolName   string    `json:"tool_name,omitempty" yaml:"tool_name,omitempty"`
+	Reason     string    `json:"reason" yaml:"reason"`
+	Evidence   []string  `json:"evidence,omitempty" yaml:"evidence,omitempty"`
+	Source     string    `json:"source,omitempty" yaml:"source,omitempty"`
+	NeedsHuman bool      `json:"needs_human,omitempty" yaml:"needs_human,omitempty"`
+	CreatedAt  time.Time `json:"created_at" yaml:"created_at"`
 }
