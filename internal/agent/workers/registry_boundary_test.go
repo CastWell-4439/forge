@@ -11,9 +11,9 @@ import (
 // so the agent's capability surface can only grow deliberately.
 //
 // The set is domain-agnostic: generic work a coding agent is given everywhere
-// (files, shell, code, git reads, web, data) plus one human channel and one
-// skill channel. Product vocabulary never re-enters this list - domain
-// capabilities belong to the workflow plane's workers.
+// (files, shell, code, git reads, web, data) plus one human channel, one skill
+// channel and one knowledge channel. Product vocabulary never re-enters this
+// list - domain capabilities belong to the workflow plane's workers.
 //
 // Keep this sorted: the test compares sorted slices.
 var goldenAgentTools = []string{
@@ -29,6 +29,7 @@ var goldenAgentTools = []string{
 	"git.diff",
 	"git.log",
 	"git.status",
+	"knowledge.search",
 	"shell.run",
 	"skill.activate",
 	"web.fetch",

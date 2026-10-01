@@ -8,6 +8,7 @@ import (
 
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/harness"
+	"github.com/castwell/forge/internal/agent/rag"
 	"github.com/castwell/forge/internal/hitl"
 	"github.com/castwell/forge/internal/worker"
 	"github.com/castwell/forge/internal/workers/ai"
@@ -108,8 +109,26 @@ func registerReview(r *worker.Registry) {
 			fmt.Sprintf("no LLM client; set %s", envLLMAPIKey)))
 		return
 	}
-	// The retriever is optional: review works without a knowledge base.
-	r.Register("review", adaptWorkflowWorker("review", review.NewWorker(cfg, llm, nil)))
+	// The knowledge stack is always non-nil: its layers degrade individually
+	// (no embedder → BM25-only, no endpoint → fusion order), so review gets a
+	// working retriever instead of the nil it used to receive unconditionally.
+	r.Register("review", adaptWorkflowWorker("review", review.NewWorker(cfg, llm, buildKnowledgeStack())))
+}
+
+// Knowledge stack environment: one root for the document store, optional
+// embedding and rerank endpoints. See internal/agent/rag for the degrade rules.
+const (
+	envKnowledgeDir     = "FORGE_KNOWLEDGE_DIR"
+	defaultKnowledgeDir = ".forge/knowledge"
+)
+
+// buildKnowledgeStack assembles file store + embedder + reranker from the
+// environment. Nothing here is fatal when absent; the pipeline reports its
+// actual mode (hybrid / bm25-only / rerank) through SearchMode.
+func buildKnowledgeStack() *rag.HybridRetriever {
+	dir := envOrDefault(envKnowledgeDir, defaultKnowledgeDir)
+	store := rag.NewFileDocumentStore(dir)
+	return rag.NewHybridRetriever(store, rag.EmbedderFromEnv()).WithReranker(rag.RerankerFromEnv())
 }
 
 // registerDatabase wires the database worker. Real PostgreSQL/Redis connectors
