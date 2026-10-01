@@ -212,10 +212,11 @@ func (d *DAG) Validate() error {
 	return nil
 }
 
-// TopologicalSort returns task names in topological order using Kahn's algorithm.
-// Returns an error if the DAG contains a cycle.
 // TaskCompensateHandler returns the compensate handler for a task, or "" if none.
 // This satisfies the saga.DAGView interface.
+//
+// TopologicalSort returns task names in topological order using Kahn's algorithm.
+// Returns an error if the DAG contains a cycle.
 func (d *DAG) TaskCompensateHandler(taskName string) string {
 	taskDef, ok := d.Tasks[taskName]
 	if !ok {

@@ -6,8 +6,9 @@ import (
 	"github.com/castwell/forge/internal/agent/core"
 )
 
-// Type aliases - definitions now live in core/ for dependency direction compliance.
-// These aliases maintain backward compatibility for existing code in workers/.
+// ToolDef and its companions are aliases of the core definitions, which live in
+// core/ for dependency direction compliance. The aliases keep existing code in
+// workers/ compiling unchanged.
 type ToolDef = core.ToolDef
 type ParamDef = core.ParamDef
 type ToolRegistry = core.ToolRegistry

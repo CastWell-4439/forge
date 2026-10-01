@@ -3,9 +3,10 @@ package coordinator
 import (
 	"testing"
 
-	"github.com/castwell/forge/internal/discovery"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/discovery"
 )
 
 func TestFilterByLabels_NoMatchLabels(t *testing.T) {

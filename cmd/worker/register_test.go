@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/castwell/forge/internal/worker"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/worker"
 )
 
 // workflowWorkerRefs mirrors just the part of the workflow schema this guard

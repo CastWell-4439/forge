@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 func TestInMemoryStore_SaveAndLoad(t *testing.T) {

@@ -6,9 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/castwell/forge/internal/forgex/storage"
-	"github.com/google/uuid"
 )
 
 // Recorder records ForgeX runtime events through a storage.Store.

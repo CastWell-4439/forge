@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // RunArtifacts contains the minimal run data needed by eval assertions.

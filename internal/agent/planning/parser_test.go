@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/structured"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/structured"
 )
 
 // mockLLMClient returns predefined responses for testing.

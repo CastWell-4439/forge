@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/castwell/forge/internal/discovery"
-	"github.com/castwell/forge/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/discovery"
+	"github.com/castwell/forge/internal/storage"
 )
 
 func getFreePort(t *testing.T) int {

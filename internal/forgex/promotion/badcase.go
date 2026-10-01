@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	forgexeval "github.com/castwell/forge/internal/forgex/eval"
 	"github.com/castwell/forge/internal/forgex/model"
-	"gopkg.in/yaml.v3"
 )
 
 // Draft is a human-reviewed regression case draft generated from one bad run.

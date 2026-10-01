@@ -13,7 +13,7 @@ import (
 	"github.com/castwell/forge/internal/worker"
 )
 
-// Config wires ForgeX policy/gate decisions into Forge worker execution.
+// ReviewResolver looks up the latest human review for a gate.
 type ReviewResolver interface {
 	LatestReview(ctx context.Context, runID string, gateID string) (model.HITLReview, bool, error)
 }

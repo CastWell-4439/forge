@@ -4,9 +4,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // policyPath points at the repository's real stop-policy config relative to this

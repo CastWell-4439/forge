@@ -216,19 +216,3 @@ func firstValidationFailureMessage(validations []model.ContractValidation, fallb
 	}
 	return fallback
 }
-
-// statusForAction maps a stop action to the terminal run status it implies.
-func statusForAction(action model.StopAction) model.RunStatus {
-	switch action {
-	case model.StopActionStop:
-		return model.RunStopped
-	case model.StopActionEscalate:
-		return model.RunEscalated
-	case model.StopActionPause:
-		return model.RunPaused
-	case model.StopActionContinue, model.StopActionRetry:
-		return model.RunRunning
-	default:
-		return model.RunFailed
-	}
-}

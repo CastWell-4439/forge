@@ -111,17 +111,16 @@ jobs:
       - name: Generate protobuf code
         run: buf generate
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          # Pinned: `latest` means a new linter release can turn this job red
-          # without any change to the repository.
-          version: v1.62.2
+          # Pinned, and pinned to a version that supports the Go release this
+          # module targets: a v1-line linter rejects a Go 1.26 module outright.
+          version: v2.14.0
           args: --timeout=5m
 
   test:
     name: Test
     runs-on: ubuntu-latest
-    needs: lint
     services:
       postgres:
         image: postgres:17
@@ -171,7 +170,6 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

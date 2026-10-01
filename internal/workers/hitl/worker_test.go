@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/castwell/forge/internal/hitl"
@@ -16,13 +15,6 @@ func testManager() *hitl.Manager {
 			return nil // no-op callback for tests
 		},
 	})
-}
-
-func testIDGen() func() string {
-	var counter atomic.Int64
-	return func() string {
-		return "test_" + strings.Repeat("0", 5) + string(rune('0'+counter.Add(1)))
-	}
 }
 
 func TestNotify(t *testing.T) {

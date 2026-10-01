@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // genericSnapshot builds a snapshot resembling the empty required_assets run.
