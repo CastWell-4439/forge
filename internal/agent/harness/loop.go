@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -54,6 +55,9 @@ type AgentLoop struct {
 	checkpoint  core.CheckpointStore
 	memory      core.MemoryStore
 	verifier    core.Verifier
+
+	// checkpointPolicy decides whether a failed checkpoint write is fatal.
+	checkpointPolicy CheckpointFailurePolicy
 }
 
 // NewAgentLoop creates a new ReAct loop.
@@ -77,6 +81,12 @@ func (l *AgentLoop) SetBudget(b core.BudgetChecker) { l.budget = b }
 
 // SetCheckpoint enables M12 state persistence.
 func (l *AgentLoop) SetCheckpoint(c core.CheckpointStore) { l.checkpoint = c }
+
+// SetCheckpointFailurePolicy decides what happens when a checkpoint write fails.
+// The zero value keeps the best-effort behaviour.
+func (l *AgentLoop) SetCheckpointFailurePolicy(p CheckpointFailurePolicy) {
+	l.checkpointPolicy = p
+}
 
 // SetMemory enables M5 memory.
 func (l *AgentLoop) SetMemory(m core.MemoryStore) { l.memory = m }
@@ -102,27 +112,92 @@ type RunResult struct {
 	Reason string
 }
 
+// CheckpointFailurePolicy decides what a failed checkpoint write means.
+type CheckpointFailurePolicy string
+
+const (
+	// CheckpointBestEffort logs the failure and lets the run continue. A
+	// checkpoint supports recovery, it is not the task itself, so this is the
+	// default.
+	CheckpointBestEffort CheckpointFailurePolicy = "best_effort"
+	// CheckpointStrict fails the run instead. A run that cannot be recovered
+	// should not report success, which is what a caller depending on resume needs.
+	CheckpointStrict CheckpointFailurePolicy = "strict"
+)
+
 // Run executes the full ReAct loop for a user input.
 // Returns the final answer and a trace of all steps.
 func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string) (*RunResult, error) {
+	return l.run(ctx, sessionID, userInput, false)
+}
+
+// Resume continues a session from its latest checkpoint instead of restarting it.
+//
+// A session with no checkpoint simply runs from the beginning. When the previous
+// attempt stopped while a tool was in flight, the ledger records it, and a tool
+// that is not idempotent is never replayed: repeating its side effect would be
+// worse than stopping. The run then ends with Reason "unresolved_side_effect".
+func (l *AgentLoop) Resume(ctx context.Context, sessionID string) (*RunResult, error) {
+	return l.run(ctx, sessionID, "", true)
+}
+
+func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string, resume bool) (*RunResult, error) {
 	// --- Input Guard (M6, optional) ---
-	if l.inputGuard != nil {
+	// Only a fresh run has new input to check.
+	if !resume && l.inputGuard != nil {
 		if err := l.inputGuard.Check(ctx, userInput); err != nil {
 			return &RunResult{Reason: "input_blocked", Answer: err.Error()}, nil
 		}
 	}
 
-	// Build the system prompt with tool descriptions.
-	systemPrompt := l.buildSystemPrompt()
-
 	messages := []core.Message{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: l.buildSystemPrompt()},
 		{Role: "user", Content: userInput},
+	}
+
+	startStep := 0
+	var ledger []core.ToolCallRecord
+
+	if resume {
+		cp, err := l.loadCheckpoint(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if cp != nil {
+			// A finished run has nothing left to do; re-asking the model could
+			// only repeat work that was already delivered.
+			if cp.Completed {
+				return &RunResult{Answer: cp.Answer, Reason: "completed"}, nil
+			}
+
+			messages = cp.Messages
+			startStep = cp.StepIndex + 1
+			ledger = cp.ToolCalls
+
+			if pending, ok := cp.UnresolvedToolCall(); ok {
+				// This step was recorded before its tool ran and never recorded a
+				// result, so it has to be redone from its own start rather than
+				// from the step after it.
+				startStep = pending.StepIndex
+				if !pending.Idempotent {
+					return &RunResult{
+						Reason: "unresolved_side_effect",
+						Answer: fmt.Sprintf(
+							"Stopped instead of resuming: tool %q was in flight when the previous attempt "+
+								"ended and is not idempotent, so replaying it could repeat its side effect.",
+							pending.Tool),
+					}, nil
+				}
+				// Replaying an idempotent tool is harmless, so drop the dangling
+				// record and let the loop redo the step.
+				ledger = ledger[:len(ledger)-1]
+			}
+		}
 	}
 
 	var steps []StepRecord
 
-	for step := 0; step < l.config.MaxSteps; step++ {
+	for step := startStep; step < l.config.MaxSteps; step++ {
 		// --- Budget Check (M6, optional) ---
 		if l.budget != nil {
 			if err := l.budget.Check(ctx, sessionID); err != nil {
@@ -208,6 +283,12 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 				Reason: "completed",
 			}
 
+			// Record completion so a later Resume returns this answer instead of
+			// running the session again.
+			if err := l.saveCompletedCheckpoint(ctx, sessionID, step, messages, ledger, answer); err != nil {
+				return nil, err
+			}
+
 			// Save to long-term memory (M5, optional).
 			l.saveMemory(ctx, sessionID, userInput, result)
 
@@ -216,8 +297,28 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 
 		// --- Non-terminal: Agent wants to call a tool ---
 		if agentResp.IsToolCall() {
-			// Invoke the tool via ToolRouter.
-			toolResult := l.router.Call(ctx, agentResp.Action.Name, agentResp.Action.Params)
+			toolName := agentResp.Action.Name
+			ledger = append(ledger, core.ToolCallRecord{
+				ID:         fmt.Sprintf("%s-step-%d-%s", sessionID, step, toolName),
+				StepIndex:  step,
+				Tool:       toolName,
+				Idempotent: l.toolIsIdempotent(toolName),
+				Status:     core.ToolCallStarted,
+				StartedAt:  time.Now().UTC(),
+			})
+			// Record the intent before invoking the tool. A crash between here and
+			// the completion record below is exactly the case a resume has to be
+			// able to see, and it can only see it if it was written first.
+			if err := l.saveCheckpoint(ctx, sessionID, step, messages, ledger); err != nil {
+				return nil, err
+			}
+
+			toolResult := l.router.Call(ctx, toolName, agentResp.Action.Params)
+
+			ledger[len(ledger)-1].Status = core.ToolCallCompleted
+			ledger[len(ledger)-1].Result = toolResult.Output
+			ledger[len(ledger)-1].Error = toolResult.Error
+			ledger[len(ledger)-1].CompletedAt = time.Now().UTC()
 
 			steps = append(steps, StepRecord{
 				Step:    step,
@@ -269,17 +370,9 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 				}
 			}
 
-			// Save checkpoint (M12, optional).
-			if l.checkpoint != nil {
-				cp := &core.Checkpoint{
-					ID:        fmt.Sprintf("%s-step-%d", sessionID, step),
-					SessionID: sessionID,
-					StepIndex: step,
-					Messages:  messages,
-				}
-				if err := l.checkpoint.Save(ctx, cp); err != nil {
-					log.Printf("[harness] checkpoint save failed: %v", err)
-				}
+			// Persist the finished step. This is the checkpoint a resume loads.
+			if err := l.saveCheckpoint(ctx, sessionID, step, messages, ledger); err != nil {
+				return nil, err
 			}
 
 			continue
@@ -297,13 +390,96 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 	}, nil
 }
 
+// loadCheckpoint returns the newest checkpoint for a session, or nil when the
+// session has none. An empty session is a normal first call, not a failure.
+func (l *AgentLoop) loadCheckpoint(ctx context.Context, sessionID string) (*core.Checkpoint, error) {
+	if l.checkpoint == nil {
+		return nil, fmt.Errorf("resume requires a checkpoint store")
+	}
+	cp, err := l.checkpoint.Latest(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, core.ErrNoCheckpoint) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load checkpoint for session %s: %w", sessionID, err)
+	}
+	return cp, nil
+}
+
+// persistCheckpoint writes a checkpoint, applying the failure policy. It is the
+// single place that decides whether a failed write is fatal.
+func (l *AgentLoop) persistCheckpoint(ctx context.Context, cp *core.Checkpoint) error {
+	if l.checkpoint == nil {
+		return nil
+	}
+	if err := l.checkpoint.Save(ctx, cp); err != nil {
+		if l.checkpointPolicy == CheckpointStrict {
+			return fmt.Errorf("checkpoint save failed for session %s step %d: %w",
+				cp.SessionID, cp.StepIndex, err)
+		}
+		log.Printf("[harness] checkpoint save failed, step %d of session %s cannot be resumed: %v",
+			cp.StepIndex, cp.SessionID, err)
+	}
+	return nil
+}
+
+// saveCheckpoint persists one step together with the side-effect ledger.
+func (l *AgentLoop) saveCheckpoint(
+	ctx context.Context,
+	sessionID string,
+	step int,
+	messages []core.Message,
+	ledger []core.ToolCallRecord,
+) error {
+	return l.persistCheckpoint(ctx, &core.Checkpoint{
+		ID:        fmt.Sprintf("%s-step-%d", sessionID, step),
+		SessionID: sessionID,
+		StepIndex: step,
+		Messages:  messages,
+		ToolCalls: ledger,
+		CreatedAt: time.Now().UTC(),
+	})
+}
+
+// saveCompletedCheckpoint records the final answer so a later resume can return
+// it instead of running the session a second time.
+func (l *AgentLoop) saveCompletedCheckpoint(
+	ctx context.Context,
+	sessionID string,
+	step int,
+	messages []core.Message,
+	ledger []core.ToolCallRecord,
+	answer string,
+) error {
+	return l.persistCheckpoint(ctx, &core.Checkpoint{
+		ID:        fmt.Sprintf("%s-step-%d", sessionID, step),
+		SessionID: sessionID,
+		StepIndex: step,
+		Messages:  messages,
+		ToolCalls: ledger,
+		Completed: true,
+		Answer:    answer,
+		CreatedAt: time.Now().UTC(),
+	})
+}
+
+// toolIsIdempotent reports whether replaying a tool is harmless. An unknown tool
+// reports false, so a tool nobody declared is never replayed.
+func (l *AgentLoop) toolIsIdempotent(name string) bool {
+	if l.router == nil {
+		return false
+	}
+	def := l.router.registry.GetTool(name)
+	return def != nil && def.Idempotent
+}
+
 // buildSystemPrompt creates the system prompt including tool descriptions
 // and output format instructions.
 func (l *AgentLoop) buildSystemPrompt() string {
 	base := l.config.SystemPrompt
 	if base == "" {
-		base = `You are an AI agent that helps with video production tasks.
-You can use tools to accomplish tasks. Think step by step.`
+		base = `You are an AI agent that completes tasks with tools.
+Think step by step, and prefer acting over describing.`
 	}
 
 	toolList := l.router.ListTools()

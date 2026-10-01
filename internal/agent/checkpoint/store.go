@@ -10,8 +10,10 @@ import (
 	"github.com/castwell/forge/internal/agent/core"
 )
 
-// InMemoryStore is a test implementation of core.CheckpointStore.
-// TODO(AE-4-deploy): implement PGCheckpointStore with pgxpool (UPSERT + Latest by step_index DESC).
+// InMemoryStore is an in-memory implementation of core.CheckpointStore.
+//
+// It cannot survive its own process, so it is only useful for tests; recovery
+// needs FileStore or PGCheckpointStore.
 type InMemoryStore struct {
 	mu            sync.Mutex
 	checkpoints   map[string]*core.Checkpoint   // id → checkpoint
@@ -76,7 +78,7 @@ func (s *InMemoryStore) Load(ctx context.Context, id string) (*core.Checkpoint, 
 
 	cp, ok := s.checkpoints[id]
 	if !ok {
-		return nil, fmt.Errorf("checkpoint %q not found", id)
+		return nil, fmt.Errorf("checkpoint %q: %w", id, core.ErrNoCheckpoint)
 	}
 	return cp, nil
 }
@@ -88,7 +90,7 @@ func (s *InMemoryStore) Latest(ctx context.Context, sessionID string) (*core.Che
 
 	list := s.sessions[sessionID]
 	if len(list) == 0 {
-		return nil, fmt.Errorf("no checkpoints for session %q", sessionID)
+		return nil, fmt.Errorf("session %q: %w", sessionID, core.ErrNoCheckpoint)
 	}
 
 	// Find highest step_index.

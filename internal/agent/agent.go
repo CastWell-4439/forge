@@ -30,6 +30,10 @@ type Agent struct {
 	Checkpoint  core.CheckpointStore
 	MCP         core.MCPManager
 	Verifier    core.Verifier
+
+	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
+	// Empty keeps the best-effort default.
+	CheckpointFailurePolicy harness.CheckpointFailurePolicy
 }
 
 // Option configures an optional module on the Agent.
@@ -53,6 +57,12 @@ func WithMemory(m core.MemoryStore) Option { return func(a *Agent) { a.Memory = 
 // WithCheckpoint enables M12 state persistence for crash recovery.
 func WithCheckpoint(c core.CheckpointStore) Option { return func(a *Agent) { a.Checkpoint = c } }
 
+// WithCheckpointFailurePolicy makes a failed checkpoint write fail the run.
+// The default is best-effort, where the failure is logged and the run continues.
+func WithCheckpointFailurePolicy(p harness.CheckpointFailurePolicy) Option {
+	return func(a *Agent) { a.CheckpointFailurePolicy = p }
+}
+
 // WithMCP enables M1 MCP tool discovery and invocation.
 func WithMCP(m core.MCPManager) Option { return func(a *Agent) { a.MCP = m } }
 
@@ -72,11 +82,35 @@ func New(llm core.LLMClient, opts ...Option) *Agent {
 }
 
 // Run is the top-level entry point for executing an agent task.
-// It assembles the ToolRouter, AgentLoop, injects all optional modules,
-// starts MCP servers (if configured), and delegates to the ReAct loop.
 //
 // This is the single function external callers (schedulers, API handlers) invoke.
 func (a *Agent) Run(ctx context.Context, sessionID string, userInput string) (*harness.RunResult, error) {
+	loop, stop, err := a.buildLoop(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer stop()
+	return loop.Run(ctx, sessionID, userInput)
+}
+
+// Resume continues a session from its latest checkpoint instead of restarting it.
+// The agent must have been configured with a checkpoint store.
+func (a *Agent) Resume(ctx context.Context, sessionID string) (*harness.RunResult, error) {
+	loop, stop, err := a.buildLoop(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer stop()
+	return loop.Resume(ctx, sessionID)
+}
+
+// buildLoop assembles the ToolRegistry, ToolRouter and AgentLoop, injects the
+// optional modules and starts MCP servers when configured.
+//
+// The returned function releases whatever was started and must be deferred by
+// the caller: stopping MCP before the loop runs would leave the loop without the
+// tools that were just bridged in.
+func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), error) {
 	// 1. Build ToolRegistry with all built-in handlers.
 	registry := workers.NewToolRegistry()
 	cfg := workers.HandlerConfig{
@@ -84,20 +118,23 @@ func (a *Agent) Run(ctx context.Context, sessionID string, userInput string) (*h
 		Workspace: "/tmp/forge-workspace",
 	}
 	if err := workers.RegisterAll(registry, cfg); err != nil {
-		return nil, fmt.Errorf("register tools: %w", err)
+		return nil, nil, fmt.Errorf("register tools: %w", err)
 	}
+
+	stop := func() {}
 
 	// 2. Start MCP servers and bridge their tools into the registry.
 	if a.MCP != nil {
 		if err := a.MCP.Start(ctx); err != nil {
-			return nil, fmt.Errorf("start MCP: %w", err)
+			return nil, nil, fmt.Errorf("start MCP: %w", err)
 		}
-		defer a.MCP.Stop()
+		stop = func() { _ = a.MCP.Stop() }
 
 		if mgr, ok := a.MCP.(*mcp.Manager); ok {
 			bridge := mcp.NewBridge(mgr, registry)
 			if _, err := bridge.Sync(ctx); err != nil {
-				return nil, fmt.Errorf("sync MCP tools: %w", err)
+				stop()
+				return nil, nil, fmt.Errorf("sync MCP tools: %w", err)
 			}
 		}
 	}
@@ -126,6 +163,9 @@ func (a *Agent) Run(ctx context.Context, sessionID string, userInput string) (*h
 	if a.Checkpoint != nil {
 		loop.SetCheckpoint(a.Checkpoint)
 	}
+	if a.CheckpointFailurePolicy != "" {
+		loop.SetCheckpointFailurePolicy(a.CheckpointFailurePolicy)
+	}
 	if a.Memory != nil {
 		loop.SetMemory(a.Memory)
 	}
@@ -133,6 +173,5 @@ func (a *Agent) Run(ctx context.Context, sessionID string, userInput string) (*h
 		loop.SetVerifier(a.Verifier)
 	}
 
-	// 5. Execute the ReAct loop.
-	return loop.Run(ctx, sessionID, userInput)
+	return loop, stop, nil
 }

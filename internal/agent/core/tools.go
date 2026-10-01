@@ -16,9 +16,9 @@ type HandlerFunc func(ctx context.Context, params map[string]interface{}) (map[s
 // The Agent uses these definitions to select tools and validate parameters.
 type ToolDef struct {
 	// Identity
-	Name        string `yaml:"name"`         // Forge handler name, e.g. "ai.face_swap"
-	DisplayName string `yaml:"display_name"` // Human-readable name, e.g. "AI Face Swap"
-	Category    string `yaml:"category"`     // "video" | "audio" | "ai" | "media" | "quality"
+	Name        string `yaml:"name"`         // Forge handler name, e.g. "text.summarize"
+	DisplayName string `yaml:"display_name"` // Human-readable name, e.g. "Text Summarizer"
+	Category    string `yaml:"category"`     // e.g. "ai" | "data" | "media" | "quality"
 
 	// Capability description (consumed by LLM for tool selection)
 	Description string `yaml:"description"`
@@ -37,6 +37,12 @@ type ToolDef struct {
 	// applies its own default: a tool that hangs must not hang the whole run.
 	Timeout      time.Duration `yaml:"timeout"`
 	MaxInputSize int64         `yaml:"max_input_size"`
+
+	// Idempotent marks a tool that can be invoked again without changing the
+	// outcome. Recovery relies on it: after a crash, a tool left mid-invocation
+	// may only be replayed when repeating it is harmless. Unknown tools default
+	// to false, so the safe answer is "do not replay".
+	Idempotent bool `yaml:"idempotent"`
 
 	// Dependency hints for DAG generation
 	TypicalPredecessors []string `yaml:"typical_predecessors"`
