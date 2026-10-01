@@ -32,7 +32,7 @@ const (
 
 // defaultProjectConfig is the per-repository git configuration. projects/*.yaml
 // is the existing convention for it.
-const defaultProjectConfig = "projects/avp_eds.yaml"
+const defaultProjectConfig = "projects/example-project.yaml"
 
 // registerBuiltinHandlers registers every task handler this worker advertises.
 //
