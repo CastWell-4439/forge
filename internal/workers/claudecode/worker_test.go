@@ -3,17 +3,29 @@ package claudecode
 import (
 	"context"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// echoCmd runs echo through the platform shell. The tests were written against
+// `cmd /c`, which only exists on Windows: on Linux CI every test that shells out
+// through this mock failed with `exec: "cmd": executable file not found`. The
+// mock has to be as cross-platform as the production path it stands in for.
+func echoCmd(ctx context.Context, text string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(ctx, "cmd", "/c", "echo "+text)
+	}
+	return exec.CommandContext(ctx, "sh", "-c", "echo "+text)
+}
 
 // mockCmdFactory returns a command factory that simulates git/claude commands.
 func mockCmdFactory(output string) CmdFactory {
 	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		if name == "git" && len(args) > 0 && args[0] == "branch" {
-			return exec.CommandContext(ctx, "cmd", "/c", "echo feature/test-branch")
+			return echoCmd(ctx, "feature/test-branch")
 		}
-		return exec.CommandContext(ctx, "cmd", "/c", "echo "+output)
+		return echoCmd(ctx, output)
 	}
 }
 
@@ -21,9 +33,9 @@ func mockCmdFactory(output string) CmdFactory {
 func mockCmdFactoryWithBranch(branch, claudeOutput string) CmdFactory {
 	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		if name == "git" && len(args) > 0 && args[0] == "branch" {
-			return exec.CommandContext(ctx, "cmd", "/c", "echo "+branch)
+			return echoCmd(ctx, branch)
 		}
-		return exec.CommandContext(ctx, "cmd", "/c", "echo "+claudeOutput)
+		return echoCmd(ctx, claudeOutput)
 	}
 }
 
