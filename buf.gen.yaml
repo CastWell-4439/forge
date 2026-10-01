@@ -1,21 +1,39 @@
 version: v2
+# Managed mode stays ON so that buf keeps injecting the language options the
+# checked-in SDK stubs already carry (java_package, csharp_namespace,
+# php_namespace, ...). Only its go_package_prefix handling is disabled: that
+# derives each file's Go package name from its proto package, so
+# `package forge.v1` and `package forge.workflow.v1` collide as forgev1 /
+# workflowv1 and protoc-gen-go refuses to emit them. With the prefix handling
+# off, the explicit `option go_package` in each .proto is authoritative, which
+# is what lets all four protos coexist.
 managed:
   enabled: true
   disable:
     - file_option: go_package_prefix
-      module: buf.build/googleapis/googleapis
-  override:
-    - file_option: go_package_prefix
-      value: github.com/castwell/forge/api/proto/gen
 plugins:
-  # Go plugins
+  # Go plugins.
+  #
+  # paths=import + module= makes each proto land in the directory named by its
+  # own go_package, which is what keeps the two Go packages apart:
+  #   common/coordinator/worker -> api/proto/gen          (package forgev1, imported as `forgev1`)
+  #   workflow                  -> api/proto/gen/workflowpb (package workflowpb)
+  # workflow.proto must stay separate: it re-declares TaskStatus,
+  # ListWorkflowsRequest/Response and CancelWorkflowRequest/Response, which
+  # already exist in common.proto / coordinator.proto.
   - remote: buf.build/protocolbuffers/go
-    out: api/proto/gen
-    opt: paths=source_relative
+    out: .
+    opt:
+      - paths=import
+      - module=github.com/castwell/forge
   - remote: buf.build/grpc/go
-    out: api/proto/gen
-    opt: paths=source_relative
-  # gRPC-Gateway plugin
+    out: .
+    opt:
+      - paths=import
+      - module=github.com/castwell/forge
+  # gRPC-Gateway plugin does not honour module=, so it uses source_relative.
+  # Only coordinator.proto carries google.api.http annotations, so this emits
+  # exactly api/proto/gen/coordinator.pb.gw.go, alongside its Go package.
   - remote: buf.build/grpc-ecosystem/gateway
     out: api/proto/gen
     opt:

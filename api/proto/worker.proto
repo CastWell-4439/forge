@@ -2,7 +2,8 @@ syntax = "proto3";
 
 package forge.v1;
 
-option go_package = "github.com/castwell/forge/api/proto/gen/forgepb";
+// Shared Go package; see common.proto.
+option go_package = "github.com/castwell/forge/api/proto/gen;forgev1";
 
 import "google/protobuf/timestamp.proto";
 
