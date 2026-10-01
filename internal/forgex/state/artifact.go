@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/google/uuid"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // NewArtifactRecord builds one artifact index record.

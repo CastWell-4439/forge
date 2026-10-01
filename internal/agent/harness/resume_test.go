@@ -7,10 +7,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/workers"
 )
 
 // memoryStore is a minimal CheckpointStore for loop tests. It keeps the newest

@@ -5,8 +5,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/google/uuid"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // BudgetManager builds compact context packs and marks budget pressure.

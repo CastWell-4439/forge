@@ -26,7 +26,8 @@ type Service struct {
 	layout storage.Layout
 }
 
-// Overview is the local workspace summary used by product console entry pages.
+// ControlPlaneSummary is the local workspace summary used by product console
+// entry pages.
 type ControlPlaneSummary struct {
 	Workspace       string            `json:"workspace"`
 	Root            string            `json:"root"`
@@ -170,7 +171,7 @@ func (s *Service) Root() string { return s.root }
 // Layout returns the local artifact layout.
 func (s *Service) Layout() storage.Layout { return s.layout }
 
-// Overview returns a local workspace summary for Product Console.
+// Summary returns a local workspace summary for Product Console.
 func (s *Service) Summary() (ControlPlaneSummary, error) {
 	overview, err := s.Overview()
 	if err != nil {

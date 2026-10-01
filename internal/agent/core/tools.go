@@ -259,8 +259,3 @@ func levenshtein(a, b string) int {
 
 	return prev[n]
 }
-
-// similarityScore is kept for backward compatibility but FindSimilar now uses levenshtein.
-func similarityScore(a, b string) int {
-	return -levenshtein(strings.ToLower(a), strings.ToLower(b))
-}

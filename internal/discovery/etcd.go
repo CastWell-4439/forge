@@ -242,11 +242,9 @@ func (d *EtcdDiscovery) Watch(ctx context.Context, prefix string) (<-chan Event,
 					if err := json.Unmarshal(ev.Kv.Value, &node); err != nil {
 						continue
 					}
-					evtType := EventAdd
+					evtType := EventUpdate
 					if ev.IsCreate() {
 						evtType = EventAdd
-					} else {
-						evtType = EventUpdate
 					}
 					select {
 					case ch <- Event{Type: evtType, Node: node}:

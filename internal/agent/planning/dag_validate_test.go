@@ -3,9 +3,10 @@ package planning
 import (
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/workers"
 )
 
 func TestExtractYAML(t *testing.T) {

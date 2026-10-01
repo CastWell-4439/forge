@@ -3,9 +3,10 @@ package worker
 import (
 	"log"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	forgev1 "github.com/castwell/forge/api/proto/gen"
 )
 
 // Heartbeat implements the WorkerService Heartbeat RPC.

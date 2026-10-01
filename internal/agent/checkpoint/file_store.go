@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -204,19 +203,6 @@ func readCheckpoint(path string) (*core.Checkpoint, error) {
 		return nil, fmt.Errorf("parse checkpoint %s: %w", path, err)
 	}
 	return &cp, nil
-}
-
-// stepIndexFromName extracts the step index a file name encodes.
-func stepIndexFromName(name string) (int, bool) {
-	dash := strings.Index(name, "-")
-	if dash <= 0 {
-		return 0, false
-	}
-	step, err := strconv.Atoi(name[:dash])
-	if err != nil {
-		return 0, false
-	}
-	return step, true
 }
 
 var _ core.CheckpointStore = (*FileStore)(nil)

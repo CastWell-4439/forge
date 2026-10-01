@@ -6,8 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // FileStore persists ForgeX runs to a local filesystem layout.

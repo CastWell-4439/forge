@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 func TestPromoteWritesReviewDraft(t *testing.T) {

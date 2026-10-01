@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"testing"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
-	"github.com/castwell/forge/internal/agent/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+
+	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 // --- Session state machine tests ---

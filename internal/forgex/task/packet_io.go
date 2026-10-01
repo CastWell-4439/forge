@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // LoadPacket reads a TaskPacket YAML file and normalizes compatible aliases.
@@ -49,7 +50,7 @@ func parsePacketYAML(data []byte) (model.TaskPacket, error) {
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return model.TaskPacket{}, err
 	}
-	packet := file.packetYAML.toModel()
+	packet := file.toModel()
 	if packet.ID == "" && packet.Goal == "" {
 		packet = file.TaskPacket.toModel()
 	}

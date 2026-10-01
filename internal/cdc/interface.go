@@ -49,7 +49,7 @@ type SourceConfig struct {
 	SlotName    string // PG-specific
 }
 
-// MatchesFilter checks whether an event passes the configured event type filter.
+// MatchesEvent checks whether an event passes the configured event type filter.
 func (c *SourceConfig) MatchesEvent(event Event) bool {
 	if len(c.Events) == 0 {
 		return true // no filter = match all

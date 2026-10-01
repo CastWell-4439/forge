@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/castwell/forge/internal/forgex/model"
 	forgexstate "github.com/castwell/forge/internal/forgex/state"
-	"gopkg.in/yaml.v3"
 )
 
 // RunContext is the inspectable context state for one ForgeX run.

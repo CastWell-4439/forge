@@ -5,9 +5,10 @@ import (
 	"regexp"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/coordinator"
-	"gopkg.in/yaml.v3"
 )
 
 // ValidationSeverity indicates the severity of a validation issue.

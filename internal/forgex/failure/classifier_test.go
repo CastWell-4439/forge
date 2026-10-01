@@ -4,9 +4,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // taxonomyPath points at the repository's real taxonomy config relative to this
