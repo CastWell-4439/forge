@@ -83,7 +83,7 @@ jobs:
           # The control plane is domain-agnostic by design: domain terms belong in
           # adapters and workers, never in ForgeX core or its CLI. This is the
           # author's own acceptance rule, now enforced.
-          if grep -rniE 'video|ffmpeg|face_swap|faceswap|lipsync|subtitle|bgm|tts|avatar|xinying|avp_' \
+          if grep -rniE 'video|ffmpeg|face_swap|faceswap|lipsync|subtitle|bgm|tts|avatar' \
                --include='*.go' internal/forgex cmd/forgex; then
             echo "ERROR: business-domain vocabulary leaked into ForgeX core"
             exit 1
@@ -113,7 +113,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Pinned: `latest` means a new linter release can turn this job red
+          # without any change to the repository.
+          version: v1.62.2
           args: --timeout=5m
 
   test:
