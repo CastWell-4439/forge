@@ -46,6 +46,17 @@ func (w *Worker) SetDiscovery(d discovery.Discovery) {
 	w.disco = d
 }
 
+// WithRuntimeGate installs a gate that evaluates every task before its handler
+// runs. It returns the worker so it can be used inline at construction, and a nil
+// gate is a no-op, which leaves the worker executing unconditionally.
+func (w *Worker) WithRuntimeGate(gate RuntimeGate) *Worker {
+	if w == nil || gate == nil {
+		return w
+	}
+	w.executor = w.executor.WithRuntimeGate(gate)
+	return w
+}
+
 // Start registers the worker with the coordinator and starts serving gRPC requests.
 func (w *Worker) Start(ctx context.Context) error {
 	// Register with coordinator via direct gRPC (legacy/fallback).

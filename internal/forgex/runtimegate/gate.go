@@ -26,6 +26,10 @@ type Config struct {
 	Reviews    ReviewResolver
 	CreateHITL bool
 	Now        func() time.Time
+
+	// Policy overrides the engine used to decide. When nil the gate builds one
+	// with no rules, which still applies the safe defaults below.
+	Policy *policy.Engine
 }
 
 // Gate is the concrete RuntimeGate adapter used by Forge workers.
@@ -45,7 +49,13 @@ func New(cfg Config) *Gate {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Gate{cfg: cfg, engine: policy.NewEngine(nil)}
+	engine := cfg.Policy
+	if engine == nil {
+		// Safe defaults still apply without rules: a contract whose side effect
+		// reaches outside the workspace is denied below its required authority.
+		engine = policy.NewEngine(nil)
+	}
+	return &Gate{cfg: cfg, engine: engine}
 }
 
 // BeforeExecute evaluates one worker task before the handler is invoked.
@@ -67,6 +77,7 @@ func (g *Gate) BeforeExecute(ctx context.Context, req worker.GateRequest) (worke
 		Action:     gateActionFromPolicy(policyDecision.Action),
 		Scope:      "worker_task",
 		SubjectID:  req.TaskID,
+		ToolName:   req.Handler,
 		Reason:     policyDecision.Reason,
 		Evidence:   []string{policyDecision.ID},
 		Source:     "forge_worker_runtime_gate",
