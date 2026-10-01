@@ -1,9 +1,12 @@
-// Package workers implements agent tool handlers for video production workflows.
-// Each handler corresponds to a Forge Worker handler name (e.g. "ai.face_swap").
+// Package workers implements the agent's tool handlers: the capabilities the
+// ReAct loop can call. The set is domain-agnostic on purpose - it covers the
+// generic work coding agents are given everywhere (files, shell, search, git
+// reads, web, data, asking a human), and carries no product-specific vocabulary.
 // Handlers support two modes: "mock" for testing and "real" for production use.
 package workers
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -20,18 +23,29 @@ const (
 	HandlerModeReal HandlerMode = "real"
 )
 
+// AskUserFunc blocks until a human answers a question. It is the assembly point
+// for interactive tools: the agent layer stays free of any particular approval
+// system, and whoever wires the agent decides where the answer comes from.
+type AskUserFunc func(ctx context.Context, question string, options []string) (string, error)
+
 // HandlerConfig holds configuration for handler creation.
 type HandlerConfig struct {
 	Mode      HandlerMode
 	Workspace string // Base directory for file operations, e.g. "/tmp/forge"
+
+	// AskUser answers ask.user in real mode. When nil the tool reports that no
+	// interactive channel is configured instead of pretending a human replied.
+	AskUser AskUserFunc
 }
 
 // ErrNotConfigured is returned when a real-mode handler is called but the
 // underlying service is not configured. Each handler group documents its
 // required external dependencies:
-//   - ai.*:     LLM/TTS/STT API endpoints (face_swap, lip_sync, tts, script, subtitle_gen)
-//   - ffmpeg.*: FFmpeg binary on PATH or containerized ffmpeg-worker
-//   - media.*:  Object storage (S3/OSS) credentials for upload/download
-//   - video.*:  FFprobe binary + preprocessing pipeline
-//   - quality.*: Quality assessment models (VMAF, SSIM, etc.)
+//   - data.*:        a database DSN
+//   - web.*:         outbound network access
+//   - code.execute:  a code execution sandbox
+//   - ask.user:      an interactive channel (HandlerConfig.AskUser)
+//
+// Handlers with no external dependency - file.*, git.*, shell.run (whitelisted)
+// - are implemented for real mode.
 var ErrNotConfigured = fmt.Errorf("handler not configured: real mode requires external service setup")

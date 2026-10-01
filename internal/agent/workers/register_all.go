@@ -2,47 +2,32 @@ package workers
 
 import "fmt"
 
-// RegisterAll registers all 27 agent tool handlers into the given ToolRegistry.
+// RegisterAll registers all 15 agent tool handlers into the given ToolRegistry.
 // The HandlerConfig controls whether mock or real implementations are used.
+//
+// The set is the generic work every coding agent is given - files, shell, code,
+// git reads, web, data, and one human channel. Domain-specific capabilities
+// belong to the workflow plane's workers, not to this registry.
 func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 	registrations := []struct {
 		def     *ToolDef
 		handler HandlerFunc
 	}{
-		// Media handlers (2)
-		{MediaDownloadDef(), NewMediaDownloadHandler(cfg)},
-		{MediaUploadDef(), NewMediaUploadHandler(cfg)},
-
-		// Video probe/preprocess handlers (2)
-		{VideoProbeDef(), NewVideoProbeHandler(cfg)},
-		{VideoPreprocessDef(), NewVideoPreprocessHandler(cfg)},
-
-		// AI handlers (6)
-		{AIFaceSwapDef(), NewAIFaceSwapHandler(cfg)},
-		{AIMultiFaceSwapDef(), NewAIMultiFaceSwapHandler(cfg)},
-		{AILipSyncDef(), NewAILipSyncHandler(cfg)},
-		{AITTSDef(), NewAITTSHandler(cfg)},
-		{AIScriptDef(), NewAIScriptHandler(cfg)},
-		{AISubtitleGenDef(), NewAISubtitleGenHandler(cfg)},
-
-		// FFmpeg handlers (6)
-		{VideoEncodeDef(), NewVideoEncodeHandler(cfg)},
-		{VideoTrimDef(), NewVideoTrimHandler(cfg)},
-		{VideoConcatDef(), NewVideoConcatHandler(cfg)},
-		{VideoSubtitlesDef(), NewVideoSubtitlesHandler(cfg)},
-		{AudioMixDef(), NewAudioMixHandler(cfg)},
-		{AudioBGMSelectDef(), NewAudioBGMSelectHandler(cfg)},
-
-		// Quality handlers (2)
-		{QualityVideoCheckDef(), NewQualityVideoCheckHandler(cfg)},
-		{QualityFaceCheckDef(), NewQualityFaceCheckHandler(cfg)},
-
-		// --- General-purpose handlers (9) ---
-
-		// File handlers (3)
+		// File handlers (6)
 		{FileReadDef(), NewFileReadHandler(cfg)},
 		{FileWriteDef(), NewFileWriteHandler(cfg)},
 		{FileListDef(), NewFileListHandler(cfg)},
+		{FileEditDef(), NewFileEditHandler(cfg)},
+		{FileGlobDef(), NewFileGlobHandler(cfg)},
+		{FileSearchDef(), NewFileSearchHandler(cfg)},
+
+		// Shell handler (1)
+		{ShellRunDef(), NewShellRunHandler(cfg)},
+
+		// Git handlers (3, read-only)
+		{GitStatusDef(), NewGitStatusHandler(cfg)},
+		{GitLogDef(), NewGitLogHandler(cfg)},
+		{GitDiffDef(), NewGitDiffHandler(cfg)},
 
 		// Web handlers (2)
 		{WebSearchDef(), NewWebSearchHandler(cfg)},
@@ -54,11 +39,8 @@ func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 		// Data handler (1)
 		{DataQueryDef(), NewDataQueryHandler(cfg)},
 
-		// LLM handler (1)
-		{LLMSummarizeDef(), NewLLMSummarizeHandler(cfg)},
-
-		// Image handler (1)
-		{ImageGenerateDef(), NewImageGenerateHandler(cfg)},
+		// Human channel (1)
+		{AskUserDef(), NewAskUserHandler(cfg)},
 	}
 
 	for _, r := range registrations {

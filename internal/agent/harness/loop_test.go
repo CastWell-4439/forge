@@ -200,19 +200,19 @@ func TestAgentLoopOutputGuard(t *testing.T) {
 func TestToolRouterListTools(t *testing.T) {
 	registry := workers.NewToolRegistry()
 	_ = registry.Register(&workers.ToolDef{
-		Name:           "video.probe",
+		Name:           "file.read",
 		Description:    "Probe video metadata",
 		RequiredParams: []string{"path"},
 	}, noopHandler)
 	_ = registry.Register(&workers.ToolDef{
-		Name:        "media.download",
+		Name:        "web.fetch",
 		Description: "Download a file",
 	}, noopHandler)
 
 	router := NewToolRouter(registry)
 	list := router.ListTools()
-	assert.Contains(t, list, "video.probe")
-	assert.Contains(t, list, "media.download")
+	assert.Contains(t, list, "file.read")
+	assert.Contains(t, list, "web.fetch")
 	assert.Contains(t, list, "Required params")
 }
 

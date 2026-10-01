@@ -19,8 +19,7 @@ import (
 	"github.com/castwell/forge/internal/worker"
 )
 
-// TestAgentToolRegistry verifies that all 27 handlers are registered in mock mode.
-// 18 original domain handlers + 9 general-purpose tools (AE-2).
+// TestAgentToolRegistry verifies that all 15 handlers are registered in mock mode.
 func TestAgentToolRegistry(t *testing.T) {
 	registry := agentworkers.NewToolRegistry()
 	cfg := agentworkers.HandlerConfig{
@@ -31,17 +30,17 @@ func TestAgentToolRegistry(t *testing.T) {
 	err := agentworkers.RegisterAll(registry, cfg)
 	require.NoError(t, err)
 
-	assert.Equal(t, 27, registry.Count(), "should have 27 registered tools (18 domain + 9 general)")
+	assert.Equal(t, 15, registry.Count(), "should have 15 registered tools")
 
 	// Verify all expected handler names are present
 	expectedHandlers := []string{
-		"media.download", "media.upload",
-		"video.probe", "video.preprocess",
-		"ai.face_swap", "ai.multi_face_swap", "ai.lip_sync",
-		"ai.tts", "ai.script", "ai.subtitle_gen",
-		"video.encode", "video.trim", "video.concat", "video.subtitles",
-		"audio.mix", "audio.bgm_select",
-		"quality.video_check", "quality.face_check",
+		"file.read", "file.write", "file.list", "file.edit", "file.glob", "file.search",
+		"shell.run",
+		"git.status", "git.log", "git.diff",
+		"web.fetch", "web.search",
+		"code.execute",
+		"data.query",
+		"ask.user",
 	}
 
 	for _, name := range expectedHandlers {
@@ -50,7 +49,7 @@ func TestAgentToolRegistry(t *testing.T) {
 	}
 }
 
-// TestAgentMockHandlers invokes each mock handler individually to verify plausible output.
+// TestAgentMockHandlers invokes every mock handler to verify plausible output.
 func TestAgentMockHandlers(t *testing.T) {
 	registry := agentworkers.NewToolRegistry()
 	cfg := agentworkers.HandlerConfig{
@@ -61,99 +60,36 @@ func TestAgentMockHandlers(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("media.download", func(t *testing.T) {
-		handler := registry.GetHandler("media.download")
-		result, err := handler(ctx, map[string]interface{}{
-			"url": "https://example.com/video.mp4",
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, result["file_path"])
-		assert.Greater(t, result["file_size"].(int64), int64(0))
-	})
+	cases := []struct {
+		name   string
+		params map[string]interface{}
+	}{
+		{"file.read", map[string]interface{}{"path": "main.go"}},
+		{"file.write", map[string]interface{}{"path": "out.txt", "content": "hello"}},
+		{"file.list", map[string]interface{}{"path": "."}},
+		{"file.edit", map[string]interface{}{"path": "main.go", "old_string": "a", "new_string": "b"}},
+		{"file.glob", map[string]interface{}{"pattern": "*.go"}},
+		{"file.search", map[string]interface{}{"pattern": "func"}},
+		{"shell.run", map[string]interface{}{"command": "go test ./..."}},
+		{"git.status", map[string]interface{}{}},
+		{"git.log", map[string]interface{}{"count": 5}},
+		{"git.diff", map[string]interface{}{}},
+		{"web.fetch", map[string]interface{}{"url": "https://example.com"}},
+		{"web.search", map[string]interface{}{"query": "forge"}},
+		{"code.execute", map[string]interface{}{"language": "go", "code": "println(1)"}},
+		{"data.query", map[string]interface{}{"sql": "SELECT 1"}},
+		{"ask.user", map[string]interface{}{"question": "which branch?", "options": []string{"main", "dev"}}},
+	}
 
-	t.Run("media.upload", func(t *testing.T) {
-		handler := registry.GetHandler("media.upload")
-		result, err := handler(ctx, map[string]interface{}{
-			"file_path": "/tmp/forge/test/output/video.mp4",
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := registry.GetHandler(tc.name)
+			require.NotNil(t, handler, "handler %q should be registered", tc.name)
+			result, err := handler(ctx, tc.params)
+			require.NoError(t, err)
+			assert.NotEmpty(t, result, "handler %q should return something", tc.name)
 		})
-		require.NoError(t, err)
-		assert.Contains(t, result["url"].(string), "https://")
-	})
-
-	t.Run("video.probe", func(t *testing.T) {
-		handler := registry.GetHandler("video.probe")
-		result, err := handler(ctx, map[string]interface{}{
-			"video_path": "/tmp/forge/test/input/video.mp4",
-		})
-		require.NoError(t, err)
-		assert.Equal(t, "h264", result["codec"])
-		assert.Equal(t, 1920, result["width"])
-		assert.Equal(t, 1080, result["height"])
-		assert.Equal(t, true, result["decodable"])
-	})
-
-	t.Run("video.preprocess", func(t *testing.T) {
-		handler := registry.GetHandler("video.preprocess")
-		result, err := handler(ctx, map[string]interface{}{
-			"video_path": "/tmp/forge/test/input/video.mp4",
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, result["output_path"])
-	})
-
-	t.Run("ai.face_swap", func(t *testing.T) {
-		handler := registry.GetHandler("ai.face_swap")
-		result, err := handler(ctx, map[string]interface{}{
-			"video_path":      "/tmp/forge/test/input/video.mp4",
-			"face_image_path": "/tmp/forge/test/input/face.jpg",
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, result["output_path"])
-		assert.Greater(t, result["faces_detected"].(int), 0)
-	})
-
-	t.Run("ai.tts", func(t *testing.T) {
-		handler := registry.GetHandler("ai.tts")
-		result, err := handler(ctx, map[string]interface{}{
-			"text":  "Hello world, this is a test.",
-			"voice": "en-US-JennyNeural",
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, result["audio_path"])
-		assert.Greater(t, result["duration"].(float64), 0.0)
-	})
-
-	t.Run("ai.script", func(t *testing.T) {
-		handler := registry.GetHandler("ai.script")
-		result, err := handler(ctx, map[string]interface{}{
-			"topic":            "product demo",
-			"duration_seconds": float64(30),
-		})
-		require.NoError(t, err)
-		assert.NotEmpty(t, result["script_text"])
-		assert.Greater(t, result["word_count"].(int), 0)
-	})
-
-	t.Run("quality.video_check", func(t *testing.T) {
-		handler := registry.GetHandler("quality.video_check")
-		result, err := handler(ctx, map[string]interface{}{
-			"video_path": "/tmp/forge/test/output/video.mp4",
-		})
-		require.NoError(t, err)
-		assert.Equal(t, true, result["pass"])
-		assert.Greater(t, result["score"].(float64), 0.0)
-	})
-
-	t.Run("quality.face_check", func(t *testing.T) {
-		handler := registry.GetHandler("quality.face_check")
-		result, err := handler(ctx, map[string]interface{}{
-			"video_path":      "/tmp/forge/test/output/video.mp4",
-			"face_image_path": "/tmp/forge/test/input/face.jpg",
-		})
-		require.NoError(t, err)
-		assert.Equal(t, true, result["pass"])
-		assert.Greater(t, result["similarity"].(float64), 0.7)
-	})
+	}
 }
 
 // TestAgentDAGEndToEnd submits a 3-task DAG (download -> probe -> preprocess)
@@ -211,33 +147,32 @@ func TestAgentDAGEndToEnd(t *testing.T) {
 	err = coord.RegisterWorker(ctx, "agent-test-worker", workerAddr, allHandlers, 10)
 	require.NoError(t, err)
 
-	// Submit a 3-task linear DAG: download -> probe -> preprocess
+	// Submit a 3-task linear DAG: fetch -> inspect -> publish
 	dagYAML := `
 name: agent-mock-test
 version: 1
 timeout: 60s
 
 tasks:
-  download-video:
-    handler: media.download
+  fetch-source:
+    handler: web.fetch
     params:
-      url: "https://example.com/source.mp4"
-      output_dir: "/tmp/forge/test/input"
+      url: "https://example.com/source.txt"
     timeout: 10s
 
-  probe-video:
-    handler: video.probe
-    depends_on: [download-video]
+  inspect-source:
+    handler: file.read
+    depends_on: [fetch-source]
     params:
-      video_path: "/tmp/forge/test/input/source.mp4"
+      path: "source.txt"
     timeout: 10s
 
-  preprocess-video:
-    handler: video.preprocess
-    depends_on: [probe-video]
+  publish-result:
+    handler: file.write
+    depends_on: [inspect-source]
     params:
-      video_path: "/tmp/forge/test/input/source.mp4"
-      codec: "libx264"
+      path: output/result.txt
+      content: "done"
     timeout: 30s
 `
 

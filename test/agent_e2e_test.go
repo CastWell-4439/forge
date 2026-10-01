@@ -111,24 +111,18 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 	require.NotNil(t, result.DAG)
 
 	dag := result.DAG
-	assert.Equal(t, "face-swap-with-tts", dag.Name)
+	assert.Equal(t, "source-pipeline", dag.Name)
 
 	expectedTasks := []string{
-		"download-source-video",
-		"download-face-image",
-		"probe-video",
-		"preprocess-video",
-		"face-swap",
-		"generate-tts",
-		"select-bgm",
-		"mix-audio",
-		"lip-sync",
-		"generate-subtitles",
-		"add-subtitles",
-		"encode-output",
-		"check-quality",
-		"check-face",
-		"upload",
+		"fetch-source",
+		"fetch-asset",
+		"prepare",
+		"transform",
+		"narrate",
+		"soundtrack",
+		"combine",
+		"annotate",
+		"publish",
 	}
 
 	assert.Len(t, dag.Tasks, len(expectedTasks))
@@ -140,48 +134,40 @@ func TestAgentE2ETemplateFlow(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, "media.download", dag.Tasks["download-source-video"].Handler)
-	assert.Equal(t, "media.download", dag.Tasks["download-face-image"].Handler)
-	assert.Equal(t, "video.probe", dag.Tasks["probe-video"].Handler)
-	assert.Equal(t, "video.preprocess", dag.Tasks["preprocess-video"].Handler)
-	assert.Equal(t, "ai.face_swap", dag.Tasks["face-swap"].Handler)
-	assert.Equal(t, "ai.tts", dag.Tasks["generate-tts"].Handler)
-	assert.Equal(t, "audio.bgm_select", dag.Tasks["select-bgm"].Handler)
-	assert.Equal(t, "audio.mix", dag.Tasks["mix-audio"].Handler)
-	assert.Equal(t, "ai.lip_sync", dag.Tasks["lip-sync"].Handler)
-	assert.Equal(t, "ai.subtitle_gen", dag.Tasks["generate-subtitles"].Handler)
-	assert.Equal(t, "video.subtitles", dag.Tasks["add-subtitles"].Handler)
-	assert.Equal(t, "video.encode", dag.Tasks["encode-output"].Handler)
-	assert.Equal(t, "quality.video_check", dag.Tasks["check-quality"].Handler)
-	assert.Equal(t, "quality.face_check", dag.Tasks["check-face"].Handler)
-	assert.Equal(t, "media.upload", dag.Tasks["upload"].Handler)
+	assert.Equal(t, "web.fetch", dag.Tasks["fetch-source"].Handler)
+	assert.Equal(t, "web.fetch", dag.Tasks["fetch-asset"].Handler)
+	assert.Equal(t, "code.execute", dag.Tasks["prepare"].Handler)
+	assert.Equal(t, "code.execute", dag.Tasks["transform"].Handler)
+	assert.Equal(t, "code.execute", dag.Tasks["narrate"].Handler)
+	assert.Equal(t, "code.execute", dag.Tasks["soundtrack"].Handler)
+	assert.Equal(t, "code.execute", dag.Tasks["combine"].Handler)
+	assert.Equal(t, "code.execute", dag.Tasks["annotate"].Handler)
+	assert.Equal(t, "file.write", dag.Tasks["publish"].Handler)
 
-	assert.Empty(t, dag.Tasks["download-source-video"].DependsOn)
-	assert.Empty(t, dag.Tasks["download-face-image"].DependsOn)
-	assert.Equal(t, []string{"download-source-video"}, dag.Tasks["probe-video"].DependsOn)
+	assert.Empty(t, dag.Tasks["fetch-source"].DependsOn)
+	assert.Empty(t, dag.Tasks["fetch-asset"].DependsOn)
 
-	fsDeps := dag.Tasks["face-swap"].DependsOn
-	assert.Contains(t, fsDeps, "preprocess-video")
-	assert.Contains(t, fsDeps, "download-face-image")
+	prepDeps := dag.Tasks["prepare"].DependsOn
+	assert.Contains(t, prepDeps, "fetch-source")
+	assert.Contains(t, prepDeps, "fetch-asset")
 
-	mixDeps := dag.Tasks["mix-audio"].DependsOn
-	assert.Contains(t, mixDeps, "generate-tts")
-	assert.Contains(t, mixDeps, "select-bgm")
+	combineDeps := dag.Tasks["combine"].DependsOn
+	assert.Contains(t, combineDeps, "narrate")
+	assert.Contains(t, combineDeps, "soundtrack")
 
-	lsDeps := dag.Tasks["lip-sync"].DependsOn
-	assert.Contains(t, lsDeps, "face-swap")
-	assert.Contains(t, lsDeps, "mix-audio")
+	assert.Equal(t, []string{"prepare"}, dag.Tasks["transform"].DependsOn)
+	assert.Equal(t, []string{"combine"}, dag.Tasks["annotate"].DependsOn)
 
-	uploadDeps := dag.Tasks["upload"].DependsOn
-	assert.Contains(t, uploadDeps, "check-quality")
-	assert.Contains(t, uploadDeps, "check-face")
+	publishDeps := dag.Tasks["publish"].DependsOn
+	assert.Contains(t, publishDeps, "transform")
+	assert.Contains(t, publishDeps, "annotate")
 
 	err = dag.Validate()
 	assert.NoError(t, err, "DAG should pass structural validation")
 
 	sorted, err := dag.TopologicalSort()
 	require.NoError(t, err)
-	assert.Len(t, sorted, 15)
+	assert.Len(t, sorted, 9)
 }
 
 // TestAgentE2ELLMFlow tests the pipeline with LLM-generated DAG.
@@ -200,30 +186,32 @@ func TestAgentE2ELLMFlow(t *testing.T) {
 	llmDAG := `name: trim-video
 tasks:
   download:
-    handler: media.download
+    handler: web.fetch
     params:
       url: "https://cdn.example.com/long-video.mp4"
     timeout: 60s
   trim:
-    handler: video.trim
+    handler: file.edit
     params:
-      video_path: "${download.output_path}"
-      start_time: "00:00:05"
-      end_time: "00:00:15"
+      path: "long-video.mp4"
+      old_string: "old"
+      new_string: "new"
     depends_on:
       - download
     timeout: 30s
   encode:
-    handler: video.encode
+    handler: code.execute
     params:
-      video_path: "${trim.output_path}"
+      language: go
+      code: "encode()"
     depends_on:
       - trim
     timeout: 120s
   upload:
-    handler: media.upload
+    handler: file.write
     params:
-      file_path: "${encode.output_path}"
+      path: output/trimmed.txt
+      content: "${encode.stdout}"
     depends_on:
       - encode
     timeout: 120s`
@@ -351,16 +339,16 @@ func TestAgentE2EValidationRoundtrip(t *testing.T) {
 
 	sorted, err := result.DAG.TopologicalSort()
 	require.NoError(t, err)
-	assert.Len(t, sorted, 15)
+	assert.Len(t, sorted, 9)
 
-	downloadIdx := indexOf(sorted, "download-source-video")
-	probeIdx := indexOf(sorted, "probe-video")
-	faceSwapIdx := indexOf(sorted, "face-swap")
-	uploadIdx := indexOf(sorted, "upload")
+	fetchIdx := indexOf(sorted, "fetch-source")
+	prepareIdx := indexOf(sorted, "prepare")
+	transformIdx := indexOf(sorted, "transform")
+	publishIdx := indexOf(sorted, "publish")
 
-	assert.True(t, downloadIdx < probeIdx, "download should precede probe")
-	assert.True(t, probeIdx < faceSwapIdx, "probe should precede face-swap")
-	assert.True(t, faceSwapIdx < uploadIdx, "face-swap should precede upload")
+	assert.True(t, fetchIdx < prepareIdx, "fetch should precede prepare")
+	assert.True(t, prepareIdx < transformIdx, "prepare should precede transform")
+	assert.True(t, transformIdx < publishIdx, "transform should precede publish")
 }
 
 func indexOf(slice []string, item string) int {

@@ -73,7 +73,7 @@ func TestAgentResponseIsTerminal(t *testing.T) {
 func TestAgentResponseIsToolCall(t *testing.T) {
 	resp := &AgentResponse{
 		Thought: "need to probe",
-		Action:  &ToolCallRequest{Name: "video.probe", Params: map[string]interface{}{"path": "/tmp/v.mp4"}},
+		Action:  &ToolCallRequest{Name: "file.read", Params: map[string]interface{}{"path": "/tmp/v.mp4"}},
 	}
 	assert.True(t, resp.IsToolCall())
 	assert.False(t, resp.IsTerminal())
@@ -133,7 +133,7 @@ func TestParseResponseValid(t *testing.T) {
 	}{
 		{
 			name: "tool call",
-			raw:  `{"thought": "I need to probe the video", "action": {"name": "video.probe", "params": {"path": "/tmp/v.mp4"}}}`,
+			raw:  `{"thought": "I need to probe the video", "action": {"name": "file.read", "params": {"path": "/tmp/v.mp4"}}}`,
 		},
 		{
 			name: "answer",
