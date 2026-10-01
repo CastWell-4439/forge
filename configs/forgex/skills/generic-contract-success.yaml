@@ -1,0 +1,35 @@
+apiVersion: forgex/v1
+kind: SkillPack
+metadata:
+    id: generic-contract-success
+    version: 0.1.0
+    status: published
+    review_status: reviewed
+    source_cases:
+        - generic-contract-success
+    source_runs:
+        - run_785b9d87-485d-4015-8813-defdb79b8f4f
+    generated_at: 2026-10-01T12:20:57.7851625Z
+spec:
+    trigger:
+        description: Generic happy path that must pass without lessons.
+    steps:
+        - name: analyze
+          tools:
+            - ai.analyze
+    tool_permissions:
+        - ai.analyze
+    eval:
+        suite: generic_contract_happy_v1
+        cases:
+            - generic-contract-success
+readme: |-
+    ## 通用契约校验成功路径
+
+    **什么时候用**：当一条任务只需走通「参数校验 - 生成 - 结果校验」的正常路径时，
+    且需要一条可信的回归基线。来源是验证过的回放（case generic-contract-success）。
+
+    **步骤**：轨迹里唯一的真实动作是带完整参数的生成调用，五条契约校验全过后继续。
+
+    **约束**：入参必须带齐 required_assets；任何一条校验失败就该停下来，
+    不要盲目重试——失败的根因在参数而不在可用性。
