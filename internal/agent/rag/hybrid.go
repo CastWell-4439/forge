@@ -102,8 +102,7 @@ func (r *HybridRetriever) Search(ctx context.Context, query string, topK int) ([
 	var fused []core.Document
 	mode := "hybrid"
 
-	switch {
-	case r.embedder == nil:
+	if r.embedder == nil {
 		// No query tower at all: BM25 is the whole pipeline, and that is stated,
 		// not hidden behind a fake vector pass.
 		mode = "bm25-only:no-embedder"
@@ -112,7 +111,7 @@ func (r *HybridRetriever) Search(ctx context.Context, query string, topK int) ([
 			return nil, fmt.Errorf("hybrid search: BM25 search: %w", err)
 		}
 		fused = bm25Docs
-	default:
+	} else {
 		embedding, err := r.queryEmbed(ctx, query)
 		if err != nil {
 			// The vector tower is unreachable (no endpoint, timeout): BM25 still
@@ -123,17 +122,17 @@ func (r *HybridRetriever) Search(ctx context.Context, query string, topK int) ([
 				return nil, fmt.Errorf("hybrid search: BM25 search after embed failure (%v): %w", err, bm25Err)
 			}
 			fused = bm25Docs
-			break
+		} else {
+			vectorDocs, err := r.store.VectorSearch(ctx, embedding, topK*2)
+			if err != nil {
+				return nil, fmt.Errorf("hybrid search: vector search: %w", err)
+			}
+			bm25Docs, err := r.store.BM25Search(ctx, query, topK*2)
+			if err != nil {
+				return nil, fmt.Errorf("hybrid search: BM25 search: %w", err)
+			}
+			fused = reciprocalRankFusion(vectorDocs, bm25Docs, r.k)
 		}
-		vectorDocs, err := r.store.VectorSearch(ctx, embedding, topK*2)
-		if err != nil {
-			return nil, fmt.Errorf("hybrid search: vector search: %w", err)
-		}
-		bm25Docs, err := r.store.BM25Search(ctx, query, topK*2)
-		if err != nil {
-			return nil, fmt.Errorf("hybrid search: BM25 search: %w", err)
-		}
-		fused = reciprocalRankFusion(vectorDocs, bm25Docs, r.k)
 	}
 
 	if len(fused) > topK*2 {
