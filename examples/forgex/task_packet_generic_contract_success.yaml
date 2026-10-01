@@ -5,10 +5,16 @@ authority_level: L2
 inputs:
   request_id: demo-req-002
   batch_id: demo-batch-002
+  # What the simulated tool is called with.
   tool_payload:
     required_assets:
       - local://required_asset_0
       - local://required_asset_1
+  # What the simulated tool returns. Declaring a result is what makes the run
+  # validate the contract's required_outputs; a packet without it skips that step,
+  # which is the only difference between this scenario and the violation one.
+  tool_result:
+    result_url: local://generated_result_0
 constraints:
   - demo.expensive_generation must be called with non-empty required_assets.
 success:

@@ -614,7 +614,18 @@ func runRegisteredCase(args []string) error {
 	if err != nil {
 		return err
 	}
-	runID, err := runDemoCase(spec.ID, *root, *taxonomy, *policy, spec.TaskPacket, *contracts, *toolPolicy, *authority)
+	// The case drives the run. The runner reads the tool payload out of the packet
+	// instead of switching on the case id, so a case promoted from a bad case
+	// replays without any code change.
+	runID, err := demo.RunScenario(context.Background(), demo.ScenarioConfig{
+		Root:           *root,
+		TaxonomyPath:   *taxonomy,
+		PolicyPath:     *policy,
+		PacketPath:     spec.TaskPacket,
+		ContractsPath:  *contracts,
+		ToolPolicyPath: *toolPolicy,
+		AuthorityLevel: *authority,
+	})
 	if err != nil {
 		return err
 	}
