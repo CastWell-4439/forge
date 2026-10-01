@@ -10,10 +10,10 @@ import (
 
 func WebSearchDef() *ToolDef {
 	return &ToolDef{
-		Name:           "web.search",
-		DisplayName:    "Web Search",
-		Category:       "web",
-		Description:    "Search the web using a query string. Returns titles, URLs, and snippets.",
+		Name:        "web.search",
+		DisplayName: "Web Search",
+		Category:    "web",
+		Description: "Search the web using a query string. Returns titles, URLs, and snippets.",
 		InputSchema: map[string]ParamDef{
 			"query": {Type: "string", Description: "Search query", Required: true},
 			"count": {Type: "integer", Description: "Number of results (default 5, max 10)"},
@@ -28,10 +28,10 @@ func WebSearchDef() *ToolDef {
 
 func WebFetchDef() *ToolDef {
 	return &ToolDef{
-		Name:           "web.fetch",
-		DisplayName:    "Web Fetch",
-		Category:       "web",
-		Description:    "Fetch and extract readable content from a URL. Returns text/markdown.",
+		Name:        "web.fetch",
+		DisplayName: "Web Fetch",
+		Category:    "web",
+		Description: "Fetch and extract readable content from a URL. Returns text/markdown.",
 		InputSchema: map[string]ParamDef{
 			"url":       {Type: "string", Description: "URL to fetch", Required: true},
 			"max_chars": {Type: "integer", Description: "Max characters to return (default 10000)"},

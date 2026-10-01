@@ -150,6 +150,14 @@ func (s *FileStore) AppendStateClaim(ctx context.Context, claim model.StateClaim
 	return AppendJSONL(s.layout.StateClaimsFile(claim.RunID), claim)
 }
 
+// AppendStateValidation appends one claim validation to state_validations.jsonl.
+func (s *FileStore) AppendStateValidation(ctx context.Context, validation model.StateValidation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return AppendJSONL(s.layout.StateValidationsFile(validation.RunID), validation)
+}
+
 // AppendArtifact appends one artifact record to artifacts.jsonl.
 func (s *FileStore) AppendArtifact(ctx context.Context, artifact model.ArtifactRecord) error {
 	if err := ctx.Err(); err != nil {

@@ -12,10 +12,10 @@ import (
 
 func ImageGenerateDef() *ToolDef {
 	return &ToolDef{
-		Name:           "image.generate",
-		DisplayName:    "Image Generate",
-		Category:       "image",
-		Description:    "Generate an image from a text prompt using an AI model (DALL-E, Stable Diffusion, etc.).",
+		Name:        "image.generate",
+		DisplayName: "Image Generate",
+		Category:    "image",
+		Description: "Generate an image from a text prompt using an AI model (DALL-E, Stable Diffusion, etc.).",
 		InputSchema: map[string]ParamDef{
 			"prompt": {Type: "string", Description: "Text description of the image to generate", Required: true},
 			"width":  {Type: "integer", Description: "Image width in pixels (default 1024)"},

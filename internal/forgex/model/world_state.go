@@ -35,13 +35,16 @@ type StateEntry struct {
 
 // StateClaim records a producer's proposed state update before or after validation.
 type StateClaim struct {
-	ID        string         `json:"id" yaml:"id"`
-	RunID     string         `json:"run_id" yaml:"run_id"`
-	Key       string         `json:"key" yaml:"key"`
-	Value     map[string]any `json:"value" yaml:"value"`
-	Producer  string         `json:"producer" yaml:"producer"`
-	Evidence  []string       `json:"evidence,omitempty" yaml:"evidence,omitempty"`
-	Status    StateStatus    `json:"status" yaml:"status"`
-	Reason    string         `json:"reason,omitempty" yaml:"reason,omitempty"`
-	CreatedAt time.Time      `json:"created_at" yaml:"created_at"`
+	ID       string         `json:"id" yaml:"id"`
+	RunID    string         `json:"run_id" yaml:"run_id"`
+	Key      string         `json:"key" yaml:"key"`
+	Value    map[string]any `json:"value" yaml:"value"`
+	Producer string         `json:"producer" yaml:"producer"`
+	Evidence []string       `json:"evidence,omitempty" yaml:"evidence,omitempty"`
+	Status   StateStatus    `json:"status" yaml:"status"`
+	Reason   string         `json:"reason,omitempty" yaml:"reason,omitempty"`
+	// Scope declares how far the claim applies: global / scene / shot /
+	// agent-local / tentative-only. Empty means unspecified.
+	Scope     string    `json:"scope,omitempty" yaml:"scope,omitempty"`
+	CreatedAt time.Time `json:"created_at" yaml:"created_at"`
 }

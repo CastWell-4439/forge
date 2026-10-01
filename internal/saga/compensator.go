@@ -21,17 +21,17 @@ type DAGView interface {
 
 // CompensationResult records the outcome of a single compensation step.
 type CompensationResult struct {
-	TaskName   string
-	Handler    string
-	Success    bool
-	ErrorMsg   string
+	TaskName string
+	Handler  string
+	Success  bool
+	ErrorMsg string
 }
 
 // CompensationPlan describes what needs to be compensated and in what order.
 type CompensationPlan struct {
-	WorkflowID     string
-	FailedTask     string
-	Steps          []CompensationStep // in reverse topological order
+	WorkflowID string
+	FailedTask string
+	Steps      []CompensationStep // in reverse topological order
 }
 
 // CompensationStep is a single step in a compensation plan.

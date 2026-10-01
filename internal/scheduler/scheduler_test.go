@@ -167,10 +167,10 @@ func TestScheduler_PollAndDedup(t *testing.T) {
 	})
 
 	pt := NewPollTrigger(PollTriggerConfig{
-		Name:     "poll1",
-		Interval: 50 * time.Millisecond,
-		Source:   "test",
-		Query:    "",
+		Name:         "poll1",
+		Interval:     50 * time.Millisecond,
+		Source:       "test",
+		Query:        "",
 		WorkflowName: "wf1",
 		PollFn: func(ctx context.Context, source, query string) ([]Event, error) {
 			callCount.Add(1)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // Embedder generates vector embeddings from text.
@@ -21,8 +22,12 @@ type Embedder interface {
 // LLMEmbedder implements Embedder via an OpenAI-compatible embedding API.
 // TODO(AE-3-deploy): configure baseURL/apiKey from bmc-llm-relay embedding endpoint.
 type LLMEmbedder struct {
-	client  *http.Client
-	baseURL string // e.g. "https://bmc-llm-relay..."
+	client *http.Client
+	// baseURL follows the same convention as harness.LLMConfig.BaseURL and
+	// already includes the API version, e.g. "https://host/v1". This used to
+	// append "/v1/embeddings" while the chat client appended only
+	// "/chat/completions", so at most one of the two could ever be right.
+	baseURL string
 	apiKey  string
 	model   string // e.g. "text-embedding-ada-002"
 }
@@ -74,7 +79,8 @@ func (e *LLMEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float
 		return nil, fmt.Errorf("embedder: marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.baseURL+"/v1/embeddings", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimSuffix(e.baseURL, "/")+"/embeddings", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("embedder: create request: %w", err)
 	}

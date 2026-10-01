@@ -153,7 +153,7 @@ func TestEvaluateSimpleFilter(t *testing.T) {
 	assert.False(t, evaluateSimpleFilter("status = 'completed'", data))
 	assert.True(t, evaluateSimpleFilter("status != 'completed'", data))
 	assert.False(t, evaluateSimpleFilter("status != 'pending'", data))
-	assert.True(t, evaluateSimpleFilter("", data))            // empty filter = pass
+	assert.True(t, evaluateSimpleFilter("", data))               // empty filter = pass
 	assert.False(t, evaluateSimpleFilter("missing = 'x'", data)) // missing field
 }
 

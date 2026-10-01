@@ -105,8 +105,11 @@ func (a *Agent) Run(ctx context.Context, sessionID string, userInput string) (*h
 	// 3. Build the AgentLoop.
 	router := harness.NewToolRouter(registry)
 	loopCfg := harness.LoopConfig{
-		MaxSteps:         a.Config.MaxSteps,
-		MaxContextTokens: 128000,
+		MaxSteps: a.Config.MaxSteps,
+		// There is exactly one context-budget default. This used to be hardcoded
+		// to 128000 while harness.DefaultMaxContextTokens (and every caller that
+		// passes a budget, e.g. workers/ai and workers/review) used 100000.
+		MaxContextTokens: harness.DefaultMaxContextTokens,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 

@@ -67,6 +67,10 @@ type Verifier interface {
 type MCPToolDef struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// InputSchema is the raw JSON Schema the MCP server advertises under
+	// tools/list. Dropping it left bridged tools with no parameter
+	// information, so the model had to guess argument names and types.
+	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
 }
 
 // Checkpoint represents a saved agent state for recovery.

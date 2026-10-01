@@ -89,6 +89,7 @@ credentials.json
 .claude/
 AGENTS.md
 CLAUDE.md
+MEMORY.md
 
 # Proto generated code (regenerable via buf generate)
 api/proto/gen/

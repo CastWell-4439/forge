@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/core"
 	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"

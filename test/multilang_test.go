@@ -232,11 +232,11 @@ tasks:
 	defer mu.Unlock()
 
 	expectedRouting := map[string]string{
-		"data.validate":  "go",
-		"data.transform": "go",
-		"ai.generate":    "python",
-		"ai.summarize":   "python",
-		"video.render":   "cpp",
+		"data.validate":   "go",
+		"data.transform":  "go",
+		"ai.generate":     "python",
+		"ai.summarize":    "python",
+		"video.render":    "cpp",
 		"video.thumbnail": "cpp",
 	}
 

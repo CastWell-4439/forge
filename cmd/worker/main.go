@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -9,12 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/castwell/forge/internal/observability"
 	"github.com/castwell/forge/internal/worker"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -54,49 +51,48 @@ func main() {
 		}
 	}()
 
-	// --- gRPC Client → Coordinator (registration + heartbeat) ---
-	coordAddr := envOrDefault("FORGE_COORDINATOR_ADDR", "localhost:50051")
-	coordConn, err := grpc.NewClient(coordAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("FATAL: connect coordinator %s: %v", coordAddr, err)
-	}
-	defer coordConn.Close()
-	coordClient := forgev1.NewCoordinatorServiceClient(coordConn)
-	_ = coordClient // used for registration + heartbeat
+	// --- Handler registry ---
+	// The registry must never be nil: Worker.ExecuteTask dereferences it on every
+	// dispatched task, so a nil registry panicked the worker on its first task.
+	registry := worker.NewRegistry()
+	registerBuiltinHandlers(registry)
+	log.Printf("INFO: registered handlers: %v", registry.Handlers())
 
-	// --- Worker gRPC Server (receives ExecuteTask RPCs) ---
+	// --- Worker gRPC Server (registers with the Coordinator, then serves ExecuteTask) ---
 	workerID := envOrDefault("FORGE_WORKER_ID", "worker-1")
 	grpcAddr := envOrDefault("FORGE_GRPC_ADDR", ":50052")
+	coordAddr := envOrDefault("FORGE_COORDINATOR_ADDR", "localhost:50051")
 	capacity := 10
 
-	w := worker.NewWorker(workerID, grpcAddr, coordAddr, capacity, nil)
-	grpcLn, err := net.Listen("tcp", grpcAddr)
-	if err != nil {
-		log.Fatalf("FATAL: listen gRPC %s: %v", grpcAddr, err)
-	}
+	w := worker.NewWorker(workerID, grpcAddr, coordAddr, capacity, registry)
 
-	grpcServer := grpc.NewServer()
-	forgev1.RegisterWorkerServiceServer(grpcServer, w)
-	reflection.Register(grpcServer)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	go func() {
-		log.Printf("INFO: gRPC server listening on %s (WorkerService)", grpcAddr)
-		if err := grpcServer.Serve(grpcLn); err != nil {
-			log.Printf("ERROR: gRPC serve: %v", err)
-		}
-	}()
+	startErr := make(chan error, 1)
+	go func() { startErr <- w.Start(ctx) }()
 
 	log.Printf("INFO: forge-worker (%s) ready, coordinator=%s", lang, coordAddr)
 
 	// --- Graceful Shutdown ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	log.Printf("INFO: received %s, shutting down...", sig)
-	grpcServer.GracefulStop()
+
+	select {
+	case sig := <-sigCh:
+		log.Printf("INFO: received %s, shutting down...", sig)
+	case err := <-startErr:
+		if err != nil {
+			log.Printf("ERROR: worker stopped: %v", err)
+		} else {
+			log.Printf("INFO: worker stopped")
+		}
+	}
+
+	cancel()
+	w.Stop()
 	profiler.Stop()
 	httpLn.Close()
-	coordConn.Close()
 	log.Printf("INFO: forge-worker (%s) stopped", lang)
 }
 

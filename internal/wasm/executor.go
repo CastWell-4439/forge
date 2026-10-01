@@ -175,9 +175,9 @@ func ValidateModule(wasmBytes []byte) error {
 // to exercise the orchestration layer without a real Wasm runtime.
 //
 // To integrate wazero:
-//   1. go get github.com/tetratelabs/wazero
-//   2. Replace this function with wazero module instantiation + WASI
-//   3. Input bytes are passed as stdin, output read from stdout
+//  1. go get github.com/tetratelabs/wazero
+//  2. Replace this function with wazero module instantiation + WASI
+//  3. Input bytes are passed as stdin, output read from stdout
 func stubExecute(_ context.Context, _ []byte, input []byte) ([]byte, error) {
 	// Echo input as the result field for testability.
 	if len(input) == 0 {

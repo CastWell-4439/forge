@@ -91,7 +91,7 @@ func mockQualityVideoCheck() HandlerFunc {
 				"actual": 30.0,
 			},
 			"audio_sync": map[string]interface{}{
-				"pass":     true,
+				"pass":      true,
 				"offset_ms": 12,
 			},
 			"file_size": map[string]interface{}{

@@ -3,6 +3,8 @@ package harness
 import (
 	"context"
 	"fmt"
+	"log"
+	"unicode/utf8"
 
 	"github.com/castwell/forge/internal/agent/core"
 )
@@ -91,8 +93,15 @@ func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.M
 
 	summary, err := cm.summarize(ctx, toSummarize)
 	if err != nil {
-		// If summarization fails, just truncate.
-		result := append(systemMsgs, toKeep...)
+		// Summarization failed, so dropping the old turns is the only way back
+		// under budget — but it must not happen silently: the model loses that
+		// context for the rest of the run. Build a fresh slice rather than
+		// appending onto systemMsgs, which would share its backing array.
+		log.Printf("[harness] context summarization failed, dropping %d old messages: %v",
+			len(toSummarize), err)
+		result := make([]core.Message, 0, len(systemMsgs)+len(toKeep))
+		result = append(result, systemMsgs...)
+		result = append(result, toKeep...)
 		return cm.truncateToolResults(result), nil
 	}
 
@@ -111,20 +120,37 @@ func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.M
 	return result, nil
 }
 
-// truncateToolResults scans messages and truncates any tool output that
-// exceeds maxToolResultChars. This prevents a single large tool result
-// from blowing the context window even after compression.
+// truncateToolResults returns a copy of messages with any oversized content
+// truncated. It never mutates the caller's slice: CompactIfNeeded may be
+// handed a slice the caller still holds.
 func (cm *ContextManager) truncateToolResults(messages []core.Message) []core.Message {
-	for i := range messages {
-		if len(messages[i].Content) > maxToolResultChars {
-			truncated := messages[i].Content[:maxToolResultChars]
-			messages[i].Content = truncated + fmt.Sprintf(
-				"\n\n[...truncated, original was %d chars. Ask for specific sections if needed.]",
-				len(messages[i].Content)+len(truncated),
-			)
+	out := make([]core.Message, len(messages))
+	copy(out, messages)
+
+	for i := range out {
+		origLen := len(out[i].Content)
+		if origLen > maxToolResultChars {
+			out[i].Content = truncateAtRuneBoundary(out[i].Content, maxToolResultChars) +
+				fmt.Sprintf(
+					"\n\n[...truncated, original was %d chars. Ask for specific sections if needed.]",
+					origLen,
+				)
 		}
 	}
-	return messages
+	return out
+}
+
+// truncateAtRuneBoundary cuts s to at most limit bytes without splitting a
+// UTF-8 sequence, which a plain byte slice would do for non-ASCII content.
+func truncateAtRuneBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // summarize asks the LLM to compress a series of messages into a brief summary.

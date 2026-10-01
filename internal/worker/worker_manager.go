@@ -10,13 +10,13 @@ import (
 
 // WorkerInfo holds metadata about a registered worker.
 type WorkerInfo struct {
-	ID           unique.Handle[string]
-	Addr         string
-	Capacity     int
-	ActiveTasks  int
-	Handlers     []unique.Handle[string] // deduplicated handler names
-	LastSeen     time.Time
-	Labels       map[string]string
+	ID          unique.Handle[string]
+	Addr        string
+	Capacity    int
+	ActiveTasks int
+	Handlers    []unique.Handle[string] // deduplicated handler names
+	LastSeen    time.Time
+	Labels      map[string]string
 }
 
 // WorkerManager maintains a registry of active workers.

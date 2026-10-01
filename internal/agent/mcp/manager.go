@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 
 	"github.com/castwell/forge/internal/agent/core"
@@ -18,14 +19,20 @@ type ServerConfig struct {
 	Env     []string `json:"env,omitempty"`
 }
 
+// toolEntry records where a discovered tool came from and what it declared.
+type toolEntry struct {
+	server string
+	def    ToolDefinition
+}
+
 // Manager manages multiple MCP server lifecycles.
 // It implements core.MCPManager.
 type Manager struct {
 	configs []ServerConfig
 
 	mu      sync.RWMutex
-	clients map[string]*Client // name -> client
-	tools   map[string]string  // tool name -> server name (for routing)
+	clients map[string]*Client   // name -> client
+	tools   map[string]toolEntry // tool name -> origin + definition
 }
 
 // NewManager creates a Manager with the given server configurations.
@@ -33,7 +40,7 @@ func NewManager(configs []ServerConfig) *Manager {
 	return &Manager{
 		configs: configs,
 		clients: make(map[string]*Client),
-		tools:   make(map[string]string),
+		tools:   make(map[string]toolEntry),
 	}
 }
 
@@ -61,7 +68,7 @@ func (m *Manager) Stop() error {
 		}
 	}
 	m.clients = make(map[string]*Client)
-	m.tools = make(map[string]string)
+	m.tools = make(map[string]toolEntry)
 	return firstErr
 }
 
@@ -70,30 +77,33 @@ func (m *Manager) ListTools(_ context.Context) ([]core.MCPToolDef, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var result []core.MCPToolDef
-	for toolName := range m.tools {
-		// Build a minimal definition. Full schema is used at call time.
+	result := make([]core.MCPToolDef, 0, len(m.tools))
+	for _, entry := range m.tools {
 		result = append(result, core.MCPToolDef{
-			Name:        toolName,
-			Description: "", // Could cache descriptions from discovery
+			Name:        entry.def.Name,
+			Description: entry.def.Description,
+			InputSchema: entry.def.InputSchema,
 		})
 	}
+
+	// Deterministic order keeps the generated tool prompt stable.
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
 }
 
 // CallTool routes a tool call to the correct MCP server.
 func (m *Manager) CallTool(ctx context.Context, name string, params json.RawMessage) (*core.ToolResult, error) {
 	m.mu.RLock()
-	serverName, ok := m.tools[name]
+	entry, ok := m.tools[name]
 	if !ok {
 		m.mu.RUnlock()
 		return &core.ToolResult{Error: fmt.Sprintf("MCP tool %q not found", name)}, nil
 	}
-	client, ok := m.clients[serverName]
+	client, ok := m.clients[entry.server]
 	m.mu.RUnlock()
 
 	if !ok {
-		return &core.ToolResult{Error: fmt.Sprintf("MCP server %q not connected", serverName)}, nil
+		return &core.ToolResult{Error: fmt.Sprintf("MCP server %q not connected", entry.server)}, nil
 	}
 
 	output, err := client.CallTool(ctx, name, params)
@@ -132,7 +142,7 @@ func (m *Manager) startServer(ctx context.Context, cfg ServerConfig) error {
 	m.mu.Lock()
 	m.clients[cfg.Name] = client
 	for _, tool := range tools {
-		m.tools[tool.Name] = cfg.Name
+		m.tools[tool.Name] = toolEntry{server: cfg.Name, def: tool}
 	}
 	m.mu.Unlock()
 

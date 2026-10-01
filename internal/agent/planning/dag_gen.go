@@ -1,4 +1,4 @@
-﻿package planning
+package planning
 
 import (
 	"context"
@@ -186,4 +186,3 @@ tasks:
       - encode
     timeout: 120s`, sourceURL, resolution)
 }
-

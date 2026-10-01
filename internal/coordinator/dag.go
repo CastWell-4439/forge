@@ -46,9 +46,9 @@ type DAG struct {
 
 // rawDAG is the YAML-friendly representation used during parsing.
 type rawDAG struct {
-	Name    string                `yaml:"name"`
-	Version int                   `yaml:"version"`
-	Timeout string                `yaml:"timeout"`
+	Name    string                 `yaml:"name"`
+	Version int                    `yaml:"version"`
+	Timeout string                 `yaml:"timeout"`
 	Tasks   map[string]*rawTaskDef `yaml:"tasks"`
 }
 

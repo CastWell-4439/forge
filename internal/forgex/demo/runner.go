@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,7 +32,13 @@ const (
 	DefaultContractsPath     = "configs/forgex/tool_contracts/generic_tool_contracts.yaml"
 	DefaultToolPolicyPath    = "configs/forgex/policies/safe_default.yaml"
 	DefaultAuthorityLevel    = ""
-	defaultExpensiveTool     = "demo.expensive_generation"
+	// DefaultStateAuthorityPath holds the World State permission rules. The file
+	// carries its own enable switch, so the demo always loads it. It is resolved
+	// beside whichever taxonomy file the caller supplied (see stateAuthorityFileName),
+	// so a caller passing an absolute config directory keeps working.
+	DefaultStateAuthorityPath = "configs/forgex/state_authority.yaml"
+	stateAuthorityFileName    = "state_authority.yaml"
+	defaultExpensiveTool      = "demo.expensive_generation"
 )
 
 // demoInputs bundles the configuration a demo run needs. Loading everything up
@@ -45,6 +52,7 @@ type demoInputs struct {
 	stopPolicy     *stop.PolicyConfig
 	contract       toolgw.ToolContract
 	toolPolicy     *forgexpolicy.Config
+	stateAuthority *forgexstate.AuthorityTable
 }
 
 // loadDemoInputs reads and validates every config file a demo run depends on.
@@ -88,6 +96,10 @@ func loadDemoInputs(taxonomyPath, policyPath, packetPath, contractsPath, toolPol
 	if err != nil {
 		return demoInputs{}, err
 	}
+	stateAuthority, err := forgexstate.LoadAuthority(filepath.Join(filepath.Dir(taxonomyPath), stateAuthorityFileName))
+	if err != nil {
+		return demoInputs{}, err
+	}
 
 	return demoInputs{
 		packet:         packet,
@@ -97,6 +109,7 @@ func loadDemoInputs(taxonomyPath, policyPath, packetPath, contractsPath, toolPol
 		stopPolicy:     stopPolicy,
 		contract:       contract,
 		toolPolicy:     toolPolicy,
+		stateAuthority: stateAuthority,
 	}, nil
 }
 
@@ -236,10 +249,26 @@ func RunGenericContractViolationDemoWithControl(ctx context.Context, root, taxon
 		"reason": "required_assets is empty",
 		"tool":   defaultExpensiveTool,
 	}, []string{missingAssetArtifact.ID, "contract_validations.jsonl"})
+	claim.Scope = forgexstate.ScopeGlobal
 	if err := store.AppendStateClaim(ctx, claim); err != nil {
 		return "", fmt.Errorf("append state claim: %w", err)
 	}
-	worldState := forgexstate.AcceptClaim(model.WorldState{RunID: runID, Version: 1, UpdatedAt: now}, claim)
+	// Move the claim through the Claim -> permission -> validation -> Fact
+	// pipeline rather than writing state directly.
+	outcome := forgexstate.SubmitClaim(ctx, forgexstate.SubmitInput{
+		World:     model.WorldState{RunID: runID, Version: 1, UpdatedAt: now},
+		Actor:     claim.Producer,
+		Claim:     claim,
+		Authority: inputs.stateAuthority,
+		Classify:  func(env model.ErrorEnvelope) model.ErrorEnvelope { return failure.Classify(taxonomy, env) },
+	})
+	if err := persistClaimOutcome(ctx, store, runID, outcome); err != nil {
+		return "", err
+	}
+	if outcome.Rejected {
+		return "", fmt.Errorf("state claim rejected: %s", outcome.Claim.Reason)
+	}
+	worldState := outcome.World
 	if err := store.SaveWorldState(ctx, worldState); err != nil {
 		return "", fmt.Errorf("save world state: %w", err)
 	}
@@ -368,6 +397,24 @@ func RunGenericContractViolationDemoWithControl(ctx context.Context, root, taxon
 
 	// 12. Return the run ID.
 	return runID, nil
+}
+
+// persistClaimOutcome records what the claim pipeline decided, so a rejected claim
+// leaves the same evidence trail as an accepted one.
+func persistClaimOutcome(ctx context.Context, store storage.Store, runID string, outcome forgexstate.SubmitOutcome) error {
+	for _, validation := range outcome.Validations {
+		if err := store.AppendStateValidation(ctx, validation); err != nil {
+			return fmt.Errorf("append state validation: %w", err)
+		}
+	}
+	if outcome.Rejected {
+		envelope := outcome.Envelope
+		envelope.RunID = runID
+		if err := store.AppendError(ctx, envelope); err != nil {
+			return fmt.Errorf("append state rejection: %w", err)
+		}
+	}
+	return nil
 }
 
 func effectiveAuthorityLevel(override string, packet model.TaskPacket) string {

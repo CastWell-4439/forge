@@ -147,7 +147,7 @@ func TestNotifyAndWait(t *testing.T) {
 	result, err := w.Execute(context.Background(), "notify_and_wait", map[string]any{
 		"message":     "Review ready. Acknowledge when done.",
 		"workflow_id": "wf_3",
-		"timeout":    "1h",
+		"timeout":     "1h",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

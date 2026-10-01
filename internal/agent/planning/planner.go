@@ -1,4 +1,4 @@
-﻿// Package planning implements requirement parsing, task planning, and DAG
+// Package planning implements requirement parsing, task planning, and DAG
 // generation for the Agent layer.
 package planning
 
@@ -15,8 +15,8 @@ import (
 // dagYAML is the top-level struct for generating DAG YAML via yaml.Marshal.
 // This replaces the unsafe fmt.Sprintf approach (#6).
 type dagYAML struct {
-	Name  string                   `yaml:"name"`
-	Tasks map[string]taskYAML      `yaml:"tasks"`
+	Name  string              `yaml:"name"`
+	Tasks map[string]taskYAML `yaml:"tasks"`
 }
 
 // taskYAML represents one task in the DAG template.
@@ -35,7 +35,7 @@ type retryYAML struct {
 	InitialInterval string `yaml:"initial_interval"`
 }
 
-// DAGTemplate is a predefined DAG template for common video production
+// DAGTemplate is a predefined DAG template for a recurring task shape
 // scenarios. Strategy A from agent-tech-spec 3.3.
 type DAGTemplate struct {
 	// Name is the template identifier.
@@ -48,7 +48,7 @@ type DAGTemplate struct {
 	Build func(req *core.VideoRequirement) string
 }
 
-// TaskPlanner converts structured VideoRequirements into Forge DAG YAML.
+// TaskPlanner converts a structured requirement into Forge DAG YAML.
 // It uses a two-strategy approach: template matching first, then LLM fallback.
 type TaskPlanner struct {
 	llmClient core.LLMClient
@@ -90,17 +90,22 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *core.VideoRequiremen
 		return "", fmt.Errorf("plan with LLM: marshal requirement: %w", err)
 	}
 
-	systemPrompt := fmt.Sprintf(`你是一个视频处�?DAG 编排专家。根据用户的视频制作需求，生成 Forge DAG YAML�?
-规则�?1. 每个 task 必须指定 handler �?params
+	systemPrompt := fmt.Sprintf(`你是一个 DAG 编排专家。根据下面的任务需求，生成 Forge DAG YAML。
+
+规则：
+1. 每个 task 必须指定 handler 和 params
 2. depends_on 必须引用已存在的 task 名称
-3. 没有依赖�?task 将并行执�?4. DAG 必须包含 name 字段
-5. 每个 task �?handler 必须是以下可�?handler 之一
+3. 没有依赖的 task 将并行执行
+4. DAG 必须包含 name 字段
+5. 每个 task 的 handler 必须是以下可用 handler 之一
 
-可用 handler 列表�?%s
+可用 handler 列表：
+%s
 
-推荐使用�?handler（根据需求分析）�?%s
+推荐使用的 handler（根据需求分析）：
+%s
 
-只输出纯 YAML，不要包�?markdown 代码块或任何解释文字。`, toolsPrompt, strings.Join(selectedTools, ", "))
+只输出纯 YAML，不要包含 markdown 代码块或任何解释文字。`, toolsPrompt, strings.Join(selectedTools, ", "))
 
 	messages := []core.Message{
 		{Role: "system", Content: systemPrompt},
@@ -377,4 +382,3 @@ func buildFaceSwapWithTTS(req *core.VideoRequirement) string {
 	}
 	return string(data)
 }
-

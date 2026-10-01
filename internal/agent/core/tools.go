@@ -33,7 +33,10 @@ type ToolDef struct {
 	// Constraints
 	RequiresGPU   bool          `yaml:"requires_gpu"`
 	EstimatedTime time.Duration `yaml:"estimated_time"`
-	MaxInputSize  int64         `yaml:"max_input_size"`
+	// Timeout bounds a single invocation of this tool. When zero the tool router
+	// applies its own default: a tool that hangs must not hang the whole run.
+	Timeout      time.Duration `yaml:"timeout"`
+	MaxInputSize int64         `yaml:"max_input_size"`
 
 	// Dependency hints for DAG generation
 	TypicalPredecessors []string `yaml:"typical_predecessors"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/castwell/forge/internal/agent/core"
 )
@@ -39,11 +40,15 @@ func (b *Bridge) Sync(ctx context.Context) (int, error) {
 			continue
 		}
 
+		inputSchema, requiredParams := convertInputSchema(tool.InputSchema)
+
 		def := &core.ToolDef{
-			Name:        tool.Name,
-			DisplayName: tool.Name,
-			Category:    "mcp",
-			Description: tool.Description,
+			Name:           tool.Name,
+			DisplayName:    tool.Name,
+			Category:       "mcp",
+			Description:    tool.Description,
+			InputSchema:    inputSchema,
+			RequiredParams: requiredParams,
 		}
 
 		// Create a handler that delegates to the MCP manager.
@@ -57,6 +62,52 @@ func (b *Bridge) Sync(ctx context.Context) (int, error) {
 	}
 
 	return registered, nil
+}
+
+// convertInputSchema turns the JSON Schema an MCP server advertises into the
+// ParamDef map the tool registry expects, preserving types, descriptions and
+// which parameters are required. Required names are sorted so the generated
+// prompt is stable across runs.
+func convertInputSchema(schema map[string]interface{}) (map[string]core.ParamDef, []string) {
+	if len(schema) == 0 {
+		return nil, nil
+	}
+
+	properties, _ := schema["properties"].(map[string]interface{})
+	if len(properties) == 0 {
+		return nil, nil
+	}
+
+	required := make(map[string]bool)
+	if list, ok := schema["required"].([]interface{}); ok {
+		for _, item := range list {
+			if name, ok := item.(string); ok {
+				required[name] = true
+			}
+		}
+	}
+
+	defs := make(map[string]core.ParamDef, len(properties))
+	var requiredNames []string
+	for name, raw := range properties {
+		prop, _ := raw.(map[string]interface{})
+
+		def := core.ParamDef{Required: required[name]}
+		if t, ok := prop["type"].(string); ok {
+			def.Type = t
+		}
+		if d, ok := prop["description"].(string); ok {
+			def.Description = d
+		}
+		defs[name] = def
+
+		if required[name] {
+			requiredNames = append(requiredNames, name)
+		}
+	}
+	sort.Strings(requiredNames)
+
+	return defs, requiredNames
 }
 
 // makeHandler creates a HandlerFunc that calls the named MCP tool via the Manager.
