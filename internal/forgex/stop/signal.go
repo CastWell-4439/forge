@@ -22,6 +22,10 @@ const (
 	SignalSourceHumanInterrupt      SignalSource = "human_interrupt"
 	SignalSourceLLMSuggestedDone    SignalSource = "llm_suggested_done"
 	SignalSourceRetryBudgetExceeded SignalSource = "retry_budget_exhausted"
+	// SignalSourceApprovalRequired covers the design rule "permission/approval
+	// required -> pause": an action is waiting on human approval, so the run is
+	// held rather than terminated.
+	SignalSourceApprovalRequired SignalSource = "approval_required"
 )
 
 // SignalSeverity describes how strongly a signal should influence arbitration.
