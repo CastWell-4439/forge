@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"google.golang.org/grpc"
+
+	forgev1 "github.com/castwell/forge/api/proto/gen"
 )
 
 // ForgeClient wraps the Coordinator gRPC client for agent use.

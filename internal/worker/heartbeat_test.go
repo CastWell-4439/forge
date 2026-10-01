@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	forgev1 "github.com/castwell/forge/api/proto/gen"
 )
 
 func TestHeartbeat_PingPong(t *testing.T) {

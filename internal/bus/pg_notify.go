@@ -37,7 +37,7 @@ func NewPGNotifyBus(pool *pgxpool.Pool) *PGNotifyBus {
 
 // Publish sends a NOTIFY on the given channel with the payload.
 func (b *PGNotifyBus) Publish(ctx context.Context, channel, payload string) error {
-	_, err := b.pool.Exec(ctx, fmt.Sprintf("SELECT pg_notify($1, $2)"), channel, payload)
+	_, err := b.pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	if err != nil {
 		return fmt.Errorf("pg notify channel %s: %w", channel, err)
 	}

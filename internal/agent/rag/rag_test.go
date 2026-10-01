@@ -4,9 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 func TestHybridRetriever_Search(t *testing.T) {

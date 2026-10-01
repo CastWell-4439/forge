@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/castwell/forge/internal/discovery"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/castwell/forge/internal/discovery"
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 )

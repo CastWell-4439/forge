@@ -77,8 +77,8 @@ func (w *Worker) reviewPlan(ctx context.Context, params map[string]any) (string,
 		return "", err
 	}
 
-	context_str := w.retrieveContext(ctx, "code review conventions plan review checklist")
-	prompt := buildReviewPlanPrompt(plan, context_str)
+	contextStr := w.retrieveContext(ctx, "code review conventions plan review checklist")
+	prompt := buildReviewPlanPrompt(plan, contextStr)
 	return w.runReview(ctx, "review_plan", prompt)
 }
 
@@ -90,8 +90,8 @@ func (w *Worker) reviewCode(ctx context.Context, params map[string]any) (string,
 	}
 	planCtx := getOptionalParam(params, "plan_context", "")
 
-	context_str := w.retrieveContext(ctx, "code review standards error handling patterns")
-	prompt := buildReviewCodePrompt(diff, planCtx, context_str)
+	contextStr := w.retrieveContext(ctx, "code review standards error handling patterns")
+	prompt := buildReviewCodePrompt(diff, planCtx, contextStr)
 	return w.runReview(ctx, "review_code", prompt)
 }
 
@@ -102,8 +102,8 @@ func (w *Worker) reviewSecurity(ctx context.Context, params map[string]any) (str
 		return "", err
 	}
 
-	context_str := w.retrieveContext(ctx, "security vulnerabilities injection XSS auth bypass")
-	prompt := buildSecurityReviewPrompt(diff, context_str)
+	contextStr := w.retrieveContext(ctx, "security vulnerabilities injection XSS auth bypass")
+	prompt := buildSecurityReviewPrompt(diff, contextStr)
 	return w.runReview(ctx, "review_security", prompt)
 }
 

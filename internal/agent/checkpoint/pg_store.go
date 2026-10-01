@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/castwell/forge/internal/agent/core"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 // PGCheckpointStore persists checkpoints in the agent_checkpoints table created

@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/castwell/forge/internal/agent/core"
 	"github.com/google/uuid"
+
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 // SessionState represents the current state of an agent session.

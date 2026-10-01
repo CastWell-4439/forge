@@ -10,10 +10,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/castwell/forge/internal/forgex/metrics"
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
+
+	"github.com/castwell/forge/internal/forgex/metrics"
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // IndexedRun is a compact row used by CLI listing and future dashboards.

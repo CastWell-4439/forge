@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	forgexcontext "github.com/castwell/forge/internal/forgex/context"
 	"github.com/castwell/forge/internal/forgex/failure"
 	"github.com/castwell/forge/internal/forgex/lessons"
@@ -17,7 +19,6 @@ import (
 	"github.com/castwell/forge/internal/forgex/storage"
 	"github.com/castwell/forge/internal/forgex/toolgw"
 	"github.com/castwell/forge/internal/forgex/trace"
-	"github.com/google/uuid"
 )
 
 // ScenarioConfig describes one replay of a registered case.

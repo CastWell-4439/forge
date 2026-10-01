@@ -173,7 +173,7 @@ type SubmitOutcome struct {
 	Rejected bool
 }
 
-// Rejected reports whether the claim was refused.
+// WasRejected reports whether the claim was refused.
 func (o SubmitOutcome) WasRejected() bool { return o.Rejected }
 
 // SubmitClaim runs the Claim -> permission -> validation -> Fact pipeline.

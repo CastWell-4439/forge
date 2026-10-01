@@ -7,10 +7,11 @@ import (
 	"strings"
 	"sync/atomic"
 
-	forgev1 "github.com/castwell/forge/api/proto/gen"
-	"github.com/castwell/forge/internal/discovery"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/discovery"
 )
 
 // Worker connects to a Coordinator, registers itself, and serves task execution requests.

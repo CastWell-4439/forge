@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/workers"
 )
 
 // --- Mock LLM for testing ---

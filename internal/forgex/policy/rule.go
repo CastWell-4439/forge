@@ -31,10 +31,10 @@ func (c Condition) matches(input decisionInput) bool {
 	if c.ToolName != "" && strings.TrimSpace(c.ToolName) != input.ToolName {
 		return false
 	}
-	if c.RiskLevel != "" && strings.ToLower(strings.TrimSpace(c.RiskLevel)) != strings.ToLower(input.RiskLevel) {
+	if c.RiskLevel != "" && !strings.EqualFold(strings.TrimSpace(c.RiskLevel), input.RiskLevel) {
 		return false
 	}
-	if c.SideEffect != "" && strings.ToLower(strings.TrimSpace(c.SideEffect)) != strings.ToLower(input.SideEffect) {
+	if c.SideEffect != "" && !strings.EqualFold(strings.TrimSpace(c.SideEffect), input.SideEffect) {
 		return false
 	}
 	if c.ApprovalRequired != nil && *c.ApprovalRequired != input.ApprovalRequired {

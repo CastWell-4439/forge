@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/castwell/forge/internal/forgex/model"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/model"
 )
 
 // badCase is the serialized shape of a ForgeX bad case. It captures enough of a

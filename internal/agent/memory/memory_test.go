@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/rag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/rag"
 )
 
 // --- ShortTerm tests ---

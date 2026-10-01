@@ -112,7 +112,6 @@ type Tracer struct {
 	serviceName string
 	exporter    SpanExporter
 	sampler     float64 // 0.0 to 1.0
-	mu          sync.Mutex
 }
 
 // SpanExporter receives completed spans.

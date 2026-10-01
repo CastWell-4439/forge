@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/castwell/forge/internal/forgex/failure"
 	"github.com/castwell/forge/internal/forgex/model"
-	"gopkg.in/yaml.v3"
 )
 
 // LoadPolicy reads and parses a stop-policy YAML file.

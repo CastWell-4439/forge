@@ -8,10 +8,11 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/workers"
 )
 
 // Regression tests for defects found in review. Each test names the behaviour

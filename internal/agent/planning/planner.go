@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/castwell/forge/internal/agent/core"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 // dagYAML is the top-level struct for generating DAG YAML via yaml.Marshal.

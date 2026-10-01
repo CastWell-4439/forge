@@ -11,6 +11,11 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
+
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/castwell/forge/internal/coordinator"
 	"github.com/castwell/forge/internal/forgex/failure"
@@ -19,10 +24,6 @@ import (
 	"github.com/castwell/forge/internal/forgex/toolgw"
 	"github.com/castwell/forge/internal/observability"
 	"github.com/castwell/forge/internal/storage"
-	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/reflection"
 )
 
 func main() {

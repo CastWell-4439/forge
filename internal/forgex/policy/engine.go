@@ -7,8 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/castwell/forge/internal/forgex/toolgw"
 	"gopkg.in/yaml.v3"
+
+	"github.com/castwell/forge/internal/forgex/toolgw"
 )
 
 var decisionSeq atomic.Uint64

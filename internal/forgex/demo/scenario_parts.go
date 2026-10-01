@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/castwell/forge/internal/forgex/model"
 	"github.com/castwell/forge/internal/forgex/report"
 	forgexstate "github.com/castwell/forge/internal/forgex/state"
 	"github.com/castwell/forge/internal/forgex/storage"
-	"github.com/google/uuid"
 )
 
 // scenarioReportEvidence is the evidence recorded on the final checklist item.
