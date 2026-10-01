@@ -160,7 +160,21 @@ jobs:
           FORGE_PG_DSN: "postgres://forge:forge@localhost:5432/forge_test?sslmode=disable"
           FORGE_REDIS_ADDR: "localhost:6379"
         run: |
-          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          # pipefail so tee cannot swallow the test exit status. The step summary
+          # is server-rendered on the public run page, which is the only place a
+          # failure detail is readable without repository log access.
+          set -o pipefail
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee test-output.log
+          STATUS=$?
+          if [ "$STATUS" -ne 0 ]; then
+            {
+              echo "## Test failures"
+              echo '```'
+              grep -E -A 20 -- '--- FAIL|DATA RACE|^FAIL[[:space:]]' test-output.log | tail -n 500
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$STATUS"
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
