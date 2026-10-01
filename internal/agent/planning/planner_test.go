@@ -35,15 +35,10 @@ func TestTaskPlannerTemplateMatch(t *testing.T) {
 	dagYAML, err := planner.Plan(context.Background(), req)
 	require.NoError(t, err)
 
-	assert.Contains(t, dagYAML, "name: face-swap-with-tts")
-	assert.Contains(t, dagYAML, "handler: ai.face_swap")
-	assert.Contains(t, dagYAML, "handler: ai.tts")
-	assert.Contains(t, dagYAML, "handler: audio.bgm_select")
-	assert.Contains(t, dagYAML, "handler: ai.lip_sync")
-	assert.Contains(t, dagYAML, "handler: video.subtitles")
-	assert.Contains(t, dagYAML, "handler: media.upload")
-	assert.Contains(t, dagYAML, "handler: quality.video_check")
-	assert.Contains(t, dagYAML, "handler: quality.face_check")
+	assert.Contains(t, dagYAML, "name: source-pipeline")
+	assert.Contains(t, dagYAML, "handler: web.fetch")
+	assert.Contains(t, dagYAML, "handler: code.execute")
+	assert.Contains(t, dagYAML, "handler: file.write")
 
 	assert.Contains(t, dagYAML, "https://cdn.example.com/source.mp4")
 	assert.Contains(t, dagYAML, "https://cdn.example.com/face.jpg")
@@ -53,20 +48,23 @@ func TestTaskPlannerTemplateMatch(t *testing.T) {
 func TestTaskPlannerLLMFallback(t *testing.T) {
 	llmDAG := `name: simple-trim
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
       url: "https://example.com/video.mp4"
   trim:
-    handler: video.trim
+    handler: file.edit
     params:
-      start: "00:00:05"
-      end: "00:00:15"
+      path: "sample.txt"
+      old_string: "old"
+      new_string: "new"
     depends_on:
-      - download
-  upload:
-    handler: media.upload
-    params: {}
+      - fetch
+  publish:
+    handler: file.write
+    params:
+      path: output/trimmed.txt
+      content: "${trim.output}"
     depends_on:
       - trim`
 
@@ -85,11 +83,11 @@ tasks:
 	dagYAML, err := planner.Plan(context.Background(), req)
 	require.NoError(t, err)
 	assert.Contains(t, dagYAML, "name: simple-trim")
-	assert.Contains(t, dagYAML, "handler: video.trim")
+	assert.Contains(t, dagYAML, "handler: file.edit")
 }
 
 func TestTaskPlannerLLMFallbackWithMarkdown(t *testing.T) {
-	llmDAG := "```yaml\nname: test-dag\ntasks:\n  t1:\n    handler: media.download\n    params:\n      url: test\n```"
+	llmDAG := "```yaml\nname: test-dag\ntasks:\n  t1:\n    handler: web.fetch\n    params:\n      url: test\n```"
 
 	mock := &mockLLMClient{fallback: llmDAG}
 	registry, err := workers.DefaultRegistry()
@@ -126,11 +124,7 @@ func TestSelectTools(t *testing.T) {
 				SourceVideos: []core.MediaRef{{URL: "test"}},
 			},
 			expected: []string{
-				"media.download", "video.probe", "video.preprocess",
-				"ai.face_swap", "ai.tts", "audio.bgm_select", "audio.mix",
-				"ai.subtitle_gen", "video.subtitles",
-				"video.encode", "media.upload",
-				"quality.video_check", "quality.face_check",
+				"web.fetch", "file.read", "code.execute", "file.write", "shell.run",
 			},
 		},
 		{
@@ -138,8 +132,8 @@ func TestSelectTools(t *testing.T) {
 			req: &core.VideoRequirement{
 				QualityLevel: core.QualityDraft,
 			},
-			expected: []string{"video.encode", "media.upload"},
-			excluded: []string{"ai.face_swap", "ai.tts", "quality.video_check"},
+			expected: []string{"code.execute", "file.write"},
+			excluded: []string{"web.fetch", "file.read", "shell.run"},
 		},
 	}
 
@@ -200,8 +194,8 @@ func TestFixDAG(t *testing.T) {
 	}
 }
 
-func TestFaceSwapWithTTSTemplateMatch(t *testing.T) {
-	tmpl := FaceSwapWithTTSTemplate()
+func TestSourcePipelineTemplateMatch(t *testing.T) {
+	tmpl := SourcePipelineTemplate()
 
 	req := &core.VideoRequirement{
 		FaceSwap:     &core.FaceSwapReq{},
@@ -234,8 +228,8 @@ func TestFaceSwapWithTTSTemplateMatch(t *testing.T) {
 	}))
 }
 
-func TestFaceSwapWithTTSTemplateBuild(t *testing.T) {
-	tmpl := FaceSwapWithTTSTemplate()
+func TestSourcePipelineTemplateBuild(t *testing.T) {
+	tmpl := SourcePipelineTemplate()
 	req := &core.VideoRequirement{
 		FaceSwap: &core.FaceSwapReq{
 			TargetFace: core.MediaRef{URL: "https://face.jpg"},
@@ -251,9 +245,9 @@ func TestFaceSwapWithTTSTemplateBuild(t *testing.T) {
 
 	dagYAML := tmpl.Build(req)
 
-	assert.Contains(t, dagYAML, "name: face-swap-with-tts")
+	assert.Contains(t, dagYAML, "name: source-pipeline")
 	taskCount := strings.Count(dagYAML, "handler:")
-	assert.Equal(t, 15, taskCount)
+	assert.Equal(t, 9, taskCount)
 
 	assert.Contains(t, dagYAML, "https://source.mp4")
 	assert.Contains(t, dagYAML, "https://face.jpg")

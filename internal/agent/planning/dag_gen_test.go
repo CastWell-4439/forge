@@ -36,33 +36,34 @@ func TestDAGGeneratorTemplateStrategy(t *testing.T) {
 	assert.Equal(t, "template", result.Strategy)
 	assert.Equal(t, 0, result.Retries)
 	assert.NotNil(t, result.DAG)
-	assert.Equal(t, "face-swap-with-tts", result.DAG.Name)
-	assert.True(t, len(result.DAG.Tasks) > 10) // template has 15 tasks
+	assert.Equal(t, "source-pipeline", result.DAG.Name)
+	assert.Len(t, result.DAG.Tasks, 9) // fetch x2, prepare, transform, narrate, soundtrack, combine, annotate, publish
 }
 
 func TestDAGGeneratorLLMStrategy(t *testing.T) {
 	validDAG := `name: llm-generated
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
       url: "https://example.com/video.mp4"
     timeout: 60s
-  trim:
-    handler: video.trim
+  edit:
+    handler: file.edit
     params:
-      video_path: "${download.output_path}"
-      start_time: "00:00:05"
-      end_time: "00:00:15"
+      path: "sample.txt"
+      old_string: "old"
+      new_string: "new"
     depends_on:
-      - download
+      - fetch
     timeout: 30s
-  upload:
-    handler: media.upload
+  publish:
+    handler: file.write
     params:
-      file_path: "${trim.output_path}"
+      path: output/result.txt
+      content: "${edit.output}"
     depends_on:
-      - trim
+      - edit
     timeout: 120s`
 
 	mock := &mockLLMClient{fallback: validDAG}
@@ -99,8 +100,8 @@ tasks:
 			// Second attempt: valid.
 			`name: retry-success
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
       url: "test"`,
 		},

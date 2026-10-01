@@ -113,7 +113,7 @@ func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *core.VideoRequi
 
 	reqPrompt := req.ToPromptString()
 
-	systemPrompt := fmt.Sprintf(`你是一个视频处理 DAG 编排专家。根据用户的视频制作需求，生成 Forge DAG YAML。
+	systemPrompt := fmt.Sprintf(`你是一个 DAG 编排专家。根据下面的任务需求，生成 Forge DAG YAML。
 
 ⚠️ 你上一次生成的 DAG 有以下问题：
 %s
@@ -153,7 +153,8 @@ func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *core.VideoRequi
 // operations. This always succeeds but may lose some detail from the
 // original requirement.
 func (g *DAGGenerator) buildFallbackDAG(req *core.VideoRequirement) string {
-	// Build a minimal download -> encode -> upload pipeline.
+	// Fetch the source, run one scripted step over it, publish the result -
+	// the smallest pipeline every requirement can answer to.
 	sourceURL := "input"
 	if len(req.SourceVideos) > 0 {
 		sourceURL = req.SourceVideos[0].URL
@@ -165,24 +166,25 @@ func (g *DAGGenerator) buildFallbackDAG(req *core.VideoRequirement) string {
 
 	return fmt.Sprintf(`name: fallback-pipeline
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
-      url: "%s"
+      url: %q
     timeout: 60s
-  encode:
-    handler: video.encode
+  process:
+    handler: code.execute
     params:
-      resolution: "%s"
-      codec: h264
-      format: mp4
+      language: go
+      code: 'process(source=%q, resolution=%q)'
     depends_on:
-      - download
+      - fetch
     timeout: 300s
-  upload:
-    handler: media.upload
-    params: {}
+  publish:
+    handler: file.write
+    params:
+      path: output/result.txt
+      content: "${process.stdout}"
     depends_on:
-      - encode
-    timeout: 120s`, sourceURL, resolution)
+      - process
+    timeout: 120s`, sourceURL, sourceURL, resolution)
 }

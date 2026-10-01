@@ -18,27 +18,27 @@ func TestExtractYAML(t *testing.T) {
 	}{
 		{
 			name:     "plain YAML",
-			input:    "name: test\ntasks:\n  t1:\n    handler: media.download",
+			input:    "name: test\ntasks:\n  t1:\n    handler: web.fetch",
 			contains: "name: test",
 		},
 		{
 			name:     "markdown yaml fence",
-			input:    "```yaml\nname: test\ntasks:\n  t1:\n    handler: media.download\n```",
+			input:    "```yaml\nname: test\ntasks:\n  t1:\n    handler: web.fetch\n```",
 			contains: "name: test",
 		},
 		{
 			name:     "markdown generic fence",
-			input:    "```\nname: test\ntasks:\n  t1:\n    handler: media.download\n```",
+			input:    "```\nname: test\ntasks:\n  t1:\n    handler: web.fetch\n```",
 			contains: "name: test",
 		},
 		{
 			name:     "leading text",
-			input:    "Here is the DAG:\nname: test\ntasks:\n  t1:\n    handler: media.download",
+			input:    "Here is the DAG:\nname: test\ntasks:\n  t1:\n    handler: web.fetch",
 			contains: "name: test",
 		},
 		{
 			name:     "tabs to spaces",
-			input:    "name: test\ntasks:\n\tt1:\n\t\thandler: media.download",
+			input:    "name: test\ntasks:\n\tt1:\n\t\thandler: web.fetch",
 			contains: "name: test",
 		},
 		{
@@ -70,13 +70,14 @@ func TestValidateSchemaValid(t *testing.T) {
 	yamlStr := `name: test-dag
 tasks:
   download:
-    handler: media.download
+    handler: web.fetch
     params:
       url: "https://example.com/video.mp4"
   encode:
-    handler: video.encode
+    handler: code.execute
     params:
-      resolution: "1080p"
+      language: go
+      code: "transform()"
     depends_on:
       - download`
 
@@ -90,7 +91,7 @@ tasks:
 func TestValidateSchemaMissingName(t *testing.T) {
 	yamlStr := `tasks:
   download:
-    handler: media.download`
+    handler: web.fetch`
 
 	dag, issues := validateSchema(yamlStr)
 	assert.Nil(t, dag)
@@ -134,29 +135,31 @@ func TestDAGValidatorFullPipeline(t *testing.T) {
 
 	yamlStr := `name: valid-pipeline
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
       url: "https://example.com/video.mp4"
     timeout: 60s
-  probe:
-    handler: video.probe
+  inspect:
+    handler: file.read
     params:
-      video_path: "/tmp/video.mp4"
+      path: "/tmp/video.mp4"
     depends_on:
-      - download
-  encode:
-    handler: video.encode
+      - fetch
+  transform:
+    handler: code.execute
     params:
-      video_path: "/tmp/video.mp4"
+      language: go
+      code: "transform()"
     depends_on:
-      - probe
-  upload:
-    handler: media.upload
+      - inspect
+  publish:
+    handler: file.write
     params:
-      file_path: "/tmp/output.mp4"
+      path: "/tmp/output.txt"
+      content: "${transform.stdout}"
     depends_on:
-      - encode`
+      - transform`
 
 	result := validator.Validate(yamlStr)
 	assert.True(t, result.Valid, "expected valid but got issues: %v", result.Issues)
@@ -171,15 +174,15 @@ func TestDAGValidatorL3UnknownHandler(t *testing.T) {
 
 	yamlStr := `name: bad-handler
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
       url: "test"
   magic:
     handler: ai.magic_transform
     params: {}
     depends_on:
-      - download`
+      - fetch`
 
 	result := validator.Validate(yamlStr)
 	assert.False(t, result.Valid)
@@ -203,20 +206,22 @@ func TestDAGValidatorL3CycleDetection(t *testing.T) {
 	yamlStr := `name: cycle-dag
 tasks:
   a:
-    handler: media.download
+    handler: web.fetch
     params:
       url: "test"
     depends_on:
       - c
   b:
-    handler: video.probe
-    params: {}
+    handler: file.read
+    params:
+      path: "sample.txt"
     depends_on:
       - a
   c:
-    handler: video.encode
+    handler: code.execute
     params:
-      resolution: "1080p"
+      language: go
+      code: "transform()"
     depends_on:
       - b`
 
@@ -237,11 +242,11 @@ func TestDAGValidatorL4MissingRequiredParam(t *testing.T) {
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
-	// media.download requires "url" param.
+	// web.fetch requires the "url" param.
 	yamlStr := `name: missing-param
 tasks:
   download:
-    handler: media.download
+    handler: web.fetch
     params: {}`
 
 	result := validator.Validate(yamlStr)
@@ -264,8 +269,8 @@ func TestDAGValidatorL4UnknownParam(t *testing.T) {
 
 	yamlStr := `name: unknown-param
 tasks:
-  download:
-    handler: media.download
+  fetch:
+    handler: web.fetch
     params:
       url: "https://example.com/video.mp4"
       nonexistent_param: "value"`
@@ -288,7 +293,7 @@ func TestDAGValidatorMarkdownWrapped(t *testing.T) {
 	require.NoError(t, err)
 	validator := NewDAGValidator(registry)
 
-	yamlStr := "```yaml\nname: wrapped\ntasks:\n  download:\n    handler: media.download\n    params:\n      url: \"test\"\n```"
+	yamlStr := "```yaml\nname: wrapped\ntasks:\n  download:\n    handler: web.fetch\n    params:\n      url: \"test\"\n```"
 
 	result := validator.Validate(yamlStr)
 	assert.True(t, result.Valid, "issues: %v", result.Issues)
@@ -304,7 +309,7 @@ func TestValidateRaw(t *testing.T) {
 	validYAML := `name: test
 tasks:
   download:
-    handler: media.download
+    handler: web.fetch
     params:
       url: "test"`
 
