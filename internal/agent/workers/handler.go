@@ -8,6 +8,8 @@ package workers
 import (
 	"context"
 	"fmt"
+
+	"github.com/castwell/forge/internal/agent/core"
 )
 
 // HandlerFunc is now defined in core/tools.go for dependency direction compliance.
@@ -40,16 +42,22 @@ type HandlerConfig struct {
 	// LoadSkill loads a published SkillPack for skill.activate. When nil the
 	// tool reports that no skill store is wired instead of inventing one.
 	LoadSkill LoadSkillFunc
+
+	// Retriever backs knowledge.search. When nil the tool reports that no
+	// knowledge base is wired instead of returning empty results that would
+	// look like "nothing exists".
+	Retriever core.Retriever
 }
 
 // ErrNotConfigured is returned when a real-mode handler is called but the
 // underlying service is not configured. Each handler group documents its
 // required external dependencies:
-//   - data.*:         a database DSN
-//   - web.*:          outbound network access
-//   - code.execute:   a code execution sandbox
-//   - ask.user:       an interactive channel (HandlerConfig.AskUser)
-//   - skill.activate: a skill store (HandlerConfig.LoadSkill)
+//   - data.*:          a database DSN
+//   - web.*:           outbound network access
+//   - code.execute:    a code execution sandbox
+//   - ask.user:        an interactive channel (HandlerConfig.AskUser)
+//   - skill.activate:  a skill store (HandlerConfig.LoadSkill)
+//   - knowledge.search: a knowledge base (HandlerConfig.Retriever)
 //
 // Handlers with no external dependency - file.*, git.*, shell.run (whitelisted)
 // - are implemented for real mode.

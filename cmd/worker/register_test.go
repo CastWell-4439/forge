@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/worker"
 )
 
@@ -88,5 +91,40 @@ func TestWorkflowWorkersCoverTheDocumentedSet(t *testing.T) {
 		if !registered[want] {
 			t.Errorf("worker %q is not registered", want)
 		}
+	}
+}
+
+// TestKnowledgeStackIsUsable exercises the review worker's retrieval pipeline
+// end to end with no endpoints configured: index a document, search it back,
+// and confirm the pipeline reports its honest mode (BM25-only) instead of
+// pretending a vector pass happened.
+func TestKnowledgeStackIsUsable(t *testing.T) {
+	t.Setenv(envKnowledgeDir, t.TempDir())
+	t.Setenv("FORGE_EMBEDDING_BASE_URL", "")
+	t.Setenv("FORGE_LLM_BASE_URL", "")
+	t.Setenv("FORGE_RERANK_ENDPOINT", "")
+
+	ctx := context.Background()
+	stack := buildKnowledgeStack()
+	if stack == nil {
+		t.Fatal("buildKnowledgeStack must always return a usable retriever")
+	}
+
+	docs := []core.Document{{ID: "d1", Content: "release checklist for the forge build"}}
+	if err := stack.Index(ctx, docs); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	hits, err := stack.Search(ctx, "release", 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) == 0 || hits[0].ID != "d1" {
+		t.Fatalf("hits = %+v, want the indexed document back", hits)
+	}
+
+	mode := stack.SearchMode()
+	if !strings.HasPrefix(mode, "bm25-only") {
+		t.Errorf("mode = %q, want the documented BM25-only degrade", mode)
 	}
 }

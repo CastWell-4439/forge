@@ -1,14 +1,47 @@
 package workers
 
-import "fmt"
+import (
+	"context"
+	"fmt"
 
-// RegisterAll registers all 16 agent tool handlers into the given ToolRegistry.
+	"github.com/castwell/forge/internal/agent/rag"
+)
+
+// knowledgeSearchHandler wires knowledge.search to the configured retriever.
+// Mock mode answers with a canned hit so the capability is exercisable without
+// infrastructure; real mode without a retriever reports the gap instead of
+// returning an empty result set that would read as "the knowledge base has no
+// answers".
+func knowledgeSearchHandler(cfg HandlerConfig) HandlerFunc {
+	if cfg.Retriever != nil {
+		return rag.NewKnowledgeSearchHandler(cfg.Retriever)
+	}
+	if cfg.Mode == HandlerModeMock {
+		return func(_ context.Context, params map[string]interface{}) (map[string]interface{}, error) {
+			query, _ := params["query"].(string)
+			if query == "" {
+				return nil, fmt.Errorf("knowledge.search: missing required param 'query'")
+			}
+			return map[string]interface{}{
+				"results": []map[string]interface{}{
+					{"id": "mock-1", "content": "[mock knowledge] " + query, "score": 1.0},
+				},
+				"mode": "mock",
+			}, nil
+		}
+	}
+	return func(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
+		return nil, fmt.Errorf("knowledge.search: %w (no retriever in HandlerConfig)", ErrNotConfigured)
+	}
+}
+
+// RegisterAll registers all 17 agent tool handlers into the given ToolRegistry.
 // The HandlerConfig controls whether mock or real implementations are used.
 //
 // The set is the generic work every coding agent is given - files, shell, code,
-// git reads, web, data - plus one human channel and one skill channel.
-// Domain-specific capabilities belong to the workflow plane's workers, not to
-// this registry.
+// git reads, web, data - plus one human channel, one skill channel and one
+// knowledge channel. Domain-specific capabilities belong to the workflow
+// plane's workers, not to this registry.
 func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 	registrations := []struct {
 		def     *ToolDef
@@ -45,6 +78,9 @@ func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 
 		// Skill channel (1)
 		{SkillActivateDef(), NewSkillActivateHandler(cfg)},
+
+		// Knowledge channel (1)
+		{rag.KnowledgeSearchDef(), knowledgeSearchHandler(cfg)},
 	}
 
 	for _, r := range registrations {
