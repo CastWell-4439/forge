@@ -29,9 +29,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          version: "1.73.0"
+      # go install resolves buf through the Go module proxy. The setup action
+      # instead queries the GitHub releases API, which rate-limits shared
+      # runner IPs and fails a job before any test runs.
+      - name: Install buf
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.73.0
       - name: Generate protobuf code
         run: buf generate
       - name: gofmt must be clean
@@ -105,9 +107,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          version: "1.73.0"
+      # go install resolves buf through the Go module proxy. The setup action
+      # instead queries the GitHub releases API, which rate-limits shared
+      # runner IPs and fails a job before any test runs.
+      - name: Install buf
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.73.0
       - name: Generate protobuf code
         run: buf generate
       - name: golangci-lint
@@ -155,9 +159,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          version: "1.73.0"
+      # go install resolves buf through the Go module proxy. The setup action
+      # instead queries the GitHub releases API, which rate-limits shared
+      # runner IPs and fails a job before any test runs.
+      - name: Install buf
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.73.0
       - name: Generate protobuf code
         run: buf generate
       - name: Run tests
@@ -216,9 +222,11 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-      - uses: bufbuild/buf-setup-action@v1
-        with:
-          version: "1.73.0"
+      # go install resolves buf through the Go module proxy. The setup action
+      # instead queries the GitHub releases API, which rate-limits shared
+      # runner IPs and fails a job before any test runs.
+      - name: Install buf
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.73.0
       - name: Generate protobuf code
         run: buf generate
       - name: Build binaries
