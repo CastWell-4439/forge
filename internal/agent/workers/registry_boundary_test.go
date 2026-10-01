@@ -10,33 +10,26 @@ import (
 // reach. Adding a tool to RegisterAll without updating this list fails the test,
 // so the agent's capability surface can only grow deliberately.
 //
+// The set is domain-agnostic: generic work a coding agent is given everywhere
+// (files, shell, code, git reads, web, data) plus one human channel. Product
+// vocabulary never re-enters this list - domain capabilities belong to the
+// workflow plane's workers.
+//
 // Keep this sorted: the test compares sorted slices.
 var goldenAgentTools = []string{
-	"ai.face_swap",
-	"ai.lip_sync",
-	"ai.multi_face_swap",
-	"ai.script",
-	"ai.subtitle_gen",
-	"ai.tts",
-	"audio.bgm_select",
-	"audio.mix",
+	"ask.user",
 	"code.execute",
 	"data.query",
+	"file.edit",
+	"file.glob",
 	"file.list",
 	"file.read",
+	"file.search",
 	"file.write",
-	"image.generate",
-	"llm.summarize",
-	"media.download",
-	"media.upload",
-	"quality.face_check",
-	"quality.video_check",
-	"video.concat",
-	"video.encode",
-	"video.preprocess",
-	"video.probe",
-	"video.subtitles",
-	"video.trim",
+	"git.diff",
+	"git.log",
+	"git.status",
+	"shell.run",
 	"web.fetch",
 	"web.search",
 }

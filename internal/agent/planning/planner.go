@@ -123,58 +123,46 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *core.VideoRequiremen
 
 // selectTools analyzes the requirement and returns a list of recommended
 // handler names that should be used in the DAG.
+//
+// The mapping is deliberately generic - sources are fetched, material is
+// inspected, every transformation is a scripted step, the result is written out
+// and checked. Which requirement block triggers which recommendation still keys
+// off VideoRequirement until that type goes domain-neutral (A.11).
 func (p *TaskPlanner) selectTools(req *core.VideoRequirement) []string {
 	var selected []string
+	seen := make(map[string]bool)
+	add := func(names ...string) {
+		for _, name := range names {
+			if !seen[name] {
+				seen[name] = true
+				selected = append(selected, name)
+			}
+		}
+	}
 
-	// Source material handling: always need download.
+	// Source material handling: fetch it.
 	if len(req.SourceVideos) > 0 || len(req.SourceImages) > 0 || len(req.SourceAudios) > 0 {
-		selected = append(selected, "media.download")
+		add("web.fetch")
 	}
 
-	// Video processing: probe and preprocess are almost always needed.
+	// Video sources get inspected before anything runs against them.
 	if len(req.SourceVideos) > 0 {
-		selected = append(selected, "video.probe", "video.preprocess")
+		add("file.read")
 	}
 
-	// Face swap.
-	if req.FaceSwap != nil {
-		selected = append(selected, "ai.face_swap")
+	// Every transformation block - face work, lip sync, narration, script,
+	// soundtrack, subtitles - is one scripted step in the neutral vocabulary.
+	if req.FaceSwap != nil || req.LipSync != nil || req.TTS != nil ||
+		req.Script != nil || req.BGM != nil || req.Subtitles != nil {
+		add("code.execute")
 	}
 
-	// Lip sync.
-	if req.LipSync != nil {
-		selected = append(selected, "ai.lip_sync")
-	}
+	// The result always gets published.
+	add("code.execute", "file.write")
 
-	// TTS.
-	if req.TTS != nil {
-		selected = append(selected, "ai.tts")
-	}
-
-	// Script generation.
-	if req.Script != nil {
-		selected = append(selected, "ai.script")
-	}
-
-	// BGM.
-	if req.BGM != nil {
-		selected = append(selected, "audio.bgm_select", "audio.mix")
-	}
-
-	// Subtitles.
-	if req.Subtitles != nil {
-		selected = append(selected, "ai.subtitle_gen", "video.subtitles")
-	}
-
-	// Encoding and upload are almost always needed.
-	selected = append(selected, "video.encode", "media.upload")
-
-	// Quality checks based on quality level.
+	// Quality levels are checked by running a checker, not by a dedicated tool.
 	if req.QualityLevel == core.QualityStandard || req.QualityLevel == core.QualityPremium {
-		selected = append(selected, "quality.video_check")
-	}
-	if req.FaceSwap != nil && (req.QualityLevel == core.QualityStandard || req.QualityLevel == core.QualityPremium) {
-		selected = append(selected, "quality.face_check")
+		add("shell.run")
 	}
 
 	return selected
@@ -204,16 +192,21 @@ func (p *TaskPlanner) fixDAG(raw string) string {
 // defaultTemplates returns the built-in DAG templates.
 func defaultTemplates() []DAGTemplate {
 	return []DAGTemplate{
-		FaceSwapWithTTSTemplate(),
+		SourcePipelineTemplate(),
 	}
 }
 
-// FaceSwapWithTTSTemplate returns a DAG template for the common face-swap
-// with TTS, BGM, and subtitles scenario. From agent-tech-spec 3.3.
-func FaceSwapWithTTSTemplate() DAGTemplate {
+// SourcePipelineTemplate returns the DAG template for a requirement that
+// specifies all of its processing blocks: fetch the sources, run the scripted
+// transform steps, publish the result.
+//
+// The match still keys off the requirement's feature blocks because the
+// requirement type is VideoRequirement until the domain profile moves out
+// (A.11); the built YAML itself uses only domain-neutral handlers.
+func SourcePipelineTemplate() DAGTemplate {
 	return DAGTemplate{
-		Name:        "face_swap_with_tts",
-		Description: "Face swap video with TTS narration, BGM, and subtitles",
+		Name:        "source_pipeline",
+		Description: "Fetch sources, transform them with scripted steps, publish the result",
 		Match: func(req *core.VideoRequirement) bool {
 			return req.FaceSwap != nil &&
 				req.TTS != nil &&
@@ -221,12 +214,15 @@ func FaceSwapWithTTSTemplate() DAGTemplate {
 				req.Subtitles != nil &&
 				len(req.SourceVideos) > 0
 		},
-		Build: buildFaceSwapWithTTS,
+		Build: buildSourcePipeline,
 	}
 }
 
-// buildFaceSwapWithTTS generates DAG YAML using struct + yaml.Marshal (#6 fix).
-func buildFaceSwapWithTTS(req *core.VideoRequirement) string {
+// buildSourcePipeline generates DAG YAML using struct + yaml.Marshal (#6 fix).
+// Requirement values (narration text, soundtrack style, resolution, ...) travel
+// as data inside the scripted steps, so the YAML stays readable from the
+// requirement alone.
+func buildSourcePipeline(req *core.VideoRequirement) string {
 	sourceURL := ""
 	if len(req.SourceVideos) > 0 {
 		sourceURL = req.SourceVideos[0].URL
@@ -261,116 +257,69 @@ func buildFaceSwapWithTTS(req *core.VideoRequirement) string {
 	if resolution == "" {
 		resolution = "1080p"
 	}
+	subLang := ""
+	if req.Subtitles != nil {
+		subLang = req.Subtitles.Language
+	}
 
 	dag := dagYAML{
-		Name: "face-swap-with-tts",
+		Name: "source-pipeline",
 		Tasks: map[string]taskYAML{
-			"download-source-video": {
-				Handler: "media.download",
+			"fetch-source": {
+				Handler: "web.fetch",
 				Params:  map[string]interface{}{"url": sourceURL},
 				Timeout: "60s",
 			},
-			"download-face-image": {
-				Handler: "media.download",
+			"fetch-asset": {
+				Handler: "web.fetch",
 				Params:  map[string]interface{}{"url": faceURL},
 				Timeout: "60s",
 			},
-			"probe-video": {
-				Handler:   "video.probe",
-				Params:    map[string]interface{}{"video_path": "${download-source-video.output_path}"},
-				DependsOn: []string{"download-source-video"},
-				Timeout:   "10s",
+			"prepare": {
+				Handler:   "code.execute",
+				Params:    map[string]interface{}{"language": "go", "code": fmt.Sprintf("prepare(source=%q, asset=%q)", sourceURL, faceURL)},
+				DependsOn: []string{"fetch-source", "fetch-asset"},
+				Timeout:   "60s",
 			},
-			"preprocess-video": {
-				Handler:   "video.preprocess",
-				Params:    map[string]interface{}{"video_path": "${probe-video.video_path}"},
-				DependsOn: []string{"probe-video"},
-				Timeout:   "300s",
-			},
-			"face-swap": {
-				Handler: "ai.face_swap",
-				Params: map[string]interface{}{
-					"video_path":      "${preprocess-video.output_path}",
-					"face_image_path": "${download-face-image.output_path}",
-					"face_index":      0,
-				},
-				DependsOn: []string{"preprocess-video", "download-face-image"},
+			"transform": {
+				Handler:   "code.execute",
+				Params:    map[string]interface{}{"language": "go", "code": fmt.Sprintf("transform(source=%q, resolution=%q)", sourceURL, resolution)},
+				DependsOn: []string{"prepare"},
 				Timeout:   "600s",
 				Retry:     &retryYAML{MaxAttempts: 2, Backoff: "exponential", InitialInterval: "10s"},
 			},
-			"generate-tts": {
-				Handler: "ai.tts",
-				Params:  map[string]interface{}{"text": ttsText, "voice": ttsVoice, "language": ttsLang},
+			"narrate": {
+				Handler: "code.execute",
+				Params: map[string]interface{}{
+					"language": "go",
+					"code":     fmt.Sprintf("narrate(text=%q, voice=%q, language=%q)", ttsText, ttsVoice, ttsLang),
+				},
 				Timeout: "60s",
 			},
-			"select-bgm": {
-				Handler: "audio.bgm_select",
-				Params:  map[string]interface{}{"style": bgmStyle},
+			"soundtrack": {
+				Handler: "code.execute",
+				Params: map[string]interface{}{
+					"language": "go",
+					"code":     fmt.Sprintf("soundtrack(style=%q, volume=%.2f)", bgmStyle, bgmVolume),
+				},
 				Timeout: "30s",
 			},
-			"mix-audio": {
-				Handler: "audio.mix",
-				Params: map[string]interface{}{
-					"audio_paths": []string{"${generate-tts.output_path}", "${select-bgm.output_path}"},
-					"bgm_volume":  bgmVolume,
-				},
-				DependsOn: []string{"generate-tts", "select-bgm"},
+			"combine": {
+				Handler:   "code.execute",
+				Params:    map[string]interface{}{"language": "go", "code": "combine(narrate.output, soundtrack.output)"},
+				DependsOn: []string{"narrate", "soundtrack"},
 				Timeout:   "60s",
 			},
-			"lip-sync": {
-				Handler: "ai.lip_sync",
-				Params: map[string]interface{}{
-					"video_path": "${face-swap.output_path}",
-					"audio_path": "${mix-audio.output_path}",
-				},
-				DependsOn: []string{"face-swap", "mix-audio"},
-				Timeout:   "300s",
-			},
-			"generate-subtitles": {
-				Handler:   "ai.subtitle_gen",
-				Params:    map[string]interface{}{"media_path": "${mix-audio.output_path}"},
-				DependsOn: []string{"mix-audio"},
+			"annotate": {
+				Handler:   "code.execute",
+				Params:    map[string]interface{}{"language": "go", "code": fmt.Sprintf("annotate(combine.output, language=%q)", subLang)},
+				DependsOn: []string{"combine"},
 				Timeout:   "120s",
 			},
-			"add-subtitles": {
-				Handler: "video.subtitles",
-				Params: map[string]interface{}{
-					"video_path":    "${lip-sync.output_path}",
-					"subtitle_path": "${generate-subtitles.output_path}",
-				},
-				DependsOn: []string{"lip-sync", "generate-subtitles"},
-				Timeout:   "60s",
-			},
-			"encode-output": {
-				Handler: "video.encode",
-				Params: map[string]interface{}{
-					"video_path": "${add-subtitles.output_path}",
-					"resolution": resolution,
-					"codec":      "h264",
-					"format":     "mp4",
-				},
-				DependsOn: []string{"add-subtitles"},
-				Timeout:   "300s",
-			},
-			"check-quality": {
-				Handler:   "quality.video_check",
-				Params:    map[string]interface{}{"video_path": "${encode-output.output_path}"},
-				DependsOn: []string{"encode-output"},
-				Timeout:   "30s",
-			},
-			"check-face": {
-				Handler: "quality.face_check",
-				Params: map[string]interface{}{
-					"video_path":      "${encode-output.output_path}",
-					"face_image_path": "${download-face-image.output_path}",
-				},
-				DependsOn: []string{"encode-output", "download-face-image"},
-				Timeout:   "30s",
-			},
-			"upload": {
-				Handler:   "media.upload",
-				Params:    map[string]interface{}{"file_path": "${encode-output.output_path}"},
-				DependsOn: []string{"check-quality", "check-face"},
+			"publish": {
+				Handler:   "file.write",
+				Params:    map[string]interface{}{"path": "output/result.txt", "content": "${transform.stdout}"},
+				DependsOn: []string{"transform", "annotate"},
 				Timeout:   "120s",
 			},
 		},
