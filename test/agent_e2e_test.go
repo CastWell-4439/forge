@@ -4,12 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/planning"
 	"github.com/castwell/forge/internal/agent/session"
 	"github.com/castwell/forge/internal/agent/workers"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // mockLLMForE2E returns predefined responses for the full agent pipeline.
