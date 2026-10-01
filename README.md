@@ -88,6 +88,7 @@
 | **分布式协调** | etcd Leader 选举 + 服务发现 + NATS JetStream 消息总线 |
 | **可观测性** | Prometheus 指标 + OpenTelemetry 链路追踪 + eBPF 内核追踪 + 连续 Profiling |
 | **多语言 SDK** | Go（原生）+ Python SDK + C++ SDK |
+| **Admin Dashboard** | React + Vite + Ant Design + D3.js，DAG 可视化与管理界面 |
 | **生产就绪部署** | Helm Chart + Docker 多阶段构建 + K8s Gateway API + Kueue GPU 调度 |
 
 ---
@@ -279,10 +280,10 @@ Forge 的核心调度单元是 DAG。每个工作流被编译为 DAG，由 Coord
 | **MCP** | `MCPManager` | Model Context Protocol 工具协议——JSON-RPC 2.0 双向通信，stdio/HTTP 双传输层，动态发现工具 |
 | **Harness** | `AgentLoop` | ReAct 循环 + LLM Client（OpenAI 兼容 + 重试 + TokenUsage 统计）+ Context Window 管理 |
 | **RAG** | `Retriever` | 混合检索——向量余弦相似度 + BM25 + RRF (Reciprocal Rank Fusion) 融合排序 |
-| **Memory** | `MemoryStore` | 短期记忆（TTL）+ 长期记忆（基于 RAG DocumentStore 接口，可接 pgvector） |
+| **Memory** | `MemoryStore` | 短期记忆（TTL）+ 长期记忆（pgvector 语义搜索，复用 RAG 的 Embedder + DocumentStore） |
 | **Guardrails** | `InputGuard` / `OutputGuard` / `BudgetChecker` | 注入检测 + 敏感信息脱敏 + Session 级 Token 预算 |
 | **Structured** | `SchemaGenerator` / `Validator` | Go struct → JSON Schema（反射生成）+ 响应校验 + 失败自动重试 |
-| **Checkpoint** | `CheckpointStore` | Agent 状态快照（Messages + StepIndex）→ Save / Load / Latest |
+| **Checkpoint** | `CheckpointStore` | Agent 状态快照（Messages + StepIndex）持久化，崩溃后从最近快照续跑 |
 
 #### 四层 DAG 校验 (`internal/agent/planning/`)
 
@@ -412,7 +413,7 @@ Step1 ✅ → Step2 ✅ → Step3 ❌
 ### Cron 调度与时间轮
 
 - **Cron 调度器**：标准 5 字段表达式解析 + 下次触发时间计算 + 分布式锁去重
-- **4 层层级时间轮**：O(1) 添加/取消定时器，到期自动级联降层
+- **4 层层级时间轮**：O(1) 添加/取消定时器，毫秒级精度，到期自动级联降层
 
 ```
 Layer 0: 1ms  精度
