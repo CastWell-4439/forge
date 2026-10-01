@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/harness"
 	"github.com/castwell/forge/internal/forgex/cases"
 	"github.com/castwell/forge/internal/forgex/demo"
 	"github.com/castwell/forge/internal/forgex/skillpack"
-	"gopkg.in/yaml.v3"
 )
 
 const defaultSkillsDir = "configs/forgex/skills"
