@@ -10,8 +10,8 @@ import (
 var ErrBudgetExceeded = fmt.Errorf("token budget exceeded")
 
 // BudgetEnforcer tracks per-session token consumption and enforces limits.
-// Production version would use Redis; this implementation is in-memory for testing.
-// TODO(AE-4-deploy): implement Redis-backed BudgetEnforcer with TTL 24h.
+// It is process-local: budgets are scoped to the lifetime of the run, not to a
+// shared service, which is why an in-memory map is the whole implementation.
 type BudgetEnforcer struct {
 	mu           sync.Mutex
 	usage        map[string]int64 // session_id → total tokens consumed

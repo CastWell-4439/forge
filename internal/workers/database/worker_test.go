@@ -21,30 +21,11 @@ func (m *mockPGConnector) Query(ctx context.Context, dsn, sql string, args []any
 }
 func (m *mockPGConnector) Close() error { return nil }
 
-type mockRedisConnector struct {
-	getFn  func(ctx context.Context, addr, password string, db int, key string) (string, error)
-	keysFn func(ctx context.Context, addr, password string, db int, pattern string) ([]string, error)
-}
-
-func (m *mockRedisConnector) Get(ctx context.Context, addr, password string, db int, key string) (string, error) {
-	if m.getFn != nil {
-		return m.getFn(ctx, addr, password, db, key)
-	}
-	return "mock_value", nil
-}
-func (m *mockRedisConnector) Keys(ctx context.Context, addr, password string, db int, pattern string) ([]string, error) {
-	if m.keysFn != nil {
-		return m.keysFn(ctx, addr, password, db, pattern)
-	}
-	return []string{"key1", "key2"}, nil
-}
-func (m *mockRedisConnector) Close() error { return nil }
-
 // --- Tests ---
 
 func TestQueryPG_SelectOnly(t *testing.T) {
 	cfg := &Config{Postgres: &PGConfig{Host: "localhost", DB: "test", User: "test"}}
-	w := NewWorker(cfg, &mockPGConnector{}, nil)
+	w := NewWorker(cfg, &mockPGConnector{})
 
 	result, err := w.Execute(context.Background(), "query_pg", map[string]any{
 		"sql": "SELECT id, name FROM users WHERE active = true",
@@ -63,7 +44,7 @@ func TestQueryPG_SelectOnly(t *testing.T) {
 
 func TestQueryPG_RejectInsert(t *testing.T) {
 	cfg := &Config{Postgres: &PGConfig{Host: "localhost", DB: "test", User: "test"}}
-	w := NewWorker(cfg, &mockPGConnector{}, nil)
+	w := NewWorker(cfg, &mockPGConnector{})
 
 	_, err := w.Execute(context.Background(), "query_pg", map[string]any{
 		"sql": "INSERT INTO users (name) VALUES ('hacker')",
@@ -78,7 +59,7 @@ func TestQueryPG_RejectInsert(t *testing.T) {
 
 func TestQueryPG_RejectSelectWithDrop(t *testing.T) {
 	cfg := &Config{Postgres: &PGConfig{Host: "localhost", DB: "test", User: "test"}}
-	w := NewWorker(cfg, &mockPGConnector{}, nil)
+	w := NewWorker(cfg, &mockPGConnector{})
 
 	_, err := w.Execute(context.Background(), "query_pg", map[string]any{
 		"sql": "SELECT 1; DROP TABLE users;--",
@@ -100,7 +81,7 @@ func TestQueryPG_AutoLimit(t *testing.T) {
 			return &QueryResult{Columns: []string{"id"}, Rows: [][]any{{1}}, RowCount: 1}, nil
 		},
 	}
-	w := NewWorker(cfg, pg, nil)
+	w := NewWorker(cfg, pg)
 
 	_, err := w.Execute(context.Background(), "query_pg", map[string]any{
 		"sql": "SELECT id FROM tasks",
@@ -115,7 +96,7 @@ func TestQueryPG_AutoLimit(t *testing.T) {
 
 func TestQueryPG_EmptySQL(t *testing.T) {
 	cfg := &Config{Postgres: &PGConfig{Host: "localhost", DB: "test", User: "test"}}
-	w := NewWorker(cfg, &mockPGConnector{}, nil)
+	w := NewWorker(cfg, &mockPGConnector{})
 
 	_, err := w.Execute(context.Background(), "query_pg", map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "'sql' parameter required") {
@@ -124,7 +105,7 @@ func TestQueryPG_EmptySQL(t *testing.T) {
 }
 
 func TestQueryPG_NoPGConfig(t *testing.T) {
-	w := NewWorker(&Config{}, &mockPGConnector{}, nil)
+	w := NewWorker(&Config{}, &mockPGConnector{})
 
 	_, err := w.Execute(context.Background(), "query_pg", map[string]any{"sql": "SELECT 1"})
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
@@ -132,65 +113,8 @@ func TestQueryPG_NoPGConfig(t *testing.T) {
 	}
 }
 
-func TestQueryRedis_Get(t *testing.T) {
-	cfg := &Config{Redis: &RedisConfig{Host: "localhost", Port: 6379, DB: 0}}
-	w := NewWorker(cfg, nil, &mockRedisConnector{})
-
-	result, err := w.Execute(context.Background(), "query_redis", map[string]any{
-		"command": "GET",
-		"key":     "session:abc",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "mock_value") {
-		t.Errorf("expected mock_value in result, got: %s", result)
-	}
-}
-
-func TestQueryRedis_Keys(t *testing.T) {
-	cfg := &Config{Redis: &RedisConfig{Host: "localhost", Port: 6379, DB: 0}}
-	w := NewWorker(cfg, nil, &mockRedisConnector{})
-
-	result, err := w.Execute(context.Background(), "query_redis", map[string]any{
-		"command": "KEYS",
-		"pattern": "session:*",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "key1") {
-		t.Errorf("expected key1 in result, got: %s", result)
-	}
-}
-
-func TestQueryRedis_ForbiddenCommand(t *testing.T) {
-	cfg := &Config{Redis: &RedisConfig{Host: "localhost", Port: 6379, DB: 0}}
-	w := NewWorker(cfg, nil, &mockRedisConnector{})
-
-	_, err := w.Execute(context.Background(), "query_redis", map[string]any{
-		"command": "DEL",
-		"key":     "important",
-	})
-	if err == nil || !strings.Contains(err.Error(), "not allowed") {
-		t.Errorf("expected not allowed error, got: %v", err)
-	}
-}
-
-func TestQueryRedis_GetMissingKey(t *testing.T) {
-	cfg := &Config{Redis: &RedisConfig{Host: "localhost", Port: 6379, DB: 0}}
-	w := NewWorker(cfg, nil, &mockRedisConnector{})
-
-	_, err := w.Execute(context.Background(), "query_redis", map[string]any{
-		"command": "GET",
-	})
-	if err == nil || !strings.Contains(err.Error(), "'key' required") {
-		t.Errorf("expected key required error, got: %v", err)
-	}
-}
-
 func TestUnknownAction(t *testing.T) {
-	w := NewWorker(&Config{}, nil, nil)
+	w := NewWorker(&Config{}, nil)
 	_, err := w.Execute(context.Background(), "drop_all", map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "unknown action") {
 		t.Errorf("expected unknown action error, got: %v", err)

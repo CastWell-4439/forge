@@ -21,11 +21,11 @@ type TriggerConfig struct {
 
 // TriggerSource defines the CDC source in a trigger configuration.
 type TriggerSource struct {
-	Type    string   `yaml:"type"` // "postgres", "redis", etc.
+	Type    string   `yaml:"type"` // "postgres", "mysql", etc.
 	Table   string   `yaml:"table"`
 	Events  []string `yaml:"events"`  // ["INSERT", "UPDATE", "DELETE"]
 	Filter  string   `yaml:"filter"`  // SQL-like filter
-	Pattern string   `yaml:"pattern"` // Redis key pattern
+	Pattern string   `yaml:"pattern"` // source-side match pattern
 }
 
 // TriggerSet is a collection of trigger configurations parsed from YAML.

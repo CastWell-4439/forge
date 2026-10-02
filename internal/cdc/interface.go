@@ -29,7 +29,7 @@ type Event struct {
 }
 
 // Source defines the interface for CDC data sources.
-// Each implementation (PG, MySQL, Redis, Kafka) must implement this interface.
+// Each implementation (PG, MySQL, Kafka) must implement this interface.
 type Source interface {
 	// Subscribe starts listening for data changes and calls handler for each event.
 	// It blocks until ctx is cancelled or an error occurs.
@@ -41,7 +41,7 @@ type Source interface {
 
 // SourceConfig is the common configuration for CDC sources.
 type SourceConfig struct {
-	Type        string // "postgres", "mysql", "redis", "kafka"
+	Type        string // "postgres", "mysql", "kafka"
 	Table       string
 	Events      []Operation
 	Filter      string // SQL-like filter expression

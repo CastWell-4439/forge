@@ -1,6 +1,6 @@
 // Package cache — NATSKVHeartbeat implements Worker heartbeat storage using NATS KV Store.
-// It replaces Redis for heartbeat tracking with zero additional infrastructure
-// (NATS JetStream provides KV Store as a built-in feature).
+// Heartbeats live in the NATS KV Store because JetStream ships one: no extra
+// infrastructure beyond the NATS cluster the system already requires.
 package cache
 
 import (

@@ -32,8 +32,8 @@ func NewContentFilter() *ContentFilter {
 		// Connection strings with passwords.
 		{regexp.MustCompile(`(?i)://[^:]+:([^@\s]{8,})@`), "://[user]:[REDACTED]@"},
 		// Private IP ranges (optional, warn rather than redact).
-		// Internal hostnames (*.domob-inc.com, *.domob-inc.cn).
-		{regexp.MustCompile(`[a-zA-Z0-9\-]+\.domob-inc\.(com|cn)(:[0-9]+)?`), "[REDACTED:internal_host]"},
+		// Internal hostnames (*.internal, *.corp, *.local, *.intranet).
+		{regexp.MustCompile(`[a-zA-Z0-9\-]+\.(internal|corp|local|intranet)(\.[a-z]{2,})?(:[0-9]+)?`), "[REDACTED:internal_host]"},
 	}
 
 	return &ContentFilter{rules: rules}

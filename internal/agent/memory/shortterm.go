@@ -3,8 +3,6 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -12,7 +10,9 @@ import (
 )
 
 // ShortTermMemory stores ephemeral per-session data.
-// Production uses Redis; InMemoryShortTerm is for testing.
+// InMemoryShortTerm is the only implementation: short-term memory is
+// process-local by design, and anything meant to survive a restart belongs in
+// the checkpoint or the long-term store instead.
 type ShortTermMemory interface {
 	Save(ctx context.Context, sessionID, key string, value any) error
 	Get(ctx context.Context, sessionID, key string) (any, error)
@@ -71,51 +71,8 @@ func (m *InMemoryShortTerm) GetAll(_ context.Context, sessionID string) (map[str
 	return result, nil
 }
 
-// RedisShortTerm is the production implementation using Redis.
-// Key format: forge:memory:short:{session_id}:{key}
-// TODO(AE-3-deploy): inject real redis.Client, implement Save/Get/GetAll with TTL.
-type RedisShortTerm struct {
-	// redis client would go here; placeholder for now.
-	prefix string
-	ttl    time.Duration
-}
-
-// NewRedisShortTerm creates a Redis-backed short-term memory (stub).
-func NewRedisShortTerm(prefix string, ttl time.Duration) *RedisShortTerm {
-	return &RedisShortTerm{prefix: prefix, ttl: ttl}
-}
-
-func (r *RedisShortTerm) Save(_ context.Context, _, _ string, _ any) error {
-	return fmt.Errorf("RedisShortTerm: not yet connected to Redis")
-}
-
-func (r *RedisShortTerm) Get(_ context.Context, _, _ string) (any, error) {
-	return nil, fmt.Errorf("RedisShortTerm: not yet connected to Redis")
-}
-
-func (r *RedisShortTerm) GetAll(_ context.Context, _ string) (map[string]any, error) {
-	return nil, fmt.Errorf("RedisShortTerm: not yet connected to Redis")
-}
-
-// --- JSON serialization helpers for Redis ---
-
-func marshalValue(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-func unmarshalValue(data []byte) (any, error) {
-	var v any
-	err := json.Unmarshal(data, &v)
-	return v, err
-}
-
 // ensure InMemoryShortTerm satisfies ShortTermMemory
 var _ ShortTermMemory = (*InMemoryShortTerm)(nil)
-var _ ShortTermMemory = (*RedisShortTerm)(nil)
-
-// Ensure unused imports don't cause errors.
-var _ = marshalValue
-var _ = unmarshalValue
 
 // --- core.MemoryStore adapter ---
 
