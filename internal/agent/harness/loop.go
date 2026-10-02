@@ -60,6 +60,9 @@ type AgentLoop struct {
 	// checkpointPolicy decides whether a failed checkpoint write is fatal.
 	checkpointPolicy CheckpointFailurePolicy
 
+	// effectPolicy decides what a failed budget/guard/verifier/memory write means.
+	effectPolicy EffectFailurePolicy
+
 	// memoryJudge decides whether a finished run is worth remembering; nil
 	// means the default gate (see SetMemoryWriteJudge).
 	memoryJudge MemoryWriteJudge
@@ -91,6 +94,12 @@ func (l *AgentLoop) SetCheckpoint(c core.CheckpointStore) { l.checkpoint = c }
 // The zero value keeps the best-effort behaviour.
 func (l *AgentLoop) SetCheckpointFailurePolicy(p CheckpointFailurePolicy) {
 	l.checkpointPolicy = p
+}
+
+// SetEffectFailurePolicy decides what a failed budget/guard/verifier/memory
+// write does. The zero value keeps the best-effort behaviour.
+func (l *AgentLoop) SetEffectFailurePolicy(p EffectFailurePolicy) {
+	l.effectPolicy = p
 }
 
 // SetMemory enables M5 memory.
@@ -138,6 +147,28 @@ const (
 	// CheckpointStrict fails the run instead. A run that cannot be recovered
 	// should not report success, which is what a caller depending on resume needs.
 	CheckpointStrict CheckpointFailurePolicy = "strict"
+)
+
+// EffectFailurePolicy decides what a failed safety effect means. Four effects
+// used to log and carry on: budget accounting, the output guard, the verifier
+// and long-term memory writes. Continuing is right for enhancements, but it
+// makes a control that stopped working indistinguishable from one that is
+// holding, so a caller who depends on the control can ask to be told.
+type EffectFailurePolicy string
+
+const (
+	// EffectBestEffort logs the failure and continues: the historical
+	// behaviour, kept as the default so existing callers see no change.
+	EffectBestEffort EffectFailurePolicy = "best_effort"
+	// EffectStrict fails the run instead. A caller that needs the budget
+	// enforced, the guard applied, or the memory written should hear when it
+	// is not - shipping an unguarded answer as a success is the silent failure
+	// this policy exists to prevent.
+	//
+	// Strict applies to memory writes after a completed run too: the run's
+	// result is discarded there, deliberately, because the caller opted into
+	// "an unrecorded run is not a successful run".
+	EffectStrict EffectFailurePolicy = "strict"
 )
 
 // Run executes the full ReAct loop for a user input.
@@ -253,9 +284,15 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 
 		// --- Budget accounting (M6, optional) ---
 		// Record must be called, otherwise usage stays at zero and the budget
-		// check above can never trip.
+		// check above can never trip - which is exactly why a strict caller is
+		// told when it did not happen instead of getting a budget that quietly
+		// stopped enforcing.
 		if l.budget != nil && chatResult.Usage.TotalTokens > 0 {
 			if err := l.budget.Record(ctx, sessionID, int64(chatResult.Usage.TotalTokens)); err != nil {
+				if l.effectPolicy == EffectStrict {
+					return &RunResult{Steps: steps, Reason: "error"},
+						fmt.Errorf("step %d: budget record failed: %w", step, err)
+				}
 				log.Printf("[harness] budget record failed: %v", err)
 			}
 		}
@@ -289,6 +326,9 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			if l.outputGuard != nil {
 				filtered, guardErr := l.outputGuard.Check(ctx, answer)
 				if guardErr != nil {
+					if l.effectPolicy == EffectStrict {
+						return nil, fmt.Errorf("output guard failed: %w", guardErr)
+					}
 					log.Printf("[harness] output guard error: %v", guardErr)
 				} else {
 					answer = filtered
@@ -314,7 +354,12 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			}
 
 			// Save to long-term memory (M5, optional).
-			l.saveMemory(ctx, sessionID, userInput, result)
+			if err := l.saveMemory(ctx, sessionID, userInput, result); err != nil {
+				if l.effectPolicy == EffectStrict {
+					return nil, err
+				}
+				log.Printf("[harness] save memory failed: %v", err)
+			}
 
 			return result, nil
 		}
@@ -385,6 +430,9 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				}
 				ok, feedback, verifyErr := l.verifier.Verify(ctx, verifyAction, toolResult)
 				if verifyErr != nil {
+					if l.effectPolicy == EffectStrict {
+						return nil, fmt.Errorf("verifier failed: %w", verifyErr)
+					}
 					log.Printf("[harness] verifier error: %v", verifyErr)
 				} else if !ok {
 					messages = append(messages, core.Message{
@@ -546,9 +594,12 @@ func formatObservation(toolName string, result *core.ToolResult) string {
 
 // saveMemory extracts a lesson from the run and saves to long-term memory.
 // Uses LLM to distill the experience if available, otherwise falls back to a simple summary.
-func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string, result *RunResult) {
+// saveMemory runs the write-side gate and persists the lesson. The failure is
+// returned rather than logged: whether it is fatal is the run's policy to
+// decide, not the write's.
+func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string, result *RunResult) error {
 	if l.memory == nil {
-		return
+		return nil
 	}
 
 	// The gate runs before extraction: a run judged not worth remembering also
@@ -558,7 +609,7 @@ func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string,
 		judge = defaultMemoryWriteJudge
 	}
 	if !judge(ctx, sessionID, result) {
-		return
+		return nil
 	}
 
 	lesson := l.extractLesson(ctx, userInput, result)
@@ -570,8 +621,9 @@ func (l *AgentLoop) saveMemory(ctx context.Context, sessionID, userInput string,
 	}
 
 	if err := l.memory.SaveLongTerm(ctx, entry); err != nil {
-		log.Printf("[harness] save memory failed: %v", err)
+		return fmt.Errorf("save long-term memory: %w", err)
 	}
+	return nil
 }
 
 // defaultMemoryWriteJudge remembers a completed run only when it actually used
