@@ -28,7 +28,6 @@ const (
 	envMCPEndpoint   = "FORGE_MCP_ENDPOINT"
 	envMCPToken      = "FORGE_MCP_TOKEN"
 	envPGDSN         = "FORGE_PG_DSN"
-	envRedisAddr     = "FORGE_REDIS_ADDR"
 )
 
 // defaultProjectConfig is the per-repository git configuration. projects/*.yaml
@@ -131,12 +130,12 @@ func buildKnowledgeStack() *rag.HybridRetriever {
 	return rag.NewHybridRetriever(store, rag.EmbedderFromEnv()).WithReranker(rag.RerankerFromEnv())
 }
 
-// registerDatabase wires the database worker. Real PostgreSQL/Redis connectors
-// are not wired yet, so this reports what it needs.
+// registerDatabase wires the database worker. The real PostgreSQL connector is
+// not wired yet, so this reports what it needs.
 func registerDatabase(r *worker.Registry) {
 	r.Register("database", unconfiguredHandler("database",
-		fmt.Sprintf("no PostgreSQL/Redis connector is wired; it needs %s and %s plus a connector implementation",
-			envPGDSN, envRedisAddr)))
+		fmt.Sprintf("no PostgreSQL connector is wired; it needs %s plus a connector implementation",
+			envPGDSN)))
 }
 
 // registerMCP wires the MCP worker when an endpoint is configured.
