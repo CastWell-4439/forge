@@ -131,7 +131,7 @@
                             │
 ┌───────────────────────────▼──────────────────────────────────────────┐
 │                          存储层                                        │
-│   PostgreSQL (元数据+事件+向量)  │  Redis (缓存+会话)  │  BoltDB (嵌入) │
+│   PostgreSQL (元数据+事件+向量)  │  NATS  (消息+心跳)  │  BoltDB (嵌入) │
 └──────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -310,7 +310,7 @@ Worker 通过 gRPC 连接 Coordinator，接收任务、执行、返回结果。�
 | **Claude Code Worker** | `internal/workers/claudecode/` | 代码执行与修改（可注入命令工厂，便于测试） |
 | **Git Worker** | `internal/workers/git/` | 读操作 (status/log/diff/show/blame) + 写操作 (branch/commit/push/mr) + 项目配置 |
 | **Shell Worker** | `internal/workers/shell/` | **白名单命令**执行 + 工作目录白名单 + 超时控制 |
-| **Database Worker** | `internal/workers/database/` | PostgreSQL **只读** SELECT + Redis GET/KEYS |
+| **Database Worker** | `internal/workers/database/` | PostgreSQL **只读** SELECT |
 | **Review Worker** | `internal/workers/review/` | 计划与代码评审（可结合 RAG 检索项目约定） |
 | **HITL Worker** | `internal/workers/hitl/` | 4 种动作：`notify` / `request_approval` / `request_input` / `notify_and_wait` |
 | **MCP Worker** | `internal/workers/mcp/` | MCP 协议操作（list_tools / call_tool / list_resources 等） |
@@ -318,7 +318,7 @@ Worker 通过 gRPC 连接 Coordinator，接收任务、执行、返回结果。�
 #### 安全边界
 
 - Shell Worker：仅执行白名单命令，拒绝任意命令
-- Database Worker：PostgreSQL 只允许 SELECT，Redis 只允许 GET/KEYS
+- Database Worker：PostgreSQL 只允许 SELECT
 - Git Worker：只写特性分支，不触碰主干
 - 所有 Worker：执行超时硬限制
 
@@ -463,7 +463,6 @@ Layer 3: 1h   精度
 |------|------|------|
 | Go | **1.26+** | 编译 |
 | PostgreSQL | 15+ | 元数据存储、事件存储、CDC（需 `wal_level=logical`） |
-| Redis | 7+ | 缓存、会话、心跳 |
 | Node.js | 18+ | Dashboard 前端（可选） |
 | etcd | 3.5+ | 分布式协调（可选，单机可用嵌入模式） |
 
@@ -486,7 +485,7 @@ cd web && npm install && npm run build
 ### 本地运行
 
 ```bash
-# 启动依赖（PostgreSQL + Redis + etcd）
+# 启动依赖（PostgreSQL + etcd）
 docker-compose -f deploy/docker-compose.yml up -d
 
 # 启动 Coordinator (gRPC :50051, REST :8081, Metrics :9090)
@@ -514,7 +513,6 @@ cp projects/example-project.yaml projects/my-project.yaml
 | 环境变量 | 说明 |
 |----------|------|
 | `FORGE_PG_PASSWORD` | PostgreSQL 密码 |
-| `FORGE_REDIS_PASSWORD` | Redis 密码 |
 | `FORGE_LLM_API_KEY` | LLM API 密钥（OpenAI 兼容格式） |
 | `FORGE_PROJECT_CONFIG` | Git Worker 所用的项目配置路径 |
 | `FORGE_MCP_ENDPOINT` | MCP Server 地址 |
