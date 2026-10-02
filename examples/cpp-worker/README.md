@@ -36,8 +36,7 @@ cmake --build build
 ```bash
 # From the project root
 ./forge coordinator --embed-etcd \
-  --db=postgres://forge:forge@localhost:5432/forge \
-  --redis=redis://localhost:6379
+  --db=postgres://forge:forge@localhost:5432/forge
 ```
 
 2. Run the example worker:

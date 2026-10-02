@@ -16,7 +16,7 @@ A simple AI task worker built with the Forge Python SDK.
 
 ```bash
 # From the project root
-./forge coordinator --embed-etcd --db=postgres://forge:forge@localhost:5432/forge --redis=redis://localhost:6379
+./forge coordinator --embed-etcd --db=postgres://forge:forge@localhost:5432/forge
 ```
 
 2. Install the Python SDK and run the worker:

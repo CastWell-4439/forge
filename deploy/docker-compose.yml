@@ -18,16 +18,6 @@ services:
       timeout: 3s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   # --- Coordinator ---
   coordinator:
     build:
@@ -38,14 +28,11 @@ services:
       - coordinator
       - --embed-etcd
       - --db=postgres://forge:forge@postgres:5432/forge?sslmode=disable
-      - --redis=redis://redis:6379
     ports:
       - "8080:8080"   # gRPC
       - "8081:8081"   # HTTP/metrics
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "grpc_health_probe -addr=:8080 || exit 1"]
