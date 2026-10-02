@@ -45,15 +45,27 @@ type Worker struct {
 	config    Config
 	llm       core.LLMClient
 	retriever *rag.HybridRetriever // optional, nil if no knowledge base
+	journal   harness.Journal
 }
 
+// Option configures an optional dependency on the Review worker.
+type Option func(*Worker)
+
+// WithJournal attaches a run journal (D-12) to every agent loop this worker
+// builds. Omit it and the worker runs exactly as before, without journaling.
+func WithJournal(j harness.Journal) Option { return func(w *Worker) { w.journal = j } }
+
 // NewWorker creates a Review Worker.
-func NewWorker(cfg Config, llm core.LLMClient, retriever *rag.HybridRetriever) *Worker {
-	return &Worker{
+func NewWorker(cfg Config, llm core.LLMClient, retriever *rag.HybridRetriever, opts ...Option) *Worker {
+	w := &Worker{
 		config:    cfg,
 		llm:       llm,
 		retriever: retriever,
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
 // Execute runs a review action.
@@ -117,6 +129,9 @@ func (w *Worker) runReview(ctx context.Context, action, prompt string) (string, 
 	registry := core.NewToolRegistry()
 	router := harness.NewToolRouter(registry)
 	loop := harness.NewAgentLoop(w.llm, router, loopCfg)
+	if w.journal != nil {
+		loop.SetJournal(w.journal)
+	}
 
 	result, err := loop.Run(ctx, fmt.Sprintf("review-%s", action), prompt)
 	if err != nil {

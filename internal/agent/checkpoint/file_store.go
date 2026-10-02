@@ -65,6 +65,17 @@ func (s *FileStore) dir(sessionID string) string {
 	return filepath.Join(s.root, sessionDir(sessionID))
 }
 
+// JournalFallbackPath is where the run journal's second-tier target lives:
+// inside the checkpoint tree, deliberately separate from the run tree the
+// primary journal writes to, so one broken tree cannot take both copies of
+// the recovery state with it. It takes the same root NewFileStore takes.
+func JournalFallbackPath(root, sessionID string) string {
+	if strings.TrimSpace(root) == "" {
+		root = DefaultFileStoreRoot
+	}
+	return filepath.Join(root, sessionDir(sessionID), "journal-fallback.jsonl")
+}
+
 func (s *FileStore) stepFile(cp *core.Checkpoint) string {
 	return filepath.Join(s.dir(cp.SessionID), fmt.Sprintf("%010d-%s.json", cp.StepIndex, sanitizeID(cp.ID)))
 }
