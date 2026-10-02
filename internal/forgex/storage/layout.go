@@ -45,6 +45,14 @@ func (l Layout) SpansFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "spans.jsonl")
 }
 
+// JournalFile returns the agent run journal JSONL file path. The journal is
+// harness-owned state (see internal/agent/harness): it lives in the run tree
+// for locality with spans and the rest of the run record, but it keeps its
+// own event format rather than mixing with model.Event's audit vocabulary.
+func (l Layout) JournalFile(runID string) string {
+	return filepath.Join(l.RunDir(runID), "journal.jsonl")
+}
+
 // ToolCallsFile returns the tool calls JSONL file path.
 func (l Layout) ToolCallsFile(runID string) string {
 	return filepath.Join(l.RunDir(runID), "tool_calls.jsonl")
