@@ -35,6 +35,10 @@ type Agent struct {
 	// Empty keeps the best-effort default.
 	CheckpointFailurePolicy harness.CheckpointFailurePolicy
 
+	// EffectFailurePolicy decides whether a failed budget/guard/verifier/memory
+	// write is fatal. Empty keeps the best-effort default.
+	EffectFailurePolicy harness.EffectFailurePolicy
+
 	// MemoryWriteJudge overrides the default gate that decides whether a
 	// finished run is worth remembering.
 	MemoryWriteJudge harness.MemoryWriteJudge
@@ -72,6 +76,12 @@ func WithCheckpoint(c core.CheckpointStore) Option { return func(a *Agent) { a.C
 // The default is best-effort, where the failure is logged and the run continues.
 func WithCheckpointFailurePolicy(p harness.CheckpointFailurePolicy) Option {
 	return func(a *Agent) { a.CheckpointFailurePolicy = p }
+}
+
+// WithEffectFailurePolicy makes a failed safety effect (budget, output guard,
+// verifier, memory write) fail the run. The default is best-effort.
+func WithEffectFailurePolicy(p harness.EffectFailurePolicy) Option {
+	return func(a *Agent) { a.EffectFailurePolicy = p }
 }
 
 // WithMCP enables M1 MCP tool discovery and invocation.
@@ -179,6 +189,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	}
 	if a.CheckpointFailurePolicy != "" {
 		loop.SetCheckpointFailurePolicy(a.CheckpointFailurePolicy)
+	}
+	if a.EffectFailurePolicy != "" {
+		loop.SetEffectFailurePolicy(a.EffectFailurePolicy)
 	}
 	if a.Memory != nil {
 		loop.SetMemory(a.Memory)
