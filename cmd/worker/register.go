@@ -62,8 +62,12 @@ func registerBuiltinHandlers(r *worker.Registry) {
 	r.Register("hitl", adaptWorkflowWorker("hitl", hitlworker.NewWorker(hitl.NewManager(hitl.ManagerConfig{Timeout: 24 * time.Hour}), nil)))
 
 	registerGit(r)
-	registerAI(r)
-	registerReview(r)
+
+	// One shared journal (D-12): its state is per session and its writes are
+	// mutex-guarded, so a single instance covers every agent-backed worker.
+	journal := buildRunJournal()
+	registerAI(r, journal)
+	registerReview(r, journal)
 	registerDatabase(r)
 	registerMCP(r)
 
@@ -94,13 +98,13 @@ func registerGit(r *worker.Registry) {
 
 // registerAI wires the AI worker. Its LLM client is built per request, so a
 // missing key surfaces on the node that needs the model.
-func registerAI(r *worker.Registry) {
-	r.Register("ai", adaptWorkflowWorker("ai", ai.NewWorker(ai.DefaultConfig(), llmFactory)))
+func registerAI(r *worker.Registry, journal harness.Journal) {
+	r.Register("ai", adaptWorkflowWorker("ai", ai.NewWorker(ai.DefaultConfig(), llmFactory, ai.WithJournal(journal))))
 }
 
 // registerReview wires the review worker. It needs its LLM client up front, so
 // without a key it registers the explanatory handler instead.
-func registerReview(r *worker.Registry) {
+func registerReview(r *worker.Registry, journal harness.Journal) {
 	cfg := review.DefaultConfig()
 	llm := newEnvLLMClient(cfg.Model, cfg.Temperature, cfg.MaxTokens)
 	if llm == nil {
@@ -111,7 +115,8 @@ func registerReview(r *worker.Registry) {
 	// The knowledge stack is always non-nil: its layers degrade individually
 	// (no embedder → BM25-only, no endpoint → fusion order), so review gets a
 	// working retriever instead of the nil it used to receive unconditionally.
-	r.Register("review", adaptWorkflowWorker("review", review.NewWorker(cfg, llm, buildKnowledgeStack())))
+	r.Register("review", adaptWorkflowWorker("review",
+		review.NewWorker(cfg, llm, buildKnowledgeStack(), review.WithJournal(journal))))
 }
 
 // Knowledge stack environment: one root for the document store, optional

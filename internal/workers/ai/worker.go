@@ -15,18 +15,30 @@ import (
 type Worker struct {
 	config     Config
 	llmFactory LLMFactory
+	journal    harness.Journal
 }
+
+// Option configures an optional dependency on the AI worker.
+type Option func(*Worker)
+
+// WithJournal attaches a run journal (D-12) to every agent loop this worker
+// builds. Omit it and the worker runs exactly as before, without journaling.
+func WithJournal(j harness.Journal) Option { return func(w *Worker) { w.journal = j } }
 
 // LLMFactory creates an LLM client with the given model config.
 // This allows the worker to switch models per action.
 type LLMFactory func(cfg ModelConfig) (core.LLMClient, error)
 
 // NewWorker creates an AI Worker with the given config and LLM factory.
-func NewWorker(cfg Config, factory LLMFactory) *Worker {
-	return &Worker{
+func NewWorker(cfg Config, factory LLMFactory, opts ...Option) *Worker {
+	w := &Worker{
 		config:     cfg,
 		llmFactory: factory,
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
 // Execute runs an AI action with the given parameters.
@@ -67,6 +79,9 @@ func (w *Worker) runAgent(ctx context.Context, action string, params map[string]
 	registry := core.NewToolRegistry() // empty registry — AI worker doesn't use tools
 	router := harness.NewToolRouter(registry)
 	loop := harness.NewAgentLoop(llm, router, loopCfg)
+	if w.journal != nil {
+		loop.SetJournal(w.journal)
+	}
 
 	// Extract user input from params.
 	input, err := w.buildInput(params)
