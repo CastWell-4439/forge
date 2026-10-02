@@ -88,7 +88,7 @@ func TestContentFilter_Password(t *testing.T) {
 
 func TestContentFilter_InternalHost(t *testing.T) {
 	f := NewContentFilter()
-	input := "connecting to redis-hb.domob-inc.com:6379"
+	input := "connecting to db-primary.internal:5432"
 	result, err := f.Check(context.Background(), input)
 	require.NoError(t, err)
 	assert.Contains(t, result, "[REDACTED:internal_host]")
@@ -96,7 +96,7 @@ func TestContentFilter_InternalHost(t *testing.T) {
 
 func TestContentFilter_SafeContent(t *testing.T) {
 	f := NewContentFilter()
-	input := "The video has been processed successfully at 1080p."
+	input := "The file was processed successfully at 1080p."
 	result, err := f.Check(context.Background(), input)
 	require.NoError(t, err)
 	assert.Equal(t, input, result)
