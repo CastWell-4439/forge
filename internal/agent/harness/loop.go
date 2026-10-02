@@ -54,6 +54,7 @@ type AgentLoop struct {
 	outputGuard core.OutputGuard
 	budget      core.BudgetChecker
 	checkpoint  core.CheckpointStore
+	journal     Journal
 	memory      core.MemoryStore
 	verifier    core.Verifier
 
@@ -89,6 +90,76 @@ func (l *AgentLoop) SetBudget(b core.BudgetChecker) { l.budget = b }
 
 // SetCheckpoint enables M12 state persistence.
 func (l *AgentLoop) SetCheckpoint(c core.CheckpointStore) { l.checkpoint = c }
+
+// SetJournal enables the run journal (D-12). A nil journal disables all
+// journaling, which keeps existing callers behaviour-identical.
+func (l *AgentLoop) SetJournal(j Journal) { l.journal = j }
+
+// journalAppend writes one run event under the checkpoint failure policy: the
+// journal is recovery state just like a checkpoint, so a caller that wants
+// "an unrecorded run is not a successful run" gets it from the same switch
+// (CheckpointStrict) instead of a second configuration knob.
+func (l *AgentLoop) journalAppend(ctx context.Context, ev RunEvent) error {
+	if l.journal == nil {
+		return nil
+	}
+	if err := l.journal.AppendEvent(ctx, ev); err != nil {
+		if l.checkpointPolicy == CheckpointStrict {
+			return fmt.Errorf("journal %s for session %s: %w", ev.Type, ev.RunID, err)
+		}
+		log.Printf("[harness] journal %s for session %s not durable: %v", ev.Type, ev.RunID, err)
+	}
+	return nil
+}
+
+// emitRunEnded records a run that ended without a final answer. These events
+// are audit-only — rebuild ignores them — so a write failure here is logged,
+// never fatal, even under CheckpointStrict (the run is already failing with a
+// real error that the caller must see instead).
+func (l *AgentLoop) emitRunEnded(ctx context.Context, sessionID string, step int, reason, detail string) {
+	if l.journal == nil {
+		return
+	}
+	err := l.journalAppend(ctx, RunEvent{
+		RunID: sessionID,
+		Type:  EventRunEnded,
+		Step:  step,
+		TS:    time.Now().UTC(),
+		Data:  map[string]any{"reason": reason, "detail": detail},
+	})
+	if err != nil {
+		log.Printf("[harness] run_ended journal write failed: %v", err)
+	}
+}
+
+// emitRunStart journals where a logical run begins. A fresh run records its
+// initial messages as a snapshot; a resume records the state it resumes from
+// (messages plus the step index a rebuild should continue after), so rebuild
+// never depends on events written before that point.
+func (l *AgentLoop) emitRunStart(ctx context.Context, sessionID string, resumed, hasState bool,
+	source, userInput string, messages []core.Message, startStep int) error {
+
+	if l.journal == nil {
+		return nil
+	}
+	if resumed && hasState {
+		return l.journalAppend(ctx, RunEvent{
+			RunID: sessionID,
+			Type:  EventRunResumed,
+			TS:    time.Now().UTC(),
+			Data: map[string]any{
+				"messages":   messages,
+				"step_index": startStep - 1,
+				"source":     source,
+			},
+		})
+	}
+	data := map[string]any{"messages": messages, "input": userInput}
+	if resumed {
+		data["resumed"] = true
+	}
+	return l.journalAppend(ctx, RunEvent{RunID: sessionID, Type: EventRunStarted, TS: time.Now().UTC(), Data: data})
+}
 
 // SetCheckpointFailurePolicy decides what happens when a checkpoint write fails.
 // The zero value keeps the best-effort behaviour.
@@ -203,11 +274,42 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 
 	startStep := 0
 	var ledger []core.ToolCallRecord
+	var cp *core.Checkpoint
+	resumeSource := ""
 
 	if resume {
-		cp, err := l.loadCheckpoint(ctx, sessionID)
-		if err != nil {
-			return nil, err
+		var err error
+		// With a checkpoint store, load it. Without one, resume still works
+		// when a journal is configured (the journal can rebuild on its own);
+		// with neither, loadCheckpoint keeps reporting the old, still-true
+		// error: resume requires some recovery state.
+		if l.checkpoint != nil || l.journal == nil {
+			cp, err = l.loadCheckpoint(ctx, sessionID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if cp != nil {
+			resumeSource = "checkpoint"
+		} else if l.journal != nil {
+			// No usable checkpoint: fall back to the journal (D-12 slow path).
+			// Every rebuild failure except "no events at all" refuses the run —
+			// a gap means the state cannot be trusted, and running anyway could
+			// repeat a side effect that already happened. A journal read failure
+			// also refuses: without it there is no way to tell a clean slate from
+			// a lost one.
+			events, rerr := l.journal.ReadEvents(ctx, sessionID)
+			if rerr != nil {
+				return nil, fmt.Errorf("read journal for session %s: %w", sessionID, rerr)
+			}
+			if len(events) > 0 {
+				cp, err = RebuildCheckpoint(events)
+				if err == nil {
+					resumeSource = "journal"
+				} else if !errors.Is(err, ErrNoJournalEvents) {
+					return nil, fmt.Errorf("resume session %s from journal: %w", sessionID, err)
+				}
+			}
 		}
 		if cp != nil {
 			// A finished run has nothing left to do; re-asking the model could
@@ -250,12 +352,22 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		l.recallInto(ctx, &messages, userInput)
 	}
 
+	// --- Run journal (D-12): record where this logical run begins. ---
+	// Everything the loop writes from here on is appended relative to this
+	// snapshot: journalBase is how far the messages have been journaled, and
+	// each step reports the delta beyond it.
+	if err := l.emitRunStart(ctx, sessionID, resume, cp != nil, resumeSource, userInput, messages, startStep); err != nil {
+		return nil, err
+	}
+	journalBase := len(messages)
+
 	var steps []StepRecord
 
 	for step := startStep; step < l.config.MaxSteps; step++ {
 		// --- Budget Check (M6, optional) ---
 		if l.budget != nil {
 			if err := l.budget.Check(ctx, sessionID); err != nil {
+				l.emitRunEnded(ctx, sessionID, step, "budget_exceeded", err.Error())
 				return &RunResult{
 					Answer: "Budget exceeded. Stopping.",
 					Steps:  steps,
@@ -270,7 +382,29 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			log.Printf("[harness] context compaction failed: %v", err)
 			// Continue with uncompacted messages.
 		} else {
+			if !sameMessageList(messages, compacted) {
+				// Compaction replaced the list wholesale (fresh slice with a
+				// summarised head), so incremental turns no longer describe it.
+				// Journal a snapshot and restart the delta base from there.
+				if jerr := l.journalAppend(ctx, RunEvent{
+					RunID: sessionID,
+					Type:  EventContextCompacted,
+					Step:  step,
+					TS:    time.Now().UTC(),
+					Data:  map[string]any{"messages": compacted},
+				}); jerr != nil {
+					return nil, jerr
+				}
+				journalBase = len(compacted)
+			}
 			messages = compacted
+		}
+
+		// --- Step begins ---
+		if jerr := l.journalAppend(ctx, RunEvent{
+			RunID: sessionID, Type: EventStepStarted, Step: step, TS: time.Now().UTC(),
+		}); jerr != nil {
+			return nil, jerr
 		}
 
 		// --- Call LLM ---
@@ -278,8 +412,25 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		if err != nil {
 			// Keep the steps accumulated so far. Returning nil here discarded
 			// the entire trace and made failures impossible to diagnose.
+			l.emitRunEnded(ctx, sessionID, step, "error", err.Error())
 			return &RunResult{Steps: steps, Reason: "error"},
 				fmt.Errorf("step %d: LLM call failed: %w", step, err)
+		}
+
+		// --- LLM usage audit (D-12) ---
+		if jerr := l.journalAppend(ctx, RunEvent{
+			RunID: sessionID,
+			Type:  EventLLMCall,
+			Step:  step,
+			TS:    time.Now().UTC(),
+			Data: map[string]any{
+				"finish_reason":     chatResult.FinishReason,
+				"prompt_tokens":     chatResult.Usage.PromptTokens,
+				"completion_tokens": chatResult.Usage.CompletionTokens,
+				"total_tokens":      chatResult.Usage.TotalTokens,
+			},
+		}); jerr != nil {
+			return nil, jerr
 		}
 
 		// --- Budget accounting (M6, optional) ---
@@ -300,6 +451,8 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		// A response cut short by the token limit is incomplete. Treating it as
 		// a complete answer silently produced wrong results.
 		if chatResult.FinishReason == "length" {
+			l.emitRunEnded(ctx, sessionID, step, "truncated",
+				fmt.Sprintf("finish_reason=length, %d completion tokens", chatResult.Usage.CompletionTokens))
 			return &RunResult{Steps: steps, Reason: "truncated"},
 				fmt.Errorf("step %d: LLM response truncated (finish_reason=length, %d completion tokens); "+
 					"raise MaxTokens or lower the compaction threshold",
@@ -347,6 +500,19 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				Reason: "completed",
 			}
 
+			// The journal is the source of truth: completion lands there before
+			// the checkpoint that caches it, so a crash between the two still
+			// rebuilds as a finished run instead of redoing the answer step.
+			if jerr := l.journalAppend(ctx, RunEvent{
+				RunID: sessionID,
+				Type:  EventRunCompleted,
+				Step:  step,
+				TS:    time.Now().UTC(),
+				Data:  map[string]any{"answer": answer},
+			}); jerr != nil {
+				return nil, jerr
+			}
+
 			// Record completion so a later Resume returns this answer instead of
 			// running the session again.
 			if err := l.saveCompletedCheckpoint(ctx, sessionID, step, messages, ledger, answer); err != nil {
@@ -375,6 +541,25 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				Status:     core.ToolCallStarted,
 				StartedAt:  time.Now().UTC(),
 			})
+			// Record the intent in the journal first, then the checkpoint: the
+			// journal is what a rebuild trusts, so it must never be the copy
+			// that misses the intent. The turn rides along so a rebuild can
+			// reconstruct this step's assistant message even if the step never
+			// completes.
+			if jerr := l.journalAppend(ctx, RunEvent{
+				RunID: sessionID,
+				Type:  EventToolStarted,
+				Step:  step,
+				Tool:  toolName,
+				TS:    ledger[len(ledger)-1].StartedAt,
+				Data: map[string]any{
+					"id":         ledger[len(ledger)-1].ID,
+					"idempotent": ledger[len(ledger)-1].Idempotent,
+					"turn":       marshalAssistantTurn(agentResp),
+				},
+			}); jerr != nil {
+				return nil, jerr
+			}
 			// Record the intent before invoking the tool. A crash between here and
 			// the completion record below is exactly the case a resume has to be
 			// able to see, and it can only see it if it was written first.
@@ -388,6 +573,21 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			ledger[len(ledger)-1].Result = toolResult.Output
 			ledger[len(ledger)-1].Error = toolResult.Error
 			ledger[len(ledger)-1].CompletedAt = time.Now().UTC()
+
+			if jerr := l.journalAppend(ctx, RunEvent{
+				RunID: sessionID,
+				Type:  EventToolCompleted,
+				Step:  step,
+				Tool:  toolName,
+				TS:    ledger[len(ledger)-1].CompletedAt,
+				Data: map[string]any{
+					"id":     ledger[len(ledger)-1].ID,
+					"result": toolResult.Output,
+					"error":  toolResult.Error,
+				},
+			}); jerr != nil {
+				return nil, jerr
+			}
 
 			steps = append(steps, StepRecord{
 				Step:    step,
@@ -442,6 +642,21 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				}
 			}
 
+			// Journal the finished step before it is checkpointed: the delta
+			// covers every message this step appended (turn, observation,
+			// reflection, verification), which is exactly what a rebuild needs
+			// to reproduce the conversation.
+			if jerr := l.journalAppend(ctx, RunEvent{
+				RunID: sessionID,
+				Type:  EventStepCompleted,
+				Step:  step,
+				TS:    time.Now().UTC(),
+				Data:  map[string]any{"turns": messages[journalBase:]},
+			}); jerr != nil {
+				return nil, jerr
+			}
+			journalBase = len(messages)
+
 			// Persist the finished step. This is the checkpoint a resume loads.
 			if err := l.saveCheckpoint(ctx, sessionID, step, messages, ledger); err != nil {
 				return nil, err
@@ -455,6 +670,7 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	}
 
 	// --- Max steps exceeded ---
+	l.emitRunEnded(ctx, sessionID, l.config.MaxSteps, "max_steps", "")
 	return &RunResult{
 		Answer: "I've reached the maximum number of steps. Here's what I found so far.",
 		Steps:  steps,
@@ -725,6 +941,18 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// sameMessageList reports whether a and b are the same underlying message
+// list. CompactIfNeeded returns its input unchanged when nothing happened and
+// a freshly built slice when it compacted, which is exactly what identity of
+// the first element distinguishes (both lists always start with a system
+// message, so a non-empty list is the normal case).
+func sameMessageList(a, b []core.Message) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	return &a[0] == &b[0]
 }
 
 // reflect asks the LLM to analyze a tool failure and suggest a revised approach.
