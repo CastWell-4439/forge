@@ -28,6 +28,7 @@ type Agent struct {
 	Retriever   core.Retriever
 	Memory      core.MemoryStore
 	Checkpoint  core.CheckpointStore
+	Journal     harness.Journal
 	MCP         core.MCPManager
 	Verifier    core.Verifier
 
@@ -71,6 +72,11 @@ func WithMemory(m core.MemoryStore) Option { return func(a *Agent) { a.Memory = 
 
 // WithCheckpoint enables M12 state persistence for crash recovery.
 func WithCheckpoint(c core.CheckpointStore) Option { return func(a *Agent) { a.Checkpoint = c } }
+
+// WithJournal enables the run journal (D-12): append-only events that record
+// what a run did, back the span projection, and let a resume rebuild state
+// when the checkpoint cache is missing.
+func WithJournal(j harness.Journal) Option { return func(a *Agent) { a.Journal = j } }
 
 // WithCheckpointFailurePolicy makes a failed checkpoint write fail the run.
 // The default is best-effort, where the failure is logged and the run continues.
@@ -186,6 +192,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	}
 	if a.Checkpoint != nil {
 		loop.SetCheckpoint(a.Checkpoint)
+	}
+	if a.Journal != nil {
+		loop.SetJournal(a.Journal)
 	}
 	if a.CheckpointFailurePolicy != "" {
 		loop.SetCheckpointFailurePolicy(a.CheckpointFailurePolicy)
