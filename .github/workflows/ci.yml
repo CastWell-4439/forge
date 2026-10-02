@@ -144,15 +144,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -169,7 +160,6 @@ jobs:
       - name: Run tests
         env:
           FORGE_PG_DSN: "postgres://forge:forge@localhost:5432/forge_test?sslmode=disable"
-          FORGE_REDIS_ADDR: "localhost:6379"
         run: |
           # The runner starts bash with -e, so the failing `go test | tee`
           # pipeline would kill this script before any failure handling ran -

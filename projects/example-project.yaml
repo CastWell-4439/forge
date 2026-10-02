@@ -31,14 +31,6 @@ databases:
     max_rows: 100
     timeout: 30s
 
-  redis:
-    type: redis
-    host: localhost
-    port: 6379
-    db: 0
-    password_env: FORGE_REDIS_PASSWORD
-    allowed_commands: [GET, KEYS]
-
 # Build & Test
 build:
   command: go build ./...

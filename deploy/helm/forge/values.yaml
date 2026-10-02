@@ -26,7 +26,6 @@ coordinator:
     minAvailable: 2
   env:
     FORGE_PG_DSN: "postgres://forge:forge@forge-pg:5432/forge?sslmode=disable"
-    FORGE_REDIS_ADDR: "forge-redis:6379"
     FORGE_ETCD_ENDPOINTS: "forge-etcd:2379"
 
 ## Go Worker
@@ -93,11 +92,6 @@ postgresql:
     username: forge
     password: forge
     database: forge
-
-redis:
-  enabled: true
-  auth:
-    enabled: false
 
 etcd:
   enabled: true

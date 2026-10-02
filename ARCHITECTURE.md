@@ -50,7 +50,7 @@ D:\forge\
 │   │   ├── planning/    — 需求解析 → DAG 生成（3 策略）
 │   │   ├── session/     — Agent 会话状态机
 │   │   ├── harness/     — ReAct 循环：LLM 调用 + ToolRouter + Context 管理
-│   │   ├── workers/     — 工具注册表 + 18 个视频 Handler + 通用工具
+│   │   ├── workers/     — 工具注册表 + 17 个通用工具（文件/shell/git/网络/知识/人机/技能）
 │   │   ├── mcp/         — 【AE-2】MCP 协议：JSON-RPC + Client + Manager + Bridge
 │   │   ├── rag/         — 【AE-3】混合检索：向量 + BM25 + RRF
 │   │   ├── memory/      — 【AE-3】短期/长期记忆

@@ -47,7 +47,6 @@ type HPASpec struct {
 // StorageSpec defines storage backend configuration.
 type StorageSpec struct {
 	PostgreSQL PostgreSQLSpec `json:"postgresql"`
-	Redis      RedisSpec      `json:"redis"`
 	Etcd       EtcdSpec       `json:"etcd"`
 }
 
@@ -55,12 +54,6 @@ type StorageSpec struct {
 type PostgreSQLSpec struct {
 	DSN      string `json:"dsn,omitempty"`
 	External bool   `json:"external"` // Use external PG (don't deploy)
-}
-
-// RedisSpec configures Redis.
-type RedisSpec struct {
-	Address  string `json:"address,omitempty"`
-	External bool   `json:"external"`
 }
 
 // EtcdSpec configures etcd.

@@ -8,7 +8,7 @@ build:
 test:
 	go test ./...
 
-# Run integration tests (requires PG/Redis)
+# Run integration tests (requires PG)
 test-integration:
 	go test -tags=integration ./test/...
 

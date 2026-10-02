@@ -173,13 +173,13 @@ triggers:
     params_mapping:
       order_id: "{{.new.id}}"
       amount: "{{.new.total_amount}}"
-  - name: video-uploaded
+  - name: asset-created
     type: cdc
     source:
-      type: redis
-      pattern: "upload:video:*"
-      events: [SET]
-    workflow: video-pipeline
+      type: postgres
+      table: assets
+      events: [INSERT]
+    workflow: asset-pipeline
 `)
 
 	ts, err := ParseTriggerConfig(yamlData)

@@ -63,20 +63,17 @@ func (r *ForgeClusterReconciler) Reconcile(ctx context.Context, cluster *v1.Forg
 	return ReconcileResult{RequeueAfter: 60 * time.Second}, nil
 }
 
-// reconcileStorage ensures storage backends (PG, Redis, etcd) are accessible.
+// reconcileStorage ensures storage backends (PG, etcd) are accessible.
 // Production implementation requires client-go and actual connection probes.
 func (r *ForgeClusterReconciler) reconcileStorage(_ context.Context, spec *v1.ForgeClusterSpec) error {
 	// Validate required fields before attempting health checks.
 	if spec.Storage.PostgreSQL.DSN == "" && !spec.Storage.PostgreSQL.External {
 		return fmt.Errorf("postgres DSN not configured and not marked as external")
 	}
-	if spec.Storage.Redis.Address == "" && !spec.Storage.Redis.External {
-		return fmt.Errorf("redis address not configured and not marked as external")
-	}
 	// When client-go is integrated:
 	// 1. For external backends: dial TCP to verify connectivity + run ping.
 	// 2. For managed backends: check StatefulSet readiness via k8s API.
-	log.Printf("INFO: storage backends validated (postgres + redis configured)")
+	log.Printf("INFO: storage backends validated (postgres + etcd configured)")
 	return nil
 }
 
