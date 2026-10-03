@@ -61,10 +61,11 @@ type TaskDef struct {
 	Timeout    time.Duration          `yaml:"-"`
 	Retry      RetryPolicy            `yaml:"-"`
 	OnFailure  FailureAction          `yaml:"on_failure"`
-	Compensate string                 `yaml:"compensate"` // Saga: handler to call for rollback
-	Condition  string                 `yaml:"condition"`  // CEL expression; false = skip task
-	OnResult   OnResult               `yaml:"-"`          // Result-based routing
-	Loop       *LoopConfig            `yaml:"loop"`       // Loop/iteration config
+	Compensate string                 `yaml:"compensate"`       // Saga: handler to call for rollback
+	Condition  string                 `yaml:"condition"`        // CEL expression; false = skip task
+	Output     string                 `yaml:"output,omitempty"` // result variable name; successors reference it as {{.name}}
+	OnResult   OnResult               `yaml:"-"`                // Result-based routing
+	Loop       *LoopConfig            `yaml:"loop"`             // Loop/iteration config
 }
 
 // rawTaskDef is the YAML-friendly representation for task definitions.
@@ -77,6 +78,7 @@ type rawTaskDef struct {
 	OnFailure  FailureAction          `yaml:"on_failure"`
 	Compensate string                 `yaml:"compensate"`
 	Condition  string                 `yaml:"condition"`
+	Output     string                 `yaml:"output"`
 	OnResult   map[string]any         `yaml:"on_result"`
 	Loop       *LoopConfig            `yaml:"loop"`
 }
@@ -134,6 +136,7 @@ func ParseDAG(data []byte) (*DAG, error) {
 			OnFailure:  rawTask.OnFailure,
 			Compensate: rawTask.Compensate,
 			Condition:  rawTask.Condition,
+			Output:     rawTask.Output,
 			Loop:       rawTask.Loop,
 		}
 

@@ -48,6 +48,17 @@ type EventPublisher interface {
 // published on.
 const EventChannel = "workflow.events"
 
+// ParamRenderer renders a task's params at dispatch time against the
+// workflow's inputs and the outputs its dependencies have produced. This is
+// the execution-side half of the workflow template contract ({{.name}} /
+// {{.inputs.x}} chaining): params are frozen at submit, so without this seam
+// every template would reach the worker as literal text.
+//
+// The rendering implementation is injected from the assembly layer (the
+// registry template engine), keeping coordinator independent of how
+// templates are spelled.
+type ParamRenderer func(params map[string]any, inputs, outputs map[string]any) (map[string]any, error)
+
 // Coordinator orchestrates workflow execution by parsing DAGs,
 // creating task instances, scheduling them to workers, and driving
 // the workflow state machine to completion.
@@ -64,6 +75,7 @@ type Coordinator struct {
 	workerMgr       *WorkerManager
 	runtimeObserver forgexruntime.Observer
 	eventBus        EventPublisher
+	paramRenderer   ParamRenderer
 
 	// dagCache stores parsed DAG definitions by workflow ID (for Saga compensation lookup).
 	dagCache   map[string]*DAG
@@ -140,6 +152,26 @@ func (c *Coordinator) SubmitWorkflow(ctx context.Context, req *forgev1.SubmitWor
 		return nil, status.Errorf(codes.InvalidArgument, "validate DAG: %v", err)
 	}
 
+	return c.submitDAG(ctx, dag, req.GetInput())
+}
+
+// SubmitDAG submits an already-constructed DAG. It is the entry point for
+// registry-compiled workflows bridged into the coordinator dialect (the
+// bridge lives at the assembly layer); persistence and execution are shared
+// with the YAML path so the two submission routes can never drift apart.
+func (c *Coordinator) SubmitDAG(ctx context.Context, dag *DAG, input json.RawMessage) (*forgev1.SubmitWorkflowResponse, error) {
+	if !c.IsLeader() {
+		return nil, status.Error(codes.Unavailable, "not the leader coordinator")
+	}
+	if err := dag.Validate(); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "validate DAG: %v", err)
+	}
+	return c.submitDAG(ctx, dag, input)
+}
+
+// submitDAG persists a validated DAG as a workflow instance with its tasks
+// and starts execution. Callers have already checked leadership.
+func (c *Coordinator) submitDAG(ctx context.Context, dag *DAG, input json.RawMessage) (*forgev1.SubmitWorkflowResponse, error) {
 	workflowID := uuid.New().String()
 	now := time.Now()
 
@@ -148,7 +180,7 @@ func (c *Coordinator) SubmitWorkflow(ctx context.Context, req *forgev1.SubmitWor
 		ID:        workflowID,
 		Name:      dag.Name,
 		Status:    storage.WorkflowStatusPending,
-		Input:     req.GetInput(),
+		Input:     input,
 		CreatedAt: now,
 	}
 	if err := c.store.SaveWorkflow(ctx, wf); err != nil {
@@ -454,8 +486,81 @@ func (c *Coordinator) findWorker(handler string) *WorkerEntry {
 	return nil
 }
 
+// renderInputForTask renders a task's frozen params against the workflow's
+// inputs and its completed dependencies' named outputs. It runs at dispatch
+// time because outputs only exist then.
+func (c *Coordinator) renderInputForTask(ctx context.Context, task *storage.Task) (json.RawMessage, error) {
+	var params map[string]any
+	if len(task.Input) > 0 {
+		if err := json.Unmarshal(task.Input, &params); err != nil {
+			return nil, fmt.Errorf("parse task input: %w", err)
+		}
+	}
+
+	inputs := map[string]any{}
+	wf, err := c.store.GetWorkflow(ctx, task.WorkflowID)
+	if err != nil {
+		return nil, fmt.Errorf("load workflow %s: %w", task.WorkflowID, err)
+	}
+	if len(wf.Input) > 0 {
+		if err := json.Unmarshal(wf.Input, &inputs); err != nil {
+			return nil, fmt.Errorf("parse workflow input: %w", err)
+		}
+	}
+
+	outputs := map[string]any{}
+	c.dagCacheMu.RLock()
+	dag := c.dagCache[task.WorkflowID]
+	c.dagCacheMu.RUnlock()
+	if dag != nil {
+		tasks, err := c.store.ListTasksByWorkflow(ctx, task.WorkflowID)
+		if err != nil {
+			return nil, fmt.Errorf("list tasks: %w", err)
+		}
+		for _, t := range tasks {
+			if t.TaskName == task.TaskName || t.Status != storage.TaskStatusCompleted || len(t.Output) == 0 {
+				continue
+			}
+			def, ok := dag.Tasks[t.TaskName]
+			if !ok || def.Output == "" {
+				continue
+			}
+			var value any
+			if err := json.Unmarshal(t.Output, &value); err != nil {
+				return nil, fmt.Errorf("parse output of task %s: %w", t.TaskName, err)
+			}
+			outputs[def.Output] = value
+		}
+	}
+
+	rendered, err := c.paramRenderer(params, inputs, outputs)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(rendered)
+	if err != nil {
+		return nil, fmt.Errorf("marshal rendered params: %w", err)
+	}
+	return body, nil
+}
+
 // dispatchTask sends a task to a worker for execution via the ExecuteTask RPC.
 func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, task *storage.Task) {
+	// Render templates before the task starts, so a rendering failure fails
+	// the task from READY instead of dispatching literal templates.
+	input := task.Input
+	if c.paramRenderer != nil {
+		rendered, err := c.renderInputForTask(ctx, task)
+		if err != nil {
+			log.Printf("ERROR: render params for task %s: %v", task.ID, err)
+			if failErr := c.OnTaskFailed(ctx, task.ID, fmt.Sprintf("render params: %v", err)); failErr != nil {
+				log.Printf("ERROR: handle task %s render failure: %v", task.ID, failErr)
+			}
+			return
+		}
+		input = rendered
+	}
+
 	// Track active task count on the appropriate data structure.
 	if c.workerMgr != nil {
 		c.workerMgr.mu.Lock()
@@ -494,7 +599,7 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		WorkflowId: task.WorkflowID,
 		TaskName:   task.TaskName,
 		Handler:    task.Handler,
-		Input:      task.Input,
+		Input:      input,
 	})
 	callEndedAt := time.Now().UTC()
 	if err != nil {
@@ -504,7 +609,7 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 			TaskName:   task.TaskName,
 			Handler:    task.Handler,
 			WorkerID:   worker.ID,
-			Input:      task.Input,
+			Input:      input,
 			Error:      err.Error(),
 			Success:    false,
 			StartedAt:  callStartedAt,
@@ -522,7 +627,7 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		TaskName:   task.TaskName,
 		Handler:    task.Handler,
 		WorkerID:   worker.ID,
-		Input:      task.Input,
+		Input:      input,
 		Output:     resp.GetOutput(),
 		Error:      resp.GetErrorMsg(),
 		Success:    resp.GetSuccess(),
@@ -580,6 +685,11 @@ func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, 
 // SetEventBus installs the notification publisher. Nil keeps events
 // storage-only, which is the behaviour without any bus configured.
 func (c *Coordinator) SetEventBus(p EventPublisher) { c.eventBus = p }
+
+// SetParamRenderer installs dispatch-time parameter rendering. Nil (the
+// default) keeps the historical behaviour: params are sent exactly as
+// submitted, templates untouched.
+func (c *Coordinator) SetParamRenderer(fn ParamRenderer) { c.paramRenderer = fn }
 
 // publishEvent fans a persisted event out on the bus. Notification semantics:
 // the event is already durable in storage, so a publish failure is logged
