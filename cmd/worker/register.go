@@ -72,12 +72,13 @@ func registerBuiltinHandlers(r *worker.Registry) {
 	registerAI(r, journal)
 	registerReview(r, journal)
 	registerDatabase(r)
+	registerWasm(r)
 	registerMCP(r)
 
 	// Guard the wiring itself: a workflow that declares a worker this build does
 	// not know about must fail loudly at registration time, not silently at run
 	// time.
-	for _, required := range []string{"ai", "review", "database", "git", "mcp", "hitl", "shell", "claude_code"} {
+	for _, required := range []string{"ai", "review", "database", "git", "mcp", "hitl", "shell", "claude_code", "wasm"} {
 		if r.Get(required) == nil {
 			panic(fmt.Sprintf("worker %q is declared by workflows but was not registered", required))
 		}
