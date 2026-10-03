@@ -1,6 +1,12 @@
-// Package cache — NATSKVHeartbeat implements Worker heartbeat storage using NATS KV Store.
-// Heartbeats live in the NATS KV Store because JetStream ships one: no extra
-// infrastructure beyond the NATS cluster the system already requires.
+// Package cache — NATSKVHeartbeat is a worker-heartbeat store backed by the
+// NATS KV Store (JetStream ships one, so no extra infrastructure is needed).
+//
+// Honest scope: the production heartbeat path does NOT use this package —
+// it runs over the coordinator's gRPC heartbeat stream with in-memory state
+// (internal/coordinator/worker_manager.go). This store is the prepared
+// alternative for deployments that need heartbeats to survive coordinator
+// restarts or to be shared across processes. It is implemented and tested;
+// it is not wired into any binary yet.
 package cache
 
 import (
