@@ -28,6 +28,8 @@ import (
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("INFO: forge-coordinator starting...")
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
 
 	// --- Storage ---
 	store, err := openStorage(context.Background())
@@ -38,6 +40,16 @@ func main() {
 
 	// --- Coordinator ---
 	coord := coordinator.NewCoordinator(store)
+
+	// --- Discovery & leader election (etcd, optional) ---
+	// Without FORGE_ETCD_* this is a no-op and the coordinator stays in its
+	// standalone mode: direct worker registration, always leader.
+	stopDiscovery, err := setupDiscovery(appCtx, coord)
+	if err != nil {
+		log.Fatalf("FATAL: discovery: %v", err)
+	}
+	defer stopDiscovery()
+
 	if envBool("FORGEX_RUNTIME_OBSERVER_ENABLED") {
 		root := envOrDefault("FORGEX_RUNTIME_ROOT", ".forgex-runtime")
 		observerCfg := forgexruntime.FileObserverConfig{
@@ -145,6 +157,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 	log.Printf("INFO: received %s, shutting down...", sig)
+	appCancel() // stop leader election and worker watch before tearing down
 	grpcServer.GracefulStop()
 	profiler.Stop()
 	restLn.Close()
