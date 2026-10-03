@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/castwell/forge/internal/discovery"
+	"github.com/castwell/forge/internal/observability"
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 )
@@ -158,7 +159,9 @@ func (wm *WorkerManager) addWorker(node discovery.NodeInfo) {
 		return
 	}
 
-	conn, err := grpc.NewClient(node.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(node.Addr,
+		append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+			observability.ClientDialOptions()...)...)
 	if err != nil {
 		log.Printf("ERROR: connect to worker %s at %s: %v", node.ID, node.Addr, err)
 		return
@@ -294,7 +297,9 @@ func (wm *WorkerManager) checkWorkerHealth() {
 
 // AddWorkerDirect adds a worker directly (for use without etcd discovery, e.g., testing).
 func (wm *WorkerManager) AddWorkerDirect(id, addr string, handlers []string, capacity int) error {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+			observability.ClientDialOptions()...)...)
 	if err != nil {
 		return fmt.Errorf("connect to worker %s at %s: %w", id, addr, err)
 	}
