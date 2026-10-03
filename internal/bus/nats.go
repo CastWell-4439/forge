@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -110,7 +111,11 @@ func (b *NATSBus) PublishTask(ctx context.Context, taskID, handler string, paylo
 // Uses a durable consumer for persistent subscriptions.
 func (b *NATSBus) Subscribe(ctx context.Context, channel string) (<-chan string, error) {
 	subject := b.config.TaskSubjectPrefix + "." + channel
-	consumerName := "forge-" + channel
+	// Durable consumer names may not contain subject separators ('.'), so a
+	// natural channel like "workflow.events" is sanitised for the consumer
+	// name while the subject keeps the original spelling. Without this,
+	// every dotted channel failed at consumer creation.
+	consumerName := "forge-" + strings.NewReplacer(".", "_", ">", "_", "*", "_", " ", "_").Replace(channel)
 
 	consumer, err := b.js.CreateOrUpdateConsumer(ctx, b.config.StreamName, jetstream.ConsumerConfig{
 		Durable:       consumerName,

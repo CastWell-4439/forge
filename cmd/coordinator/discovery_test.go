@@ -41,7 +41,7 @@ func TestSetupDiscoveryStandaloneIsANoOp(t *testing.T) {
 	t.Setenv(envEtcdEndpoints, "")
 
 	coord := newTestCoordinator(t)
-	stop, err := setupDiscovery(context.Background(), coord)
+	stop, err := setupDiscovery(context.Background(), coord, nil)
 	require.NoError(t, err)
 	defer stop()
 
@@ -67,7 +67,7 @@ func TestSetupDiscoveryEmbeddedElectsLeaderAndSeesDiscoveredWorkers(t *testing.T
 	defer cancel()
 
 	coord := newTestCoordinator(t)
-	stop, err := setupDiscovery(ctx, coord)
+	stop, err := setupDiscovery(ctx, coord, nil)
 	require.NoError(t, err)
 	defer stop()
 
@@ -115,7 +115,7 @@ func TestSetupDiscoveryConnectsToExternalEndpoints(t *testing.T) {
 	defer cancel()
 
 	coord := newTestCoordinator(t)
-	stop, err := setupDiscovery(ctx, coord)
+	stop, err := setupDiscovery(ctx, coord, nil)
 	require.NoError(t, err)
 	defer stop()
 

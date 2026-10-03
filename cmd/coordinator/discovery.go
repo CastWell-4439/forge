@@ -44,10 +44,15 @@ const (
 //	SetDiscovery + StartLeaderElection  → leader gate (standalone = always leader)
 //	NewWorkerManager + SetWorkerManager → discovery-aware dispatch + dead-worker rescheduling
 //	WatchWorkers + RunFailureDetector   → discovered workers appear, dead ones get rescheduled
+//	SetHeartbeatStore (hb != nil)       → durable heartbeat snapshots (NATS KV)
 //
 // With neither variable set it does nothing and returns a no-op cleanup, so
 // an unconfigured coordinator keeps its previous behaviour exactly.
-func setupDiscovery(ctx context.Context, coord *coordinator.Coordinator) (func(), error) {
+//
+// The heartbeat store attaches here because WorkerManager is the only source
+// of periodic heartbeat events; standalone mode has no heartbeat stream to
+// persist (the two modes' liveness difference is documented in D-17).
+func setupDiscovery(ctx context.Context, coord *coordinator.Coordinator, hb coordinator.HeartbeatStore) (func(), error) {
 	nodeID := envOrDefault(envCoordID, defaultCoordID)
 
 	var (
@@ -87,6 +92,9 @@ func setupDiscovery(ctx context.Context, coord *coordinator.Coordinator) (func()
 
 	wm := coordinator.NewWorkerManager(d)
 	coord.SetWorkerManager(wm)
+	if hb != nil {
+		wm.SetHeartbeatStore(hb)
+	}
 	go func() {
 		if err := wm.WatchWorkers(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("ERROR: worker watch stopped: %v", err)

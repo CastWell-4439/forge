@@ -399,6 +399,12 @@ func (s *PGStorage) Close() error {
 	return nil
 }
 
+// Pool exposes the connection pool to same-process adapters — the
+// LISTEN/NOTIFY event bus needs its own connection for listening. It is
+// deliberately not part of the Storage interface: only the PG backend has a
+// pool to share.
+func (s *PGStorage) Pool() *pgxpool.Pool { return s.pool }
+
 // CountWorkflows returns a count of workflows grouped by status using an
 // efficient SQL GROUP BY instead of loading all rows.
 func (s *PGStorage) CountWorkflows(ctx context.Context) (map[WorkflowStatus]int32, error) {

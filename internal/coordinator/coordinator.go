@@ -35,6 +35,19 @@ type WorkerEntry struct {
 	Client   forgev1.WorkerServiceClient
 }
 
+// EventPublisher is the notification-side seam of the event pipeline: the
+// event log in storage stays the source of truth, and a publisher (NATS
+// JetStream or PostgreSQL LISTEN/NOTIFY) fans the same event out to
+// interested processes. Deliberately narrow — both bus implementations
+// already share this exact Publish signature.
+type EventPublisher interface {
+	Publish(ctx context.Context, channel, payload string) error
+}
+
+// EventChannel is the bus channel every persisted workflow/task event is
+// published on.
+const EventChannel = "workflow.events"
+
 // Coordinator orchestrates workflow execution by parsing DAGs,
 // creating task instances, scheduling them to workers, and driving
 // the workflow state machine to completion.
@@ -50,6 +63,7 @@ type Coordinator struct {
 	leader          *LeaderController
 	workerMgr       *WorkerManager
 	runtimeObserver forgexruntime.Observer
+	eventBus        EventPublisher
 
 	// dagCache stores parsed DAG definitions by workflow ID (for Saga compensation lookup).
 	dagCache   map[string]*DAG
@@ -559,6 +573,36 @@ func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, 
 		if err := c.runtimeObserver.ObserveEvent(ctx, event); err != nil {
 			log.Printf("WARN: forgex runtime observer event=%s workflow=%s task=%s: %v", eventType, workflowID, taskID, err)
 		}
+	}
+	c.publishEvent(ctx, event)
+}
+
+// SetEventBus installs the notification publisher. Nil keeps events
+// storage-only, which is the behaviour without any bus configured.
+func (c *Coordinator) SetEventBus(p EventPublisher) { c.eventBus = p }
+
+// publishEvent fans a persisted event out on the bus. Notification semantics:
+// the event is already durable in storage, so a publish failure is logged
+// and swallowed — the bus being down must not fail the workflow that
+// produced the event.
+func (c *Coordinator) publishEvent(ctx context.Context, event *storage.Event) {
+	if c.eventBus == nil {
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"workflow_id":  event.WorkflowID,
+		"task_id":      event.TaskID,
+		"type":         string(event.Type),
+		"sequence_num": event.SequenceNum,
+		"payload":      event.Payload,
+		"timestamp":    event.Timestamp,
+	})
+	if err != nil {
+		log.Printf("WARN: marshal event %s workflow %s for publish: %v", event.Type, event.WorkflowID, err)
+		return
+	}
+	if err := c.eventBus.Publish(ctx, EventChannel, string(body)); err != nil {
+		log.Printf("WARN: publish event %s workflow %s: %v", event.Type, event.WorkflowID, err)
 	}
 }
 
