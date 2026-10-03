@@ -87,7 +87,7 @@ func TestWorkflowWorkersCoverTheDocumentedSet(t *testing.T) {
 		registered[name] = true
 	}
 
-	for _, want := range []string{"ai", "review", "database", "git", "mcp", "hitl", "shell", "claude_code"} {
+	for _, want := range []string{"ai", "review", "database", "git", "mcp", "hitl", "shell", "claude_code", "wasm"} {
 		if !registered[want] {
 			t.Errorf("worker %q is not registered", want)
 		}
