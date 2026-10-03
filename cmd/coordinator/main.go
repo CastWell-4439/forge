@@ -41,10 +41,22 @@ func main() {
 	// --- Coordinator ---
 	coord := coordinator.NewCoordinator(store)
 
+	// --- Event notification bus + durable heartbeat store (optional) ---
+	// FORGE_NATS_URL → JetStream events + NATS KV heartbeats; PostgreSQL
+	// storage without NATS → LISTEN/NOTIFY; neither → storage-only events.
+	publisher, hbStore, closeBus, err := setupNATS(store)
+	if err != nil {
+		log.Fatalf("FATAL: event bus: %v", err)
+	}
+	defer closeBus()
+	if publisher != nil {
+		coord.SetEventBus(publisher)
+	}
+
 	// --- Discovery & leader election (etcd, optional) ---
 	// Without FORGE_ETCD_* this is a no-op and the coordinator stays in its
 	// standalone mode: direct worker registration, always leader.
-	stopDiscovery, err := setupDiscovery(appCtx, coord)
+	stopDiscovery, err := setupDiscovery(appCtx, coord, hbStore)
 	if err != nil {
 		log.Fatalf("FATAL: discovery: %v", err)
 	}
