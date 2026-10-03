@@ -38,6 +38,33 @@ func NewEtcdDiscovery(cfg EtcdConfig) *EtcdDiscovery {
 	return &EtcdDiscovery{config: cfg}
 }
 
+// NewEtcdClient connects Discovery to an existing etcd without starting one
+// locally: an external cluster, or another process's embedded server (the
+// coordinator's, for example). Everything except the server is identical —
+// Register, Watch, LeaderElect and Lock all run over the same client, and
+// Close only closes the client (d.server is nil).
+//
+// name identifies this member in elections; the worker side never campaigns
+// but passes its id anyway so the value is meaningful if it ever does.
+func NewEtcdClient(endpoints []string, name string) (*EtcdDiscovery, error) {
+	if len(endpoints) == 0 {
+		return nil, fmt.Errorf("etcd: at least one endpoint is required")
+	}
+	for _, ep := range endpoints {
+		if _, err := url.Parse(ep); err != nil {
+			return nil, fmt.Errorf("etcd: parse endpoint %q: %w", ep, err)
+		}
+	}
+	client, err := clientv3.New(clientv3.Config{
+		Endpoints:   endpoints,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connect etcd %v: %w", endpoints, err)
+	}
+	return &EtcdDiscovery{client: client, config: EtcdConfig{Name: name}}, nil
+}
+
 // Start starts the embedded etcd server and creates a client.
 func (d *EtcdDiscovery) Start() error {
 	cfg := embed.NewConfig()

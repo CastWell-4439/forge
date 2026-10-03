@@ -68,6 +68,16 @@ func main() {
 	// level before its handler runs. Shadow by default; enforcement is opt-in.
 	installRuntimeGate(w)
 
+	// --- etcd discovery (optional) ---
+	// Registers the worker in etcd on Start so a distributed coordinator can
+	// discover it. Unset keeps direct registration only.
+	if d, derr := etcdDiscoveryFromEnv(workerID); derr != nil {
+		log.Fatalf("FATAL: etcd discovery: %v", derr)
+	} else if d != nil {
+		w.SetDiscovery(d)
+		log.Printf("INFO: etcd discovery enabled (endpoints=%s)", os.Getenv(envEtcdEndpoints))
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
