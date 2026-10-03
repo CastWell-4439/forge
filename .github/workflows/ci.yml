@@ -137,6 +137,9 @@ jobs:
           POSTGRES_USER: forge
           POSTGRES_PASSWORD: forge
           POSTGRES_DB: forge_test
+          # Logical decoding for the CDC chain test (initdb-time flag, no
+          # restart needed): wal_level=logical from the first boot.
+          POSTGRES_INITDB_ARGS: "--wal-level=logical"
         ports:
           - 5432:5432
         options: >-
