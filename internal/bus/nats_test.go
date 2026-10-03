@@ -70,6 +70,33 @@ func TestNATSBus_PublishAndSubscribe(t *testing.T) {
 	}
 }
 
+// A dotted channel name — the natural spelling for "workflow.events" — must
+// work: durable consumer names reject '.', so the consumer name is
+// sanitised while the subject keeps the original channel. Regression: this
+// failed at consumer creation for every dotted channel.
+func TestNATSBus_DottedChannelRoundTrip(t *testing.T) {
+	_, nc := startEmbeddedNATS(t)
+
+	bus, err := NewNATSBus(nc, DefaultNATSConfig())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	ch, err := bus.Subscribe(ctx, "workflow.events")
+	require.NoError(t, err, "a dotted channel must be subscribable")
+	time.Sleep(500 * time.Millisecond)
+
+	require.NoError(t, bus.Publish(ctx, "workflow.events", `{"type":"TASK_COMPLETED"}`))
+
+	select {
+	case msg := <-ch:
+		assert.Contains(t, msg, "TASK_COMPLETED")
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for message on the dotted channel")
+	}
+}
+
 func TestNATSBus_PublishTask_Dedup(t *testing.T) {
 	_, nc := startEmbeddedNATS(t)
 
