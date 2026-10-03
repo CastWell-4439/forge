@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Identifier quoting is what makes dotted channels listenable; it needs no
+// database to verify.
+func TestQuoteIdentifier(t *testing.T) {
+	require.Equal(t, `"workflow.events"`, quoteIdentifier("workflow.events"))
+	require.Equal(t, `"plain_channel"`, quoteIdentifier("plain_channel"))
+	require.Equal(t, `"say ""hi"""`, quoteIdentifier(`say "hi"`))
+}
+
 // The PG LISTEN/NOTIFY bus had only close-semantics tests — nothing proved
 // an event actually travels from Publish to Subscribe. This runs against
 // CI's PostgreSQL service (same env gate as the other PG integration tests).
