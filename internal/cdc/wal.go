@@ -309,12 +309,21 @@ func (s *PGWALSource) ensurePublication(ctx context.Context, conn *pgconn.PgConn
 // queryHasRows runs a validated single-statement SELECT on the raw
 // replication connection and reports whether it returned any row. The SQL
 // must already be injection-safe (validated identifiers, quoted literals).
+//
+// It goes through conn.Exec (simple query protocol): replication
+// connections refuse the extended query protocol, so ExecParams/parameter
+// binding cannot be used here at all (CI caught this as SQLSTATE 08P01).
 func queryHasRows(ctx context.Context, conn *pgconn.PgConn, sql string) (bool, error) {
-	res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
-	if res.Err != nil {
-		return false, res.Err
+	results, err := conn.Exec(ctx, sql).ReadAll()
+	if err != nil {
+		return false, err
 	}
-	return len(res.Rows) > 0, nil
+	for _, res := range results {
+		if len(res.Rows) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // execDDL runs a validated DDL statement, draining the result so the
