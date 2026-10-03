@@ -13,6 +13,7 @@ import (
 	"github.com/castwell/forge/internal/worker"
 	"github.com/castwell/forge/internal/workers/ai"
 	"github.com/castwell/forge/internal/workers/claudecode"
+	"github.com/castwell/forge/internal/workers/database"
 	"github.com/castwell/forge/internal/workers/git"
 	hitlworker "github.com/castwell/forge/internal/workers/hitl"
 	"github.com/castwell/forge/internal/workers/mcp"
@@ -47,8 +48,10 @@ const defaultProjectConfig = "projects/example-project.yaml"
 //   - ai and review need an LLM key. The key is read when a node actually runs,
 //     so a missing key fails that one node with an actionable message rather
 //     than stopping the worker from starting.
-//   - database and mcp need external endpoints. Until those are wired they
-//     report exactly what is missing instead of failing with "unknown handler".
+//   - database is wired: fill FORGE_PG_DSN (or FORGE_PG_HOST and friends) and
+//     query_pg runs; without config it reports which variable to set.
+//   - mcp needs an endpoint. Until one is set it reports exactly what is
+//     missing instead of failing with "unknown handler".
 func registerBuiltinHandlers(r *worker.Registry) {
 	// Liveness probe: lets an operator verify the whole dispatch path
 	// (coordinator -> gRPC -> handler) without side effects.
@@ -135,12 +138,19 @@ func buildKnowledgeStack() *rag.HybridRetriever {
 	return rag.NewHybridRetriever(store, rag.EmbedderFromEnv()).WithReranker(rag.RerankerFromEnv())
 }
 
-// registerDatabase wires the database worker. The real PostgreSQL connector is
-// not wired yet, so this reports what it needs.
+// registerDatabase wires the database worker. The connector is real (pgxpool,
+// lazily dialled on first query), so the only requirement is configuration:
+// fill in a DSN and the worker runs queries. Until then this reports exactly
+// which variable would enable it instead of failing with "unknown handler".
 func registerDatabase(r *worker.Registry) {
-	r.Register("database", unconfiguredHandler("database",
-		fmt.Sprintf("no PostgreSQL connector is wired; it needs %s plus a connector implementation",
-			envPGDSN)))
+	cfg := database.ConfigFromEnv()
+	if cfg == nil || cfg.Postgres == nil {
+		r.Register("database", unconfiguredHandler("database",
+			fmt.Sprintf("no PostgreSQL configured; set %s (a full DSN) or %s to enable query_pg",
+				envPGDSN, database.EnvPGHost)))
+		return
+	}
+	r.Register("database", adaptWorkflowWorker("database", database.NewWorker(cfg, database.NewPoolConnector())))
 }
 
 // registerMCP wires the MCP worker when an endpoint is configured.

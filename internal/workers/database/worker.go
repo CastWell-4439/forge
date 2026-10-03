@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -14,6 +15,11 @@ const (
 	// QueryTimeout is the maximum execution time for a single query.
 	QueryTimeout = 30 * time.Second
 )
+
+// forbiddenKeyword lists the statements the read-only worker must never
+// pass through, anchored to word boundaries (see queryPG for why).
+var forbiddenKeyword = regexp.MustCompile(
+	`\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE)\b`)
 
 // PGConnector abstracts PostgreSQL operations for testability.
 type PGConnector interface {
@@ -72,11 +78,16 @@ func (w *Worker) queryPG(ctx context.Context, params map[string]any) (string, er
 		return "", fmt.Errorf("database worker: only SELECT queries allowed, got: %s", firstWord(sql))
 	}
 
-	// Dangerous patterns
-	for _, kw := range []string{"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"} {
-		if strings.Contains(normalized, kw) {
-			return "", fmt.Errorf("database worker: query contains forbidden keyword %q", kw)
-		}
+	// Dangerous patterns, matched as whole words: a substring check used to
+	// reject ordinary columns like updated_at / created_at ("UPDATE" inside
+	// "UPDATED_AT"), which made the read-only worker refuse exactly the
+	// queries it exists to run. Matching words keeps the protection (a real
+	// UPDATE/DROP still trips) while staying conservative inside string
+	// literals — "'drop table'" in a comment or value still blocks, which
+	// errs toward refusing a legitimate query rather than passing a clever
+	// one.
+	if m := forbiddenKeyword.FindString(normalized); m != "" {
+		return "", fmt.Errorf("database worker: query contains forbidden keyword %q", m)
 	}
 
 	// Enforce LIMIT
