@@ -137,9 +137,6 @@ jobs:
           POSTGRES_USER: forge
           POSTGRES_PASSWORD: forge
           POSTGRES_DB: forge_test
-          # Logical decoding for the CDC chain test (initdb-time flag, no
-          # restart needed): wal_level=logical from the first boot.
-          POSTGRES_INITDB_ARGS: "--wal-level=logical"
         ports:
           - 5432:5432
         options: >-
@@ -153,6 +150,29 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      # The CDC chain test needs logical decoding. wal_level is a start-time
+      # GUC, so it is set with ALTER SYSTEM and applied by restarting the
+      # service container in place (POSTGRES_INITDB_ARGS was tried first and
+      # made the container fail to start entirely). The step fails loudly if
+      # wal_level did not become logical — a silently skipped chain test
+      # would be a false green.
+      - name: Enable logical decoding (wal_level=logical)
+        run: |
+          set -e
+          cid=$(docker ps -q --filter "publish=5432" | head -n 1)
+          if [ -z "$cid" ]; then echo "::error postgres container not found"; exit 1; fi
+          docker exec "$cid" psql -U forge -d forge_test -c "ALTER SYSTEM SET wal_level = 'logical'"
+          docker restart "$cid" > /dev/null
+          for i in $(seq 1 30); do
+            if docker exec "$cid" pg_isready -U forge -d forge_test > /dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          lvl=$(docker exec "$cid" psql -U forge -d forge_test -tAc "SHOW wal_level")
+          echo "wal_level=$lvl"
+          if [ "$lvl" != "logical" ]; then
+            echo "::error wal_level is '$lvl', expected logical — the CDC chain test would skip"
+            exit 1
+          fi
       # go install resolves buf through the Go module proxy. The setup action
       # instead queries the GitHub releases API, which rate-limits shared
       # runner IPs and fails a job before any test runs.
