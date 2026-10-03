@@ -16,6 +16,10 @@ type PGStorage struct {
 	pool *pgxpool.Pool
 }
 
+// PGStorage must satisfy the same interface BoltStorage does; a method that
+// drifts out of sync belongs to neither backend silently.
+var _ Storage = (*PGStorage)(nil)
+
 // NewPGStorage creates a new PostgreSQL storage with a connection pool.
 func NewPGStorage(ctx context.Context, dsn string) (*PGStorage, error) {
 	config, err := pgxpool.ParseConfig(dsn)

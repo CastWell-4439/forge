@@ -23,7 +23,6 @@ import (
 	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
 	"github.com/castwell/forge/internal/forgex/toolgw"
 	"github.com/castwell/forge/internal/observability"
-	"github.com/castwell/forge/internal/storage"
 )
 
 func main() {
@@ -31,7 +30,7 @@ func main() {
 	log.Println("INFO: forge-coordinator starting...")
 
 	// --- Storage ---
-	store, err := storage.NewBoltStorage(envOrDefault("FORGE_BOLT_PATH", "forge.db"))
+	store, err := openStorage(context.Background())
 	if err != nil {
 		log.Fatalf("FATAL: open storage: %v", err)
 	}
@@ -75,14 +74,11 @@ func main() {
 
 	// --- Observability ---
 	metrics := observability.NewMetrics()
-	tracer := observability.NewTracer(observability.TracerConfig{
-		ServiceName: "forge-coordinator",
-		SampleRate:  1.0,
-	})
+	// The tracer is installed process-wide: the gRPC server and every dial
+	// site read it through the interceptors, so wiring happens here once.
+	observability.TracerConfigEnv("forge-coordinator")
 	profiler := observability.NewProfiler(observability.DefaultProfilingConfig())
 	profiler.Start()
-
-	_ = tracer // attach to gRPC interceptors in future
 
 	// --- HTTP Server (metrics + profiling + health) ---
 	mux := http.NewServeMux()
@@ -112,7 +108,7 @@ func main() {
 		log.Fatalf("FATAL: listen gRPC %s: %v", grpcAddr, err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(observability.ServerOptions()...)
 	forgev1.RegisterCoordinatorServiceServer(grpcServer, coord)
 	reflection.Register(grpcServer)
 
@@ -126,7 +122,8 @@ func main() {
 	// --- gRPC-Gateway REST Server ---
 	ctx := context.Background()
 	gwMux := runtime.NewServeMux()
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	opts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		observability.ClientDialOptions()...)
 	if err := forgev1.RegisterCoordinatorServiceHandlerFromEndpoint(ctx, gwMux, grpcAddr, opts); err != nil {
 		log.Fatalf("FATAL: register gRPC-Gateway: %v", err)
 	}
