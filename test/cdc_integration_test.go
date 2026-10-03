@@ -5,6 +5,7 @@ package test
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -16,17 +17,27 @@ import (
 	"github.com/castwell/forge/internal/cdc"
 )
 
-const (
+// DSNs are overridable from the environment. The comments below always
+// claimed this; the code now actually does it.
+var (
 	// Standard connection for DML operations.
-	// Override with FORGE_TEST_DSN env var for your environment.
-	testDSN = "postgres://forge:forge@localhost:5432/forge_test"
+	// Override with FORGE_TEST_DSN for your environment.
+	testDSN = cdcEnvOr("FORGE_TEST_DSN", "postgres://forge:forge@localhost:5432/forge_test")
 	// Replication connection for WAL streaming.
-	// Override with FORGE_TEST_REPL_DSN env var for your environment.
-	testReplDSN = "postgres://forge:forge@localhost:5432/forge_test?replication=database"
-	testTable   = "forge_cdc_test"
-	testPub     = "forge_pub"
-	testSlot    = "forge_cdc_integration_test"
+	// Override with FORGE_TEST_REPL_DSN for your environment.
+	testReplDSN = cdcEnvOr("FORGE_TEST_REPL_DSN",
+		"postgres://forge:forge@localhost:5432/forge_test?replication=database")
+	testTable = "forge_cdc_test"
+	testPub   = "forge_pub"
+	testSlot  = "forge_cdc_integration_test"
 )
+
+func cdcEnvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 func TestWALSource_Integration(t *testing.T) {
 	ctx := context.Background()

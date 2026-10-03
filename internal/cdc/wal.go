@@ -105,6 +105,13 @@ func (s *PGWALSource) Subscribe(ctx context.Context, handler func(Event)) error 
 		}
 	}
 
+	// Ensure the publication exists and covers the target table. README
+	// promises "自动创建 Replication Slot + Publication"; without this the
+	// replication start fails against a fresh database.
+	if err := s.ensurePublication(ctx, conn); err != nil {
+		return err
+	}
+
 	// Identify system to get the current WAL position.
 	sysident, err := pglogrepl.IdentifySystem(ctx, conn)
 	if err != nil {
@@ -244,6 +251,117 @@ func (s *PGWALSource) ensureSlot(ctx context.Context, conn *pgconn.PgConn) error
 	}
 	log.Printf("INFO: pg-wal: created replication slot %q", s.slotName)
 	return nil
+}
+
+// ensurePublication makes the configured publication cover the target table:
+// it creates the publication when missing and adds the table when the
+// publication exists without it. DDL and catalog lookups on this raw
+// connection take no bind parameters, so both names are validated as
+// identifiers first — anything unusual is refused rather than interpolated.
+func (s *PGWALSource) ensurePublication(ctx context.Context, conn *pgconn.PgConn) error {
+	if err := validatePubIdentifier(s.publication); err != nil {
+		return fmt.Errorf("pg-wal: publication: %w", err)
+	}
+	schema, table, err := splitRelation(s.config.Table)
+	if err != nil {
+		return fmt.Errorf("pg-wal: table: %w", err)
+	}
+
+	// Already published?
+	tableFilter := fmt.Sprintf("tablename = '%s'", table)
+	if schema != "" {
+		tableFilter += fmt.Sprintf(" AND schemaname = '%s'", schema)
+	}
+	member, err := queryHasRows(ctx, conn, fmt.Sprintf(
+		"SELECT 1 FROM pg_publication_tables WHERE pubname = '%s' AND %s",
+		s.publication, tableFilter))
+	if err != nil {
+		return fmt.Errorf("pg-wal: check publication: %w", err)
+	}
+	if member {
+		return nil
+	}
+
+	rel := quotePubIdent(s.config.Table)
+	pubExists, err := queryHasRows(ctx, conn, fmt.Sprintf(
+		"SELECT 1 FROM pg_publication WHERE pubname = '%s'", s.publication))
+	if err != nil {
+		return fmt.Errorf("pg-wal: check publication name: %w", err)
+	}
+
+	if !pubExists {
+		ddl := fmt.Sprintf("CREATE PUBLICATION %s FOR TABLE %s", quotePubIdent(s.publication), rel)
+		if err := execDDL(ctx, conn, ddl); err != nil {
+			return fmt.Errorf("pg-wal: create publication: %w", err)
+		}
+		log.Printf("INFO: pg-wal: created publication %q for %s", s.publication, s.config.Table)
+		return nil
+	}
+
+	ddl := fmt.Sprintf("ALTER PUBLICATION %s ADD TABLE %s", quotePubIdent(s.publication), rel)
+	if err := execDDL(ctx, conn, ddl); err != nil {
+		return fmt.Errorf("pg-wal: add table to publication: %w", err)
+	}
+	log.Printf("INFO: pg-wal: publication %q now covers %s", s.publication, s.config.Table)
+	return nil
+}
+
+// queryHasRows runs a validated single-statement SELECT on the raw
+// replication connection and reports whether it returned any row. The SQL
+// must already be injection-safe (validated identifiers, quoted literals).
+func queryHasRows(ctx context.Context, conn *pgconn.PgConn, sql string) (bool, error) {
+	res := conn.ExecParams(ctx, sql, nil, nil, nil, nil).Read()
+	if res.Err != nil {
+		return false, res.Err
+	}
+	return len(res.Rows) > 0, nil
+}
+
+// execDDL runs a validated DDL statement, draining the result so the
+// connection stays usable for the next command.
+func execDDL(ctx context.Context, conn *pgconn.PgConn, sql string) error {
+	return conn.Exec(ctx, sql).Close()
+}
+
+// validatePubIdentifier accepts the identifier shape PostgreSQL publications
+// realistically use: letters, digits, underscore.
+func validatePubIdentifier(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty name")
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
+			return fmt.Errorf("invalid identifier %q (letters, digits and underscore only)", name)
+		}
+	}
+	return nil
+}
+
+// splitRelation splits "schema.table" into its parts; "table" alone returns
+// an empty schema.
+func splitRelation(rel string) (schema, table string, err error) {
+	parts := strings.Split(rel, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return "", "", fmt.Errorf("invalid relation %q", rel)
+	}
+	for _, p := range parts {
+		if err := validatePubIdentifier(p); err != nil {
+			return "", "", fmt.Errorf("invalid relation %q: %w", rel, err)
+		}
+	}
+	if len(parts) == 2 {
+		return parts[0], parts[1], nil
+	}
+	return "", parts[0], nil
+}
+
+// quotePubIdent quotes a validated relation for DDL use.
+func quotePubIdent(rel string) string {
+	parts := strings.Split(rel, ".")
+	for i, p := range parts {
+		parts[i] = `"` + p + `"`
+	}
+	return strings.Join(parts, ".")
 }
 
 // processWALData parses pgoutput v2 messages from a WAL data chunk.
