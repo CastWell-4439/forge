@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,11 +38,21 @@ func NewPGNotifyBus(pool *pgxpool.Pool) *PGNotifyBus {
 
 // Publish sends a NOTIFY on the given channel with the payload.
 func (b *PGNotifyBus) Publish(ctx context.Context, channel, payload string) error {
+	// pg_notify's first argument is a string value, not an identifier, so
+	// any channel name works here without quoting.
 	_, err := b.pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	if err != nil {
 		return fmt.Errorf("pg notify channel %s: %w", channel, err)
 	}
 	return nil
+}
+
+// quoteIdentifier quotes a PostgreSQL identifier for LISTEN's identifier
+// position. Without it a dotted channel like "workflow.events" parsed as
+// schema-qualified name and failed with a syntax error — the same class of
+// untested-channel-name bug as the NATS durable consumer name.
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // Subscribe starts listening on the given PostgreSQL channel and returns a
@@ -53,7 +64,7 @@ func (b *PGNotifyBus) Subscribe(ctx context.Context, channel string) (<-chan str
 		return nil, fmt.Errorf("acquire connection for LISTEN %s: %w", channel, err)
 	}
 
-	_, err = conn.Exec(ctx, fmt.Sprintf("LISTEN %s", channel))
+	_, err = conn.Exec(ctx, fmt.Sprintf("LISTEN %s", quoteIdentifier(channel)))
 	if err != nil {
 		conn.Release()
 		return nil, fmt.Errorf("listen on channel %s: %w", channel, err)
