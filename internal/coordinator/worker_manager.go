@@ -66,6 +66,10 @@ type WorkerManager struct {
 	// onWorkerDead is called when a worker is marked DEAD.
 	// The coordinator sets this to reschedule tasks.
 	onWorkerDead func(workerID string)
+
+	// hbStore, when set, persists heartbeat snapshots durably (NATS KV).
+	// See heartbeat_store.go; nil = heartbeats stay memory-only.
+	hbStore HeartbeatStore
 }
 
 // NewWorkerManager creates a new WorkerManager.
@@ -153,9 +157,9 @@ func (wm *WorkerManager) handleWorkerEvent(evt discovery.Event) {
 // addWorker registers a new worker from a discovery event.
 func (wm *WorkerManager) addWorker(node discovery.NodeInfo) {
 	wm.mu.Lock()
-	defer wm.mu.Unlock()
 
 	if _, exists := wm.workers[node.ID]; exists {
+		wm.mu.Unlock()
 		return
 	}
 
@@ -164,6 +168,7 @@ func (wm *WorkerManager) addWorker(node discovery.NodeInfo) {
 			observability.ClientDialOptions()...)...)
 	if err != nil {
 		log.Printf("ERROR: connect to worker %s at %s: %v", node.ID, node.Addr, err)
+		wm.mu.Unlock()
 		return
 	}
 
@@ -180,9 +185,15 @@ func (wm *WorkerManager) addWorker(node discovery.NodeInfo) {
 		Conn:          conn,
 		Client:        client,
 	}
+	snap := snapshotFor(wm.workers[node.ID], 0, nil)
 
 	// Start heartbeat sender for this worker.
 	wm.startHeartbeat(node.ID, client)
+	wm.mu.Unlock()
+
+	// Persist outside the lock: the store does I/O and must not stall
+	// bookkeeping (see heartbeat_store.go).
+	wm.persistHeartbeat(snap)
 
 	log.Printf("INFO: worker %s registered at %s (capacity=%d, handlers=%v)", node.ID, node.Addr, capacity, handlers)
 }
@@ -221,16 +232,17 @@ func (wm *WorkerManager) removeWorker(id string) {
 	if w.Conn != nil {
 		w.Conn.Close()
 	}
+	wm.unpersistHeartbeat(id)
 	log.Printf("INFO: worker %s removed", id)
 }
 
 // UpdateHeartbeat records a successful heartbeat from a worker.
 func (wm *WorkerManager) UpdateHeartbeat(workerID string, activeTasks int, capacity int) {
 	wm.mu.Lock()
-	defer wm.mu.Unlock()
 
 	w, exists := wm.workers[workerID]
 	if !exists {
+		wm.mu.Unlock()
 		return
 	}
 
@@ -239,6 +251,12 @@ func (wm *WorkerManager) UpdateHeartbeat(workerID string, activeTasks int, capac
 	w.ActiveTasks = activeTasks
 	w.Capacity = capacity
 	w.Status = WorkerStatusActive
+	snap := snapshotFor(w, activeTasks, nil)
+	wm.mu.Unlock()
+
+	// Outside the lock (I/O); the durable copy refreshes the KV TTL, so a
+	// live worker's key never expires while it is beating.
+	wm.persistHeartbeat(snap)
 
 	if oldStatus != WorkerStatusActive {
 		log.Printf("INFO: worker %s recovered from %s to ACTIVE", workerID, oldStatus)
@@ -293,6 +311,11 @@ func (wm *WorkerManager) checkWorkerHealth() {
 			wm.onWorkerDead(id)
 		}
 	}
+	// A dead worker's durable snapshot goes away too; KV TTL remains the
+	// backstop for a delete that never lands.
+	for _, id := range deadWorkerIDs {
+		wm.unpersistHeartbeat(id)
+	}
 }
 
 // AddWorkerDirect adds a worker directly (for use without etcd discovery, e.g., testing).
@@ -305,7 +328,6 @@ func (wm *WorkerManager) AddWorkerDirect(id, addr string, handlers []string, cap
 	}
 
 	wm.mu.Lock()
-	defer wm.mu.Unlock()
 	wm.workers[id] = &WorkerInfo{
 		Registration:  discovery.NodeInfo{ID: id, Addr: addr},
 		Handlers:      handlers,
@@ -315,6 +337,10 @@ func (wm *WorkerManager) AddWorkerDirect(id, addr string, handlers []string, cap
 		Conn:          conn,
 		Client:        forgev1.NewWorkerServiceClient(conn),
 	}
+	snap := snapshotFor(wm.workers[id], 0, nil)
+	wm.mu.Unlock()
+
+	wm.persistHeartbeat(snap)
 	return nil
 }
 
