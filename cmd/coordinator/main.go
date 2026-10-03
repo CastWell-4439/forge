@@ -53,6 +53,19 @@ func main() {
 		coord.SetEventBus(publisher)
 	}
 
+	// Dispatch-time template rendering: workflow {{...}} params resolve
+	// against the workflow's inputs and its dependencies' named outputs just
+	// before execution — the execution half of the YAML template contract.
+	coord.SetParamRenderer(registryParamRenderer())
+
+	// --- CDC triggers (optional) ---
+	// FORGE_CDC_TRIGGERS unset = off; configured-but-broken fails startup.
+	stopCDC, err := setupCDC(appCtx, coord)
+	if err != nil {
+		log.Fatalf("FATAL: cdc: %v", err)
+	}
+	defer stopCDC()
+
 	// --- Discovery & leader election (etcd, optional) ---
 	// Without FORGE_ETCD_* this is a no-op and the coordinator stays in its
 	// standalone mode: direct worker registration, always leader.
