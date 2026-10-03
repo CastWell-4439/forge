@@ -21,14 +21,11 @@ func main() {
 
 	// --- Observability ---
 	metrics := observability.NewMetrics()
-	tracer := observability.NewTracer(observability.TracerConfig{
-		ServiceName: "forge-worker-" + lang,
-		SampleRate:  1.0,
-	})
+	// Installed process-wide: the worker's gRPC server and its dial to the
+	// coordinator read it through the tracing interceptors.
+	observability.TracerConfigEnv("forge-worker-" + lang)
 	profiler := observability.NewProfiler(observability.DefaultProfilingConfig())
 	profiler.Start()
-
-	_ = tracer // attach to gRPC interceptors in future
 
 	// --- HTTP Server (metrics + profiling + health) ---
 	mux := http.NewServeMux()

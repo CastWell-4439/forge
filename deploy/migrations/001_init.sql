@@ -1,8 +1,8 @@
 -- Forge Phase 1B: Initial schema migration
 -- Tables from tech spec section 6.1
 
--- 工作流定义
-CREATE TABLE workflow_definitions (
+-- 宸ヤ綔娴佸畾涔?
+CREATE TABLE IF NOT EXISTS workflow_definitions (
     id          BIGSERIAL PRIMARY KEY,
     name        VARCHAR(255) NOT NULL,
     version     INT NOT NULL DEFAULT 1,
@@ -12,8 +12,8 @@ CREATE TABLE workflow_definitions (
     UNIQUE(name, version)
 );
 
--- 工作流实例（每次执行一条记录）
-CREATE TABLE workflow_instances (
+-- 宸ヤ綔娴佸疄渚嬶紙姣忔鎵ц涓€鏉¤褰曪級
+CREATE TABLE IF NOT EXISTS workflow_instances (
     id          VARCHAR(36) PRIMARY KEY,
     def_id      BIGINT REFERENCES workflow_definitions(id),
     name        VARCHAR(255) NOT NULL DEFAULT '',
@@ -26,11 +26,11 @@ CREATE TABLE workflow_instances (
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     timeout_at  TIMESTAMPTZ
 );
-CREATE INDEX idx_wf_status ON workflow_instances(status);
-CREATE INDEX idx_wf_created ON workflow_instances(created_at);
+CREATE INDEX IF NOT EXISTS idx_wf_status ON workflow_instances(status);
+CREATE INDEX IF NOT EXISTS idx_wf_created ON workflow_instances(created_at);
 
--- 任务实例
-CREATE TABLE task_instances (
+-- 浠诲姟瀹炰緥
+CREATE TABLE IF NOT EXISTS task_instances (
     id              VARCHAR(36) PRIMARY KEY,
     workflow_id     VARCHAR(36) REFERENCES workflow_instances(id),
     task_name       VARCHAR(255) NOT NULL,
@@ -48,13 +48,13 @@ CREATE TABLE task_instances (
     timeout_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_task_wf ON task_instances(workflow_id);
-CREATE INDEX idx_task_status ON task_instances(status);
-CREATE INDEX idx_task_worker ON task_instances(worker_id);
-CREATE INDEX idx_task_claim ON task_instances(status, handler) WHERE status = 'READY';
+CREATE INDEX IF NOT EXISTS idx_task_wf ON task_instances(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_task_status ON task_instances(status);
+CREATE INDEX IF NOT EXISTS idx_task_worker ON task_instances(worker_id);
+CREATE INDEX IF NOT EXISTS idx_task_claim ON task_instances(status, handler) WHERE status = 'READY';
 
--- 事件日志（事件溯源）
-CREATE TABLE events (
+-- 浜嬩欢鏃ュ織锛堜簨浠舵函婧愶級
+CREATE TABLE IF NOT EXISTS events (
     id              BIGSERIAL PRIMARY KEY,
     workflow_id     VARCHAR(36) NOT NULL,
     task_id         VARCHAR(36),
@@ -63,10 +63,10 @@ CREATE TABLE events (
     sequence_num    BIGINT NOT NULL,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX idx_event_wf ON events(workflow_id, sequence_num);
+CREATE INDEX IF NOT EXISTS idx_event_wf ON events(workflow_id, sequence_num);
 
--- Cron 触发器
-CREATE TABLE cron_triggers (
+-- Cron 瑙﹀彂鍣?
+CREATE TABLE IF NOT EXISTS cron_triggers (
     id              BIGSERIAL PRIMARY KEY,
     workflow_name   VARCHAR(255) NOT NULL,
     cron_expr       VARCHAR(100) NOT NULL,

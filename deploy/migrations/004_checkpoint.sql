@@ -1,6 +1,6 @@
 -- 004_checkpoint.sql: Agent checkpoint persistence for crash recovery.
 
-CREATE TABLE agent_checkpoints (
+CREATE TABLE IF NOT EXISTS agent_checkpoints (
     id          TEXT PRIMARY KEY,
     session_id  TEXT NOT NULL,
     step_index  INTEGER NOT NULL,
@@ -11,4 +11,4 @@ CREATE TABLE agent_checkpoints (
     CONSTRAINT uq_checkpoint_session_step UNIQUE (session_id, step_index)
 );
 
-CREATE INDEX idx_checkpoints_session ON agent_checkpoints (session_id, step_index DESC);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON agent_checkpoints (session_id, step_index DESC);

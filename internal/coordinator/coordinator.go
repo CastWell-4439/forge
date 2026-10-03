@@ -17,6 +17,7 @@ import (
 
 	"github.com/castwell/forge/internal/discovery"
 	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
+	"github.com/castwell/forge/internal/observability"
 	"github.com/castwell/forge/internal/saga"
 	"github.com/castwell/forge/internal/storage"
 
@@ -66,7 +67,9 @@ func NewCoordinator(store storage.Storage) *Coordinator {
 
 // RegisterWorker registers a worker with the coordinator so tasks can be dispatched to it.
 func (c *Coordinator) RegisterWorker(ctx context.Context, id, addr string, handlers []string, capacity int) error {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		observability.ClientDialOptions()...)
+	conn, err := grpc.NewClient(addr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("connect to worker %s at %s: %w", id, addr, err)
 	}

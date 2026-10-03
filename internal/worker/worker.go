@@ -12,6 +12,7 @@ import (
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/castwell/forge/internal/discovery"
+	"github.com/castwell/forge/internal/observability"
 )
 
 // Worker connects to a Coordinator, registers itself, and serves task execution requests.
@@ -78,7 +79,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		return fmt.Errorf("listen on %s: %w", w.addr, err)
 	}
 
-	w.server = grpc.NewServer()
+	w.server = grpc.NewServer(observability.ServerOptions()...)
 	forgev1.RegisterWorkerServiceServer(w.server, w)
 
 	go func() {
@@ -98,7 +99,9 @@ func (w *Worker) Stop() {
 
 // registerWithCoordinator connects to the coordinator and sends a Register RPC.
 func (w *Worker) registerWithCoordinator(ctx context.Context) error {
-	conn, err := grpc.NewClient(w.coordAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		observability.ClientDialOptions()...)
+	conn, err := grpc.NewClient(w.coordAddr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("connect to coordinator %s: %w", w.coordAddr, err)
 	}
