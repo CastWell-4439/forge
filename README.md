@@ -81,7 +81,7 @@
 | **AI Agent 运行时** | ReAct 推理循环、RAG 混合检索、MCP 工具协议、结构化输出校验、安全护栏 |
 | **ForgeX 控制面** | 工具契约与策略、停止仲裁、失败指纹、追加式 run 工件、确定性评测与回归闭环 |
 | **人工闸门 (HITL)** | 内建审批/通知/等待机制，可经外部系统推送审批卡片，支持超时升级 |
-| **可插拔 Worker** | AI、Git、Shell、Database、Review、Claude Code、MCP、HITL 共 8 种内建 Worker |
+| **可插拔 Worker** | AI、Git、Shell、Database、Review、Claude Code、MCP、HITL、Wasm 共 9 种内建 Worker |
 | **事件溯源** | 完整操作审计轨迹，支持 `Replay` / `ReplayUntil` 重建任意时点状态 |
 | **Saga 补偿** | 多步流程中途失败时按逆序执行补偿回滚 |
 | **CDC 变更捕获** | PostgreSQL WAL 逻辑复制流式监听 + 轮询回退双通道 |
@@ -314,6 +314,7 @@ Worker 通过 gRPC 连接 Coordinator，接收任务、执行、返回结果。�
 | **Review Worker** | `internal/workers/review/` | 计划与代码评审（可结合 RAG 检索项目约定） |
 | **HITL Worker** | `internal/workers/hitl/` | 4 种动作：`notify` / `request_approval` / `request_input` / `notify_and_wait` |
 | **MCP Worker** | `internal/workers/mcp/` | MCP 协议操作（list_tools / call_tool / list_resources 等） |
+| **Wasm Worker** | `internal/workers/wasm/` | Wasm 插件执行（wazero 沙箱；`action` 即插件名；插件目录自动发现 + SHA-256 身份） |
 
 #### 安全边界
 
