@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	agentcore "github.com/castwell/forge/internal/agent"
+	"github.com/castwell/forge/internal/agent/guardrails"
 	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/castwell/forge/internal/worker"
 	agentworker "github.com/castwell/forge/internal/workers/agent"
@@ -23,6 +24,7 @@ import (
 const (
 	envAgentMode          = "FORGE_AGENT_MODE"
 	envAgentWorkspace     = "FORGE_AGENT_WORKSPACE"
+	envAgentGuard         = "FORGE_AGENT_GUARD"
 	envWebSearchProvider  = "FORGE_WEB_SEARCH_PROVIDER"
 	envWebSearchAPIKey    = "FORGE_WEB_SEARCH_API_KEY"
 	envWebSearchEndpoint  = "FORGE_WEB_SEARCH_ENDPOINT"
@@ -62,6 +64,17 @@ func registerAgent(r *worker.Registry) {
 			cfg.WebFetchAllowPrivate = truthy(os.Getenv(envWebFetchAllowPriv))
 		}),
 	}
+
+	// Tool output is untrusted input to the model: a fetched page can say
+	// "ignore your instructions", and the observation is delivered as a
+	// user-role message. Screening is therefore ON by default — an agent that
+	// browses without it hands the internet a channel into its own
+	// instruction stream. FORGE_AGENT_GUARD=off opts out explicitly.
+	guardEnabled := agentGuardEnabled()
+	if guardEnabled {
+		opts = append(opts, agentcore.WithToolOutputGuard(guardrails.NewInjectionDetector()))
+	}
+
 	switch mode {
 	case "", "real":
 		// Real is the zero-value default inside Agent; nothing to add.
@@ -74,7 +87,22 @@ func registerAgent(r *worker.Registry) {
 	}
 
 	r.Register("agent", adaptWorkflowWorker("agent", agentworker.NewWorker(agentcore.New(llm, opts...))))
-	log.Printf("INFO: agent worker registered (mode=%s workspace=%s)", mode, workspace)
+	log.Printf("INFO: agent worker registered (mode=%s workspace=%s guard=%v)", mode, workspace, guardEnabled)
+}
+
+// agentGuardEnabled resolves FORGE_AGENT_GUARD. Unset and unrecognised values
+// both mean ON: injection screening is a security default, so the only way to
+// lose it is to ask for it explicitly — a typo must never silently disable it.
+func agentGuardEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envAgentGuard))) {
+	case "off", "0", "false", "no":
+		return false
+	case "", "on", "1", "true", "yes":
+		return true
+	default:
+		log.Printf("WARN: unknown %s %q (want on|off); keeping the guard on", envAgentGuard, os.Getenv(envAgentGuard))
+		return true
+	}
 }
 
 // truthy parses the usual affirmative env values.
