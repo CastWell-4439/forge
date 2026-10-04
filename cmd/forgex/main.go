@@ -137,8 +137,31 @@ func runDemoCase(caseName, root, taxonomy, policy, packet, contracts, toolPolicy
 		return demo.RunGenericContractViolationDemoWithControl(context.Background(), root, taxonomy, policy, packet, contracts, toolPolicy, authority)
 	case "generic-contract-success":
 		return demo.RunGenericContractSuccessDemoWithControl(context.Background(), root, taxonomy, policy, packet, contracts, toolPolicy, authority)
+	case "generic-policy-denied":
+		if packet == "" {
+			packet = demo.DefaultPolicyDeniedPacketPath
+		}
+		return demo.RunGenericPolicyDeniedDemoWithControl(context.Background(), root, taxonomy, policy, packet, contracts, toolPolicy, authority)
+	case "packet":
+		// Data-driven entry: replay whatever packet is given, with no case id
+		// to switch on. This is how a new scenario is added without Go code.
+		if packet == "" {
+			return "", fmt.Errorf("--case packet requires --packet <path>")
+		}
+		if authority == "" {
+			authority = "L0"
+		}
+		return demo.RunScenario(context.Background(), demo.ScenarioConfig{
+			Root:           root,
+			TaxonomyPath:   taxonomy,
+			PolicyPath:     policy,
+			PacketPath:     packet,
+			ContractsPath:  contracts,
+			ToolPolicyPath: toolPolicy,
+			AuthorityLevel: authority,
+		})
 	default:
-		return "", fmt.Errorf("unknown demo case: %s (available: generic-contract-violation, generic-contract-success)", caseName)
+		return "", fmt.Errorf("unknown demo case: %s (available: generic-contract-violation, generic-contract-success, generic-policy-denied, packet)", caseName)
 	}
 }
 
@@ -765,7 +788,9 @@ Commands:
   serve      Start the local ForgeX Control Plane product API server
 
 run-demo flags:
-  --case      Demo case to run: generic-contract-violation | generic-contract-success (default: generic-contract-violation)
+  --case      Demo case to run: generic-contract-violation | generic-contract-success |
+              generic-policy-denied | packet (default: generic-contract-violation)
+              "packet" replays whatever --packet names, with no case id to switch on
   --root      Root directory for run artifacts (default: .forgex)
   --taxonomy  Failure taxonomy YAML path
   --policy       Stop policy YAML path
@@ -828,6 +853,7 @@ serve flags:
 Examples:
   forgex run-demo --case generic-contract-violation --root .forgex
   forgex run-demo --case generic-contract-success --root .forgex
+  forgex run-demo --case generic-policy-denied --root .forgex
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_regression_v1
   forgex eval --run .forgex/runs/<run_id> --suite generic_contract_happy_v1
   forgex eval-repeat --case generic-contract-success --n 5 --root .forgex-repeat

@@ -94,7 +94,7 @@ func RunScenario(ctx context.Context, cfg ScenarioConfig) (string, error) {
 		},
 		Decisions: []string{
 			fmt.Sprintf("AgentSuitabilityGate=%s controls=%v", inputs.suitability.Decision, inputs.suitability.RequiredControls),
-			"Tool call passed the policy decision before simulated execution.",
+			"Tool call is authorized before simulated execution; the policy decision below decides whether it runs.",
 		},
 		NextActions: []string{"None; run completed successfully."},
 		UpdatedAt:   now,
@@ -119,16 +119,44 @@ func RunScenario(ctx context.Context, cfg ScenarioConfig) (string, error) {
 		return "", fmt.Errorf("record run_started: %w", err)
 	}
 
-	// 2. Authorize the call before simulating it.
+	// 2. Authorize the call before simulating it. The decision is not a record
+	// to file and forget: its execution mode decides what may happen next.
 	policyDecision := forgexpolicy.NewEngine(inputs.toolPolicy).
 		Decide(runID, forgexpolicy.AuthorityLevel(inputs.authorityLevel), toolContract)
 	modelPolicyDecision := toModelPolicyDecision(policyDecision)
 	if err := store.AppendPolicyDecision(ctx, modelPolicyDecision); err != nil {
 		return "", fmt.Errorf("append policy decision: %w", err)
 	}
+	execMode := policyDecision.Action.Mode()
+
+	// A blocked or held call never reaches execution, and the run does not
+	// proceed on its own. Everything from here branches on execMode, so the
+	// ledger, stop decision, artifacts and run status all derive from the
+	// real decision instead of asserting that it passed.
+	if execMode != forgexpolicy.ExecutionProceed && execMode != forgexpolicy.ExecutionDryRun {
+		return finishWithoutExecution(ctx, barrierInput{
+			Store:          store,
+			Recorder:       recorder,
+			Run:            run,
+			Ledger:         ledger,
+			Packet:         packet,
+			Now:            now,
+			ContextPack:    contextPack,
+			PolicyDecision: modelPolicyDecision,
+			Action:         policyDecision.Action,
+			Mode:           execMode,
+			Reason:         policyDecision.Reason,
+			Taxonomy:       inputs.taxonomy,
+			StopPolicy:     inputs.stopPolicy,
+		})
+	}
 
 	// 3. Simulate the tool call. Nothing external is ever invoked; the arguments
 	// come from the packet, so what the scenario does is what the packet says.
+	// A dry run keeps this record — the call was considered, and the contract
+	// checks below are its output — but the recorded args carry the mode so the
+	// report cannot be read as "the tool ran".
+	args["forge_execution_mode"] = string(execMode)
 	callID, err := recorder.ToolCallStarted(ctx, defaultExpensiveTool, args)
 	if err != nil {
 		return "", fmt.Errorf("record tool call: %w", err)
