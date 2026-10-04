@@ -1,0 +1,22 @@
+id: generic_policy_denied_demo
+name: Generic policy denial demo
+goal: Attempt demo.expensive_generation without the authority the contract requires.
+# The contract requires L2 (required_authority_level: L2) and declares an
+# external_api_call side effect. Running at L0 is below both, so the policy
+# engine denies the call before anything is executed — this packet is what
+# makes the "governance actually gates execution" path replayable.
+authority_level: L0
+inputs:
+  request_id: demo-req-003
+  batch_id: demo-batch-003
+  tool_payload:
+    required_assets:
+      - local://required_asset_0
+constraints:
+  - demo.expensive_generation requires authority L2; this run has L0.
+success:
+  - The tool call is denied before execution; no artifact is produced.
+  - The run ends stopped, with a classified policy error envelope.
+  - Stop decision is stop, not continue.
+metadata:
+  source: generic_policy_denied
