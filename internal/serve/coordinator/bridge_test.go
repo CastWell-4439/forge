@@ -1,4 +1,4 @@
-package main
+package coordinator
 
 import (
 	"testing"
@@ -15,7 +15,7 @@ import (
 // stage-derived dependency edges.
 func TestBridgeDAGFromBugFixWorkflow(t *testing.T) {
 	reg := registry.NewRegistry()
-	require.NoError(t, reg.Load("../../workflows"))
+	require.NoError(t, reg.Load("../../../workflows"))
 
 	cw, err := reg.Get("bug_fix")
 	require.NoError(t, err)

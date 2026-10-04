@@ -1,4 +1,4 @@
-package main
+package worker
 
 import (
 	"context"
@@ -61,7 +61,7 @@ func buildTestGate(t *testing.T, mode model.GateMode, authority string) *runtime
 		Mode:          mode,
 		Authority:     authority,
 		Root:          t.TempDir(),
-		ContractsPath: filepath.Join("..", "..", defaultWorkerContract),
+		ContractsPath: filepath.Join("..", "..", "..", defaultWorkerContract),
 	})
 	if err != nil {
 		t.Fatalf("buildRuntimeGate: %v", err)
@@ -165,7 +165,7 @@ func TestGateDecisionIsPersisted(t *testing.T) {
 		Mode:          model.GateModeShadow,
 		Authority:     string(policy.AuthorityL0),
 		Root:          root,
-		ContractsPath: filepath.Join("..", "..", defaultWorkerContract),
+		ContractsPath: filepath.Join("..", "..", "..", defaultWorkerContract),
 	})
 	if err != nil {
 		t.Fatalf("buildRuntimeGate: %v", err)

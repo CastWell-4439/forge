@@ -1,4 +1,4 @@
-package main
+package worker
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 	"github.com/castwell/forge/internal/worker"
 )
 
-const echoFixture = "../../internal/wasm/testdata/echo.wasm"
+const echoFixture = "../../../internal/wasm/testdata/echo.wasm"
 
 func copyEchoPlugin(t *testing.T, dir, name string) string {
 	t.Helper()

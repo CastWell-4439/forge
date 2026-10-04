@@ -64,6 +64,10 @@ type ParamRenderer func(params map[string]any, inputs, outputs map[string]any) (
 // the workflow state machine to completion.
 type Coordinator struct {
 	forgev1.UnimplementedCoordinatorServiceServer
+	// WorkerService is served on the same listener so out-of-process workers
+	// can register themselves (see register_rpc.go); only Register is
+	// implemented, the rest stays Unimplemented by design.
+	forgev1.UnimplementedWorkerServiceServer
 
 	store           storage.Storage
 	workers         map[string]*WorkerEntry

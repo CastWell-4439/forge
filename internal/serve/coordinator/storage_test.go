@@ -1,4 +1,4 @@
-package main
+package coordinator
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func TestOpenStorageSwitchesToPostgres(t *testing.T) {
 	if os.Getenv("FORGE_PG_DSN") == "" {
 		t.Skip("FORGE_PG_DSN not set; runs in CI with the postgres service")
 	}
-	t.Setenv("FORGE_MIGRATIONS_DIR", filepath.Join("..", "..", "deploy", "migrations"))
+	t.Setenv("FORGE_MIGRATIONS_DIR", filepath.Join("..", "..", "..", "deploy", "migrations"))
 
 	store, err := openStorage(context.Background())
 	if err != nil {
