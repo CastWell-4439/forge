@@ -80,6 +80,7 @@ type Coordinator struct {
 	runtimeObserver forgexruntime.Observer
 	eventBus        EventPublisher
 	paramRenderer   ParamRenderer
+	kueue           *KueueManager
 
 	// dagCache stores parsed DAG definitions by workflow ID (for Saga compensation lookup).
 	dagCache   map[string]*DAG
@@ -694,6 +695,16 @@ func (c *Coordinator) SetEventBus(p EventPublisher) { c.eventBus = p }
 // default) keeps the historical behaviour: params are sent exactly as
 // submitted, templates untouched.
 func (c *Coordinator) SetParamRenderer(fn ParamRenderer) { c.paramRenderer = fn }
+
+// SetKueue installs the GPU-queue manager. Nil (the default) keeps dispatch
+// unchanged: tasks go to workers exactly as before. The dispatch routing
+// that consumes this is tracked as #8b; installing it now means a
+// configured-but-broken cluster fails at startup, not at first submit.
+func (c *Coordinator) SetKueue(m *KueueManager) { c.kueue = m }
+
+// Kueue returns the installed GPU-queue manager, or nil when unset — the
+// assembly-layer counterpart of SetKueue (used by tests and diagnostics).
+func (c *Coordinator) Kueue() *KueueManager { return c.kueue }
 
 // publishEvent fans a persisted event out on the bus. Notification semantics:
 // the event is already durable in storage, so a publish failure is logged

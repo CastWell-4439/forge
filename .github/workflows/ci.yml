@@ -255,10 +255,12 @@ jobs:
           ls -lh bin/
           # Coordinator should stay lean. Raised 30MB -> 40MB when the
           # PostgreSQL backend (pgx) and the gRPC tracing interceptors
-          # became real linked code (D-16) — a backend dependency is
-          # expected cost; the guard is still against accidental bloat.
+          # became real linked code (D-16); raised 40MB -> 96MB when the
+          # real Kueue submitter linked client-go / the Kubernetes API
+          # machinery (D-23) — a backend dependency is expected cost; the
+          # guard is still against accidental bloat.
           size=$(stat --format=%s bin/coordinator)
-          if [ "$size" -gt 41943040 ]; then
+          if [ "$size" -gt 100663296 ]; then
             echo "ERROR: coordinator binary too large: $size bytes"
             exit 1
           fi
