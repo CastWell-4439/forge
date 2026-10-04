@@ -12,6 +12,22 @@ rules:
       operation_contains: demo.expensive_generation
     recommendation: demo.expensive_generation must provide non-empty required_assets. Stop and ask upstream to provide the missing required assets.
 
+  # --- Policy barrier --------------------------------------------------------
+  # A policy decision that refused to let a tool run. Without this rule the
+  # refusal classifies as "unknown", which reads as an unclassified error
+  # rather than the governance outcome it actually is.
+
+  - id: POLICY_DENIED_TOOL_CALL
+    category: policy_violation
+    severity: high
+    retryable: false
+    source: builtin
+    match:
+      message_contains:
+        - policy denied
+      source_contains: policy_decision
+    recommendation: The tool call needs more authority than this run has. Raise the run authority or narrow the call; do not retry unchanged.
+
   - id: TOOL_TIMEOUT
     category: transient_timeout
     severity: medium

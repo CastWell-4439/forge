@@ -172,16 +172,24 @@ func runID(req worker.GateRequest) string {
 	return "adhoc"
 }
 
+// gateActionFromPolicy maps a policy decision onto the worker-facing gate
+// action. The Action→semantics table lives in policy (Action.Mode) so the
+// gate and the demo path cannot drift; this only renames the result into the
+// worker's vocabulary.
 func gateActionFromPolicy(action policy.Action) model.GateAction {
-	switch action {
-	case policy.ActionAllow, policy.ActionDryRunOnly:
+	switch action.Mode() {
+	case policy.ExecutionProceed, policy.ExecutionDryRun:
+		// A dry run still reaches the handler: it is the handler's job to
+		// decide what "no side effect" means, and the gate's contract is
+		// permission, not execution strategy.
 		return model.GateActionAllow
-	case policy.ActionDeny:
+	case policy.ExecutionBlock:
 		return model.GateActionBlock
-	case policy.ActionRequireApproval, policy.ActionPause:
+	case policy.ExecutionHold:
+		if action == policy.ActionEscalate {
+			return model.GateActionEscalate
+		}
 		return model.GateActionPause
-	case policy.ActionEscalate:
-		return model.GateActionEscalate
 	default:
 		return model.GateActionPause
 	}
