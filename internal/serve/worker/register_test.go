@@ -1,4 +1,4 @@
-package main
+package worker
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func TestEveryWorkflowWorkerIsRegistered(t *testing.T) {
 		registered[name] = true
 	}
 
-	paths, err := filepath.Glob(filepath.Join("..", "..", "workflows", "*.yaml"))
+	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "workflows", "*.yaml"))
 	if err != nil {
 		t.Fatalf("glob workflows: %v", err)
 	}
