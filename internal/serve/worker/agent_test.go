@@ -43,3 +43,23 @@ func TestRegisterAgentToleratesModeTypos(t *testing.T) {
 	registerAgent(r)
 	require.NotNil(t, r.Get("agent"))
 }
+
+// The tool-output guard is a security default: it is on unless explicitly
+// turned off, and an unrecognised value keeps it on (a typo must never be the
+// thing that disables injection screening).
+func TestAgentGuardDefaultsOnAndOnlyOffDisablesIt(t *testing.T) {
+	t.Setenv(envAgentGuard, "")
+	assert.True(t, agentGuardEnabled(), "guard is on by default")
+
+	for _, off := range []string{"off", "OFF", " 0 ", "false", "no"} {
+		t.Setenv(envAgentGuard, off)
+		assert.False(t, agentGuardEnabled(), "%q disables the guard", off)
+	}
+	for _, on := range []string{"on", "1", "true", "yes"} {
+		t.Setenv(envAgentGuard, on)
+		assert.True(t, agentGuardEnabled(), "%q keeps the guard on", on)
+	}
+
+	t.Setenv(envAgentGuard, "flase") // typo
+	assert.True(t, agentGuardEnabled(), "a typo keeps the guard on, never off")
+}
