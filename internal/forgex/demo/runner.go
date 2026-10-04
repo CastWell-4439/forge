@@ -22,9 +22,12 @@ const (
 	DefaultPolicyPath        = "configs/forgex/stop_policies.yaml"
 	DefaultPacketPath        = "examples/forgex/task_packet_generic_contract_violation.yaml"
 	DefaultSuccessPacketPath = "examples/forgex/task_packet_generic_contract_success.yaml"
-	DefaultContractsPath     = "configs/forgex/tool_contracts/generic_tool_contracts.yaml"
-	DefaultToolPolicyPath    = "configs/forgex/policies/safe_default.yaml"
-	DefaultAuthorityLevel    = ""
+	// DefaultPolicyDeniedPacketPath is the low-authority packet: the same tool
+	// at L0, where the contract's required L2 makes the policy engine deny it.
+	DefaultPolicyDeniedPacketPath = "examples/forgex/task_packet_generic_policy_denied.yaml"
+	DefaultContractsPath          = "configs/forgex/tool_contracts/generic_tool_contracts.yaml"
+	DefaultToolPolicyPath         = "configs/forgex/policies/safe_default.yaml"
+	DefaultAuthorityLevel         = ""
 	// DefaultStateAuthorityPath holds the World State permission rules. The file
 	// carries its own enable switch, so the demo always loads it. It is resolved
 	// beside whichever taxonomy file the caller supplied (see stateAuthorityFileName),
@@ -127,6 +130,24 @@ func RunGenericContractViolationDemo(ctx context.Context, root, taxonomyPath, po
 func RunGenericContractViolationDemoWithControl(ctx context.Context, root, taxonomyPath, policyPath, packetPath, contractsPath, toolPolicyPath, authorityLevel string) (string, error) {
 	if packetPath == "" {
 		packetPath = DefaultPacketPath
+	}
+	return RunScenario(ctx, ScenarioConfig{
+		Root:           root,
+		TaxonomyPath:   taxonomyPath,
+		PolicyPath:     policyPath,
+		PacketPath:     packetPath,
+		ContractsPath:  contractsPath,
+		ToolPolicyPath: toolPolicyPath,
+		AuthorityLevel: authorityLevel,
+	})
+}
+
+// RunGenericPolicyDeniedDemoWithControl runs the low-authority case, where the
+// policy engine refuses the call before it executes. The scenario itself lives
+// in RunScenario — this only supplies the packet.
+func RunGenericPolicyDeniedDemoWithControl(ctx context.Context, root, taxonomyPath, policyPath, packetPath, contractsPath, toolPolicyPath, authorityLevel string) (string, error) {
+	if packetPath == "" {
+		packetPath = DefaultPolicyDeniedPacketPath
 	}
 	return RunScenario(ctx, ScenarioConfig{
 		Root:           root,
