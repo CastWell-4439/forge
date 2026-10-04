@@ -151,6 +151,10 @@ func Run(appCtx context.Context) error {
 
 	grpcServer := grpc.NewServer(observability.ServerOptions()...)
 	forgev1.RegisterCoordinatorServiceServer(grpcServer, coord)
+	// Out-of-process workers register themselves through WorkerService/
+	// Register on THIS listener; without it every worker died at startup
+	// with "unknown service" (see register_rpc.go).
+	forgev1.RegisterWorkerServiceServer(grpcServer, coord)
 	reflection.Register(grpcServer)
 
 	go func() {
