@@ -25,13 +25,16 @@ type Agent struct {
 	// Optional enhancement modules (nil = disabled)
 	InputGuard  core.InputGuard
 	OutputGuard core.OutputGuard
-	Budget      core.BudgetChecker
-	Retriever   core.Retriever
-	Memory      core.MemoryStore
-	Checkpoint  core.CheckpointStore
-	Journal     harness.Journal
-	MCP         core.MCPManager
-	Verifier    core.Verifier
+	// ToolOutputGuard screens untrusted tool output before it is shown to the
+	// model (nil = pass through, the historical behaviour).
+	ToolOutputGuard core.InputGuard
+	Budget          core.BudgetChecker
+	Retriever       core.Retriever
+	Memory          core.MemoryStore
+	Checkpoint      core.CheckpointStore
+	Journal         harness.Journal
+	MCP             core.MCPManager
+	Verifier        core.Verifier
 
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
@@ -67,6 +70,12 @@ func WithInputGuard(g core.InputGuard) Option { return func(a *Agent) { a.InputG
 
 // WithOutputGuard enables M6 output content filtering.
 func WithOutputGuard(g core.OutputGuard) Option { return func(a *Agent) { a.OutputGuard = g } }
+
+// WithToolOutputGuard screens untrusted tool output before it reaches the
+// model — the indirect-injection path (a web page, file or MCP reply telling
+// the model to ignore its instructions). It takes an InputGuard because the
+// text is entering the model, not leaving it.
+func WithToolOutputGuard(g core.InputGuard) Option { return func(a *Agent) { a.ToolOutputGuard = g } }
 
 // WithBudget enables M6 token budget enforcement.
 func WithBudget(b core.BudgetChecker) Option { return func(a *Agent) { a.Budget = b } }
@@ -235,6 +244,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	}
 	if a.OutputGuard != nil {
 		loop.SetOutputGuard(a.OutputGuard)
+	}
+	if a.ToolOutputGuard != nil {
+		loop.SetToolOutputGuard(a.ToolOutputGuard)
 	}
 	if a.Budget != nil {
 		loop.SetBudget(a.Budget)
