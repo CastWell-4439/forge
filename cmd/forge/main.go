@@ -24,7 +24,7 @@ import (
 
 // The coordinator's listen address, mirroring the serve package's env names.
 const (
-	envCoordGRPCAddr   = "FORGE_GRPC_ADDR"
+	envCoordGRPCAddr     = "FORGE_GRPC_ADDR"
 	defaultCoordGRPCAddr = ":50051"
 )
 
