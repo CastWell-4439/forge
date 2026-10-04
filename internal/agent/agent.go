@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/harness"
@@ -43,6 +44,19 @@ type Agent struct {
 	// MemoryWriteJudge overrides the default gate that decides whether a
 	// finished run is worth remembering.
 	MemoryWriteJudge harness.MemoryWriteJudge
+
+	// HandlerMode selects the tool execution mode for this agent. Empty means
+	// real — the production default; tests and demos pass mock explicitly.
+	HandlerMode workers.HandlerMode
+	// Workspace is the base directory for file/shell tools. Empty means
+	// ".forge-workspace"; the directory is created on demand at loop build.
+	Workspace string
+
+	// toolConfigApply are assembly-level hooks that fill HandlerConfig
+	// fields derived from the environment (data source, web backends, ...).
+	// The agent package stays free of env reads; whoever assembles it owns
+	// those settings — same injection philosophy as AskUser/Retriever.
+	toolConfigApply []func(*workers.HandlerConfig)
 }
 
 // Option configures an optional module on the Agent.
@@ -93,6 +107,20 @@ func WithEffectFailurePolicy(p harness.EffectFailurePolicy) Option {
 // WithMCP enables M1 MCP tool discovery and invocation.
 func WithMCP(m core.MCPManager) Option { return func(a *Agent) { a.MCP = m } }
 
+// WithHandlerMode selects the tool execution mode: real (the default — tools
+// actually run) or mock (canned results, for tests and demos).
+func WithHandlerMode(m workers.HandlerMode) Option { return func(a *Agent) { a.HandlerMode = m } }
+
+// WithWorkspace sets the base directory for file/shell tools. It is created
+// on demand when the loop is built.
+func WithWorkspace(dir string) Option { return func(a *Agent) { a.Workspace = dir } }
+
+// WithToolConfig applies assembly-level handler settings (data source, web
+// search backend, fetch policy, ...) every time the loop is built.
+func WithToolConfig(apply func(*workers.HandlerConfig)) Option {
+	return func(a *Agent) { a.toolConfigApply = append(a.toolConfigApply, apply) }
+}
+
 // WithVerifier enables D5 self-verification loop.
 func WithVerifier(v core.Verifier) Option { return func(a *Agent) { a.Verifier = v } }
 
@@ -140,12 +168,33 @@ func (a *Agent) Resume(ctx context.Context, sessionID string) (*harness.RunResul
 func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), error) {
 	// 1. Build ToolRegistry with all built-in handlers.
 	registry := workers.NewToolRegistry()
+	mode := a.HandlerMode
+	if mode == "" {
+		// Real is the production default: an agent with tools is expected to
+		// run them. Tests and demos pass WithHandlerMode(mock) explicitly —
+		// this used to be hardcoded to mock, which is exactly why the golden
+		// tool set never actually executed anything.
+		mode = workers.HandlerModeReal
+	}
+	workspace := a.Workspace
+	if workspace == "" {
+		workspace = ".forge-workspace"
+	}
+	// Real handlers stat the workspace before every file/shell call and
+	// nobody else creates it — without this, real mode would fail its very
+	// first tool call with "directory does not exist".
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		return nil, nil, fmt.Errorf("create workspace %s: %w", workspace, err)
+	}
 	cfg := workers.HandlerConfig{
-		Mode:      workers.HandlerModeMock, // TODO: make configurable
-		Workspace: "/tmp/forge-workspace",
+		Mode:      mode,
+		Workspace: workspace,
 		// The retriever reaches the agent through knowledge.search only;
 		// retrieval stays agentic rather than being pushed into every prompt.
 		Retriever: a.Retriever,
+	}
+	for _, apply := range a.toolConfigApply {
+		apply(&cfg)
 	}
 	if err := workers.RegisterAll(registry, cfg); err != nil {
 		return nil, nil, fmt.Errorf("register tools: %w", err)

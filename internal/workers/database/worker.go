@@ -72,27 +72,11 @@ func (w *Worker) queryPG(ctx context.Context, params map[string]any) (string, er
 		return "", fmt.Errorf("database worker: 'sql' parameter required")
 	}
 
-	// Security: only SELECT allowed
-	normalized := strings.TrimSpace(strings.ToUpper(sql))
-	if !strings.HasPrefix(normalized, "SELECT") {
-		return "", fmt.Errorf("database worker: only SELECT queries allowed, got: %s", firstWord(sql))
-	}
-
-	// Dangerous patterns, matched as whole words: a substring check used to
-	// reject ordinary columns like updated_at / created_at ("UPDATE" inside
-	// "UPDATED_AT"), which made the read-only worker refuse exactly the
-	// queries it exists to run. Matching words keeps the protection (a real
-	// UPDATE/DROP still trips) while staying conservative inside string
-	// literals — "'drop table'" in a comment or value still blocks, which
-	// errs toward refusing a legitimate query rather than passing a clever
-	// one.
-	if m := forbiddenKeyword.FindString(normalized); m != "" {
-		return "", fmt.Errorf("database worker: query contains forbidden keyword %q", m)
-	}
-
-	// Enforce LIMIT
-	if !strings.Contains(normalized, "LIMIT") {
-		sql = sql + fmt.Sprintf(" LIMIT %d", MaxRows)
+	// Shared read-only contract (see guard.go) — the agent's data.query tool
+	// guards with the same function.
+	sql, err := GuardReadOnlySQL(sql)
+	if err != nil {
+		return "", fmt.Errorf("database worker: %w", err)
 	}
 
 	// Query with timeout
