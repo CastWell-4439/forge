@@ -52,11 +52,19 @@ type AgentLoop struct {
 	// Optional enhancement modules (injected from Agent).
 	inputGuard  core.InputGuard
 	outputGuard core.OutputGuard
-	budget      core.BudgetChecker
-	checkpoint  core.CheckpointStore
-	journal     Journal
-	memory      core.MemoryStore
-	verifier    core.Verifier
+	// toolOutputGuard screens untrusted tool output before it reaches the
+	// model. Tool results (web pages, file contents, MCP server replies)
+	// arrive as user-role observations, which makes them the classic indirect
+	// injection vector: a page saying "ignore all previous instructions" would
+	// otherwise be delivered to the model as an instruction. It is an
+	// InputGuard rather than an OutputGuard because the direction is
+	// "untrusted text going INTO the model", not "our answer going OUT".
+	toolOutputGuard core.InputGuard
+	budget          core.BudgetChecker
+	checkpoint      core.CheckpointStore
+	journal         Journal
+	memory          core.MemoryStore
+	verifier        core.Verifier
 
 	// checkpointPolicy decides whether a failed checkpoint write is fatal.
 	checkpointPolicy CheckpointFailurePolicy
@@ -84,6 +92,13 @@ func (l *AgentLoop) SetInputGuard(g core.InputGuard) { l.inputGuard = g }
 
 // SetOutputGuard enables M6 output filtering.
 func (l *AgentLoop) SetOutputGuard(g core.OutputGuard) { l.outputGuard = g }
+
+// SetToolOutputGuard enables screening of tool output before it is shown to
+// the model (nil keeps the historical behaviour: tool output passes through
+// untouched). A blocked output is replaced by a placeholder so the run
+// continues and the model can try another approach; only EffectStrict turns
+// a blocked output into a failed run.
+func (l *AgentLoop) SetToolOutputGuard(g core.InputGuard) { l.toolOutputGuard = g }
 
 // SetBudget enables M6 budget enforcement.
 func (l *AgentLoop) SetBudget(b core.BudgetChecker) { l.budget = b }
@@ -604,8 +619,24 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				Content: marshalAssistantTurn(agentResp),
 			})
 
-			// Format tool result as observation.
-			observation := formatObservation(agentResp.Action.Name, toolResult)
+			// Format tool result as observation. The output is untrusted
+			// content, so it is screened here — before it becomes a user-role
+			// message — exactly like user input. The ledger and journal above
+			// already recorded the raw output: the audit trail keeps the
+			// truth, only the model-facing copy is replaced.
+			observationResult := toolResult
+			if l.toolOutputGuard != nil && toolResult.Output != "" {
+				if gerr := l.toolOutputGuard.Check(ctx, toolResult.Output); gerr != nil {
+					if l.effectPolicy == EffectStrict {
+						return nil, fmt.Errorf("step %d: tool output guard blocked %q output: %w", step, toolName, gerr)
+					}
+					log.Printf("[harness] tool output guard blocked %q output: %v", toolName, gerr)
+					screened := *toolResult
+					screened.Output = fmt.Sprintf("[tool output blocked by guard: %v]", gerr)
+					observationResult = &screened
+				}
+			}
+			observation := formatObservation(agentResp.Action.Name, observationResult)
 			messages = append(messages, core.Message{
 				Role:    "user",
 				Content: observation,
