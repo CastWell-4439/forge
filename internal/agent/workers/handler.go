@@ -47,14 +47,31 @@ type HandlerConfig struct {
 	// knowledge base is wired instead of returning empty results that would
 	// look like "nothing exists".
 	Retriever core.Retriever
+
+	// DataSource is the PostgreSQL DSN data.query runs against. When empty the
+	// tool reports it needs a database instead of returning mock rows.
+	DataSource string
+
+	// WebFetchAllowPrivate lifts the SSRF guard on web.fetch (dev servers
+	// and httptest-based tests opt in; production stays guarded).
+	WebFetchAllowPrivate bool
+
+	// WebSearchProvider selects the web.search backend: "duckduckgo"
+	// (default, zero config), "brave" (needs WebSearchAPIKey) or "off"
+	// (honest not-configured answer). WebSearchEndpoint overrides the
+	// provider endpoint so tests can point at httptest.
+	WebSearchProvider string
+	WebSearchEndpoint string
+	WebSearchAPIKey   string
 }
 
 // ErrNotConfigured is returned when a real-mode handler is called but the
 // underlying service is not configured. Each handler group documents its
 // required external dependencies:
-//   - data.*:          a database DSN
-//   - web.*:           outbound network access
-//   - code.execute:    a code execution sandbox
+//   - data.*:          a database DSN (HandlerConfig.DataSource)
+//   - web.fetch:       outbound network access (implemented, SSRF-guarded)
+//   - web.search:      "off"/unknown provider, or brave without WebSearchAPIKey
+//   - code.execute:    a code execution sandbox (deliberately deferred)
 //   - ask.user:        an interactive channel (HandlerConfig.AskUser)
 //   - skill.activate:  a skill store (HandlerConfig.LoadSkill)
 //   - knowledge.search: a knowledge base (HandlerConfig.Retriever)
