@@ -79,6 +79,13 @@ func Run(appCtx context.Context) error {
 	}
 	defer stopDiscovery()
 
+	// --- Kueue GPU queue (optional) ---
+	// FORGE_KUEUE_ENABLED unset = off (dispatch unchanged); enabled but
+	// misconfigured fails startup with the cluster error.
+	if err := setupKueue(coord); err != nil {
+		return err
+	}
+
 	if envBool("FORGEX_RUNTIME_OBSERVER_ENABLED") {
 		root := envOrDefault("FORGEX_RUNTIME_ROOT", ".forgex-runtime")
 		observerCfg := forgexruntime.FileObserverConfig{
