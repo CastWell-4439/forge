@@ -117,6 +117,7 @@ func compileTrigger(t TriggerDef) (CompiledTrigger, error) {
 	ct := CompiledTrigger{
 		Type:     t.Type,
 		Source:   t.Source,
+		Expr:     t.Expr,
 		Query:    t.Query,
 		DedupKey: t.DedupKey,
 	}
@@ -126,6 +127,28 @@ func compileTrigger(t TriggerDef) (CompiledTrigger, error) {
 			return ct, fmt.Errorf("invalid interval %q: %w", t.Interval, err)
 		}
 		ct.Interval = d
+	}
+
+	// Shape validation per type — an unusable trigger must fail at load time,
+	// not the first time it should have fired. Expression validity itself is
+	// checked by the cron scheduler (the parser lives there), so the registry
+	// layer stays independent of the coordinator it feeds.
+	switch t.Type {
+	case "cron":
+		if t.Expr == "" {
+			return ct, fmt.Errorf(`cron trigger requires an "expr" (5-field cron, e.g. "*/5 * * * *")`)
+		}
+	case "poll":
+		if ct.Interval <= 0 {
+			return ct, fmt.Errorf(`poll trigger requires a positive "interval" (e.g. "2m")`)
+		}
+		if t.Source == "" {
+			return ct, fmt.Errorf(`poll trigger requires a "source"`)
+		}
+	case "webhook", "manual":
+		// Recognised, wired elsewhere (webhook needs an HTTP entry point).
+	default:
+		return ct, fmt.Errorf("unknown trigger type %q (want poll, webhook, cron, manual)", t.Type)
 	}
 	return ct, nil
 }
