@@ -47,6 +47,9 @@ type SourceConfig struct {
 	Filter      string // SQL-like filter expression
 	Publication string // PG-specific
 	SlotName    string // PG-specific
+	// CursorColumn is the timestamp column SELECT-based polling advances on
+	// (default "created_at"). It is ignored by the WAL path.
+	CursorColumn string
 }
 
 // MatchesEvent checks whether an event passes the configured event type filter.
