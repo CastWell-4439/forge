@@ -17,6 +17,7 @@ enum TaskStatus {
   TASK_STATUS_FAILED      = 6; // Execution failed (may retry)
   TASK_STATUS_SKIPPED     = 7; // Skipped due to upstream failure policy
   TASK_STATUS_COMPENSATING = 8; // Running compensation handler
+  TASK_STATUS_PAUSED       = 9; // Held for human approval; not a failure
 }
 
 // WorkflowStatus represents the lifecycle state of a workflow instance.
@@ -28,6 +29,7 @@ enum WorkflowStatus {
   WORKFLOW_STATUS_FAILED       = 4; // Workflow failed
   WORKFLOW_STATUS_CANCELLED    = 5; // Cancelled by user
   WORKFLOW_STATUS_COMPENSATING = 6; // Running saga compensation
+  WORKFLOW_STATUS_PAUSED       = 7; // Waiting on a human decision; not terminal
 }
 
 // Error carries structured error information across gRPC boundaries.

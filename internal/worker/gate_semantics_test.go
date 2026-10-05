@@ -69,27 +69,35 @@ func TestGateActionExecutesHandler(t *testing.T) {
 
 // TestExecutorGateActionSemantics pins the runtime effect of every action, so the
 // documented contract on RuntimeGate is enforced rather than merely described.
+//
+// There are three outcomes, not two: allow runs the handler, block/escalate/
+// retry refuse it as a failure, and pause parks it awaiting a human. A paused
+// task must be distinguishable at the coordinator from a failed one — the whole
+// reason PAUSED exists.
 func TestExecutorGateActionSemantics(t *testing.T) {
 	cases := []struct {
 		action        GateAction
 		enforce       bool
 		wantHandler   bool
 		wantSuccess   bool
+		wantPaused    bool
 		wantActionTag string
 	}{
-		{GateActionAllow, true, true, true, ""},
-		{GateActionAllow, false, true, true, ""},
+		{GateActionAllow, true, true, true, false, ""},
+		{GateActionAllow, false, true, true, false, ""},
 		// Shadow: the action is recorded but execution is unchanged.
-		{GateActionBlock, false, true, true, ""},
-		{GateActionPause, false, true, true, ""},
-		// Enforce: every non-allow action stops the handler.
-		{GateActionBlock, true, false, false, "block"},
-		{GateActionPause, true, false, false, "pause"},
-		{GateActionRetry, true, false, false, "retry"},
-		{GateActionEscalate, true, false, false, "escalate"},
+		{GateActionBlock, false, true, true, false, ""},
+		{GateActionPause, false, true, true, false, ""},
+		// Enforce: block/escalate/retry stop the handler and report a failure.
+		{GateActionBlock, true, false, false, false, "block"},
+		{GateActionRetry, true, false, false, false, "retry"},
+		{GateActionEscalate, true, false, false, false, "escalate"},
+		// Enforce: pause stops the handler too, but reports a hold rather than a
+		// failure, so the coordinator can park and later resume the task.
+		{GateActionPause, true, false, false, true, ""},
 		// A malformed action fails safe.
-		{"", true, false, false, "block"},
-		{"bogus", true, false, false, "block"},
+		{"", true, false, false, false, "block"},
+		{"bogus", true, false, false, false, "block"},
 	}
 
 	for _, tc := range cases {
@@ -105,6 +113,27 @@ func TestExecutorGateActionSemantics(t *testing.T) {
 		if resp.GetSuccess() != tc.wantSuccess {
 			t.Errorf("action=%q enforce=%v: success=%v, want %v (err=%q)", tc.action, tc.enforce, resp.GetSuccess(), tc.wantSuccess, resp.GetErrorMsg())
 		}
+
+		// A hold is its own outcome: paused set, no failure text, reason carried.
+		if tc.wantPaused {
+			if !resp.GetPaused() {
+				t.Errorf("action=%q enforce=%v: paused=false, want a hold reported as paused", tc.action, tc.enforce)
+			}
+			if resp.GetErrorMsg() != "" {
+				t.Errorf("action=%q enforce=%v: a hold must not report a failure, got %q", tc.action, tc.enforce, resp.GetErrorMsg())
+			}
+			if resp.GetPauseReason() == "" {
+				t.Errorf("action=%q enforce=%v: a hold must carry its reason for the reviewer", tc.action, tc.enforce)
+			}
+			if resp.GetGateId() != "gate_1" {
+				t.Errorf("action=%q enforce=%v: gate id = %q, want gate_1", tc.action, tc.enforce, resp.GetGateId())
+			}
+			continue
+		}
+		if resp.GetPaused() {
+			t.Errorf("action=%q enforce=%v: paused=true, want not a hold", tc.action, tc.enforce)
+		}
+
 		if tc.wantActionTag == "" {
 			if resp.GetErrorMsg() != "" {
 				t.Errorf("action=%q enforce=%v: unexpected error %q", tc.action, tc.enforce, resp.GetErrorMsg())

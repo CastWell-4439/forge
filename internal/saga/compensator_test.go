@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,11 @@ func (m *mockStorage) UpdateTaskStatus(_ context.Context, _ string, _ storage.Ta
 }
 func (m *mockStorage) CompleteTask(_ context.Context, _ string, _ json.RawMessage) error { return nil }
 func (m *mockStorage) FailTask(_ context.Context, _ string, _ string) error              { return nil }
-func (m *mockStorage) SaveEvent(_ context.Context, _ *storage.Event) error               { return nil }
+func (m *mockStorage) ReleaseTask(_ context.Context, _ string) error                     { return nil }
+func (m *mockStorage) RebaseTaskDeadline(_ context.Context, _ string, _ *time.Time) error {
+	return nil
+}
+func (m *mockStorage) SaveEvent(_ context.Context, _ *storage.Event) error { return nil }
 func (m *mockStorage) GetWorkflowHistory(_ context.Context, _ string) ([]*storage.Event, error) {
 	return nil, nil
 }

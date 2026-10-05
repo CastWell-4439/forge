@@ -66,6 +66,20 @@ func (e *Executor) Execute(ctx context.Context, req *forgev1.TaskRequest) *forge
 					ErrorMsg: fmt.Sprintf("runtime gate failed (fail-closed): %v", err),
 				}
 			}
+		case decision.Action == GateActionPause && decision.Enforce:
+			// Held for a human: the handler does NOT run, and this is not a
+			// failure. Reporting it as one (the previous behaviour) made a
+			// paused task indistinguishable from a denied one at the
+			// coordinator, so "pause" could only ever behave like "block".
+			// The pause travels as its own field; the coordinator parks the
+			// task and releases this worker.
+			return &forgev1.TaskResponse{
+				TaskId:      req.GetTaskId(),
+				Success:     false,
+				Paused:      true,
+				PauseReason: decision.Reason,
+				GateId:      decision.ID,
+			}
 		case !GateActionExecutesHandler(decision.Action) && decision.Enforce:
 			action := NormalizeGateAction(decision.Action)
 			return &forgev1.TaskResponse{

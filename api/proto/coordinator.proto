@@ -40,6 +40,28 @@ service CoordinatorService {
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse) {
     option (google.api.http) = { get: "/api/v1/workers" };
   }
+
+  // ResolveTaskPause approves or rejects a task the runtime gate parked
+  // awaiting human review. Approval returns the task to the scheduler's queue;
+  // rejection fails it through the ordinary failure path. This is the entry
+  // point that makes "pause" more than a permanent halt.
+  rpc ResolveTaskPause(ResolveTaskPauseRequest) returns (ResolveTaskPauseResponse) {
+    option (google.api.http) = { post: "/api/v1/tasks/{task_id}/resolve" body: "*" };
+  }
+}
+
+// ResolveTaskPauseRequest records a human decision about a paused task.
+message ResolveTaskPauseRequest {
+  string task_id = 1;
+  bool   approve = 2; // true = resume, false = reject
+  string reason  = 3; // why (shown in the task's audit trail)
+}
+
+// ResolveTaskPauseResponse returns the task's new status so the caller can
+// confirm the transition (READY after approval, FAILED after rejection).
+message ResolveTaskPauseResponse {
+  TaskStatus status     = 1;
+  string     new_status = 2; // textual status, mirrors status for easy logging
 }
 
 // SubmitWorkflowRequest contains the workflow definition to execute.

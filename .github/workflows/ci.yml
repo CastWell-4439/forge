@@ -221,7 +221,13 @@ jobs:
           fi
           exit "$STATUS"
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        # Coverage upload is telemetry, not a quality gate: the gates are the
+        # four jobs (hygiene/lint/test/build). v4 crashed at action startup
+        # after GitHub forced Node 20 actions onto Node 24 — before reading
+        # fail_ci_if_error — so the step-level guard is what actually keeps a
+        # green test run green when the uploader itself is broken.
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
         with:
           file: ./coverage.out
           fail_ci_if_error: false

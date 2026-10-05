@@ -63,9 +63,17 @@ message TaskRequest {
 }
 
 // TaskResponse contains the result of task execution.
+//
+// Three outcomes, not two: a task can succeed, fail, or be held for a human
+// decision. The third one is not a failure — reporting it as one (the previous
+// behaviour) made a paused task indistinguishable from a denied one at the
+// coordinator, which is why "pause" had the same runtime effect as "block".
 message TaskResponse {
   string task_id    = 1;
   bool   success    = 2;
   bytes  output     = 3; // JSON-encoded result
   string error_msg  = 4;
+  bool   paused     = 5; // held awaiting human approval; success is false
+  string pause_reason = 6; // why it is held (shown to the reviewer)
+  string gate_id    = 7; // the gate decision awaiting review, for the approval path
 }

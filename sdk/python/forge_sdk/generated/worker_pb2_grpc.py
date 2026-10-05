@@ -5,7 +5,7 @@ import grpc
 import worker_pb2 as worker__pb2
 
 
-class WorkerServiceStub(object):
+class WorkerServiceStub:
     """WorkerService defines the interface that all workers implement.
     """
 
@@ -32,7 +32,7 @@ class WorkerServiceStub(object):
                 _registered_method=True)
 
 
-class WorkerServiceServicer(object):
+class WorkerServiceServicer:
     """WorkerService defines the interface that all workers implement.
     """
 
@@ -83,7 +83,7 @@ def add_WorkerServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class WorkerService(object):
+class WorkerService:
     """WorkerService defines the interface that all workers implement.
     """
 
