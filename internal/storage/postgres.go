@@ -307,6 +307,30 @@ func (s *PGStorage) UpdateTaskStatus(ctx context.Context, taskID string, status 
 	return nil
 }
 
+// ReleaseTask clears the worker assignment on a task. A task with no worker,
+// or one that does not exist, is a no-op.
+func (s *PGStorage) ReleaseTask(ctx context.Context, taskID string) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET worker_id = NULL,
+		    scheduled_at = NULL
+		WHERE id = $1
+	`, taskID); err != nil {
+		return fmt.Errorf("release task %s: %w", taskID, err)
+	}
+	return nil
+}
+
+// RebaseTaskDeadline rewrites timeout_at on a task (see the interface).
+func (s *PGStorage) RebaseTaskDeadline(ctx context.Context, taskID string, deadline *time.Time) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE task_instances SET timeout_at = $1 WHERE id = $2
+	`, deadline, taskID); err != nil {
+		return fmt.Errorf("rebase deadline on task %s: %w", taskID, err)
+	}
+	return nil
+}
+
 // CompleteTask marks a task as COMPLETED and persists its output.
 // Uses a WHERE guard against terminal states (blacklist) for idempotency.
 // A 0-row result is logged but not returned as an error.

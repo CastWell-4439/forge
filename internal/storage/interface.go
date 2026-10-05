@@ -18,6 +18,10 @@ const (
 	WorkflowStatusFailed       WorkflowStatus = "FAILED"
 	WorkflowStatusCancelled    WorkflowStatus = "CANCELLED"
 	WorkflowStatusCompensating WorkflowStatus = "COMPENSATING"
+	// WorkflowStatusPaused means the workflow is waiting on a human decision.
+	// It is NOT terminal: approving the pending review moves it back to
+	// RUNNING, rejecting moves it to FAILED.
+	WorkflowStatusPaused WorkflowStatus = "PAUSED"
 )
 
 // TaskStatus represents the lifecycle state of a task instance.
@@ -32,6 +36,13 @@ const (
 	TaskStatusFailed       TaskStatus = "FAILED"
 	TaskStatusSkipped      TaskStatus = "SKIPPED"
 	TaskStatusCompensating TaskStatus = "COMPENSATING"
+	// TaskStatusPaused means the task was held for human approval before its
+	// handler ran. The worker is released (the task is not claimed by anyone);
+	// approval moves it back to READY so the normal scheduler re-dispatches it,
+	// rejection moves it to FAILED. Deferring without this state would either
+	// occupy a worker forever or collapse into FAILED — which is what the gate
+	// used to do.
+	TaskStatusPaused TaskStatus = "PAUSED"
 )
 
 // EventType defines the type of workflow/task event.
@@ -48,6 +59,11 @@ const (
 	EventTaskFailed        EventType = "TASK_FAILED"
 	EventTaskRetrying      EventType = "TASK_RETRYING"
 	EventTaskCompensating  EventType = "TASK_COMPENSATING"
+	// EventTaskPaused / EventTaskResumed record the approval wait. They are
+	// distinct from the failure and retry events because being held for a human
+	// is neither: the task has not failed and has not been retried.
+	EventTaskPaused  EventType = "TASK_PAUSED"
+	EventTaskResumed EventType = "TASK_RESUMED"
 )
 
 // WorkflowDefinition stores a versioned workflow DAG definition.
@@ -126,6 +142,20 @@ type Storage interface {
 	ListTasksByWorkflow(ctx context.Context, workflowID string) ([]*Task, error)
 	ClaimTask(ctx context.Context, workerID string, handlers []string) (*Task, error)
 	UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error
+
+	// ReleaseTask clears a task's worker assignment so the scheduler no longer
+	// treats it as owned. Used when a task is parked (paused awaiting human
+	// approval) or returned to READY: the worker must not keep holding a
+	// capacity slot, and re-dispatch has to go through the normal claim path.
+	// Releasing a task that has no worker is not an error.
+	ReleaseTask(ctx context.Context, taskID string) error
+
+	// RebaseTaskDeadline rewrites a task's timeout_at, used when a task resumes
+	// after waiting on a human: the deadline was computed at creation and would
+	// otherwise be already expired the moment the task is approved (approval
+	// would kill it in the sweeper). nil clears the deadline. A missing task is
+	// not an error.
+	RebaseTaskDeadline(ctx context.Context, taskID string, deadline *time.Time) error
 
 	// CompleteTask marks a task as COMPLETED and persists its output.
 	// Also sets finished_at to now. Idempotent: if the task is already in a
