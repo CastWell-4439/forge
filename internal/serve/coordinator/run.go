@@ -86,6 +86,15 @@ func Run(appCtx context.Context) error {
 		return err
 	}
 
+	// --- Workflow triggers (optional) ---
+	// FORGE_WORKFLOW_TRIGGERS unset = off (zero change); on = the cron/poll
+	// blocks already declared in workflow YAML start firing.
+	stopTriggers, err := setupTriggers(appCtx, coord)
+	if err != nil {
+		return fmt.Errorf("triggers: %w", err)
+	}
+	defer stopTriggers()
+
 	if envBool("FORGEX_RUNTIME_OBSERVER_ENABLED") {
 		root := envOrDefault("FORGEX_RUNTIME_ROOT", ".forgex-runtime")
 		observerCfg := forgexruntime.FileObserverConfig{

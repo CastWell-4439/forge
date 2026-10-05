@@ -34,7 +34,13 @@ type CronTrigger struct {
 	Enabled       bool
 	LastFireAt    *time.Time
 	NextFireAt    *time.Time
-	mu            sync.Mutex // protects LastFireAt/NextFireAt
+	// SubmitFn, when set, IS the submission: the assembly layer that knows
+	// which definition the workflow name refers to (the registry compiles
+	// stages/worker YAML, which SubmitWorkflow's tasks/handler dialect cannot
+	// parse) provides the bridge itself. DagYAML and its fallback stay as the
+	// behaviour for triggers that carry raw coordinator-dialect YAML.
+	SubmitFn func(ctx context.Context) error
+	mu       sync.Mutex // protects LastFireAt/NextFireAt
 }
 
 // CronScheduler manages periodic workflow triggers.
@@ -177,18 +183,25 @@ func (s *CronScheduler) fire(trigger *CronTrigger, now time.Time) {
 
 	log.Printf("INFO: cron: firing trigger %q for workflow %q", trigger.ID, trigger.WorkflowName)
 
-	// Look up stored workflow definition from the trigger's DagYAML field.
-	// If no stored definition, fall back to a minimal single-task DAG.
-	dagYAML := trigger.DagYAML
-	if dagYAML == "" {
-		dagYAML = fmt.Sprintf("name: %s\ntasks:\n  cron-task:\n    handler: %s\n    timeout: 5m\n",
-			trigger.WorkflowName, trigger.WorkflowName)
-		log.Printf("WARN: cron: trigger %q has no stored DAG definition, using fallback", trigger.ID)
+	var err error
+	if trigger.SubmitFn != nil {
+		// The assembly layer owns the submission path for this trigger (see
+		// the field's comment): it bridges and submits the definition the
+		// workflow name actually refers to.
+		err = trigger.SubmitFn(ctx)
+	} else {
+		// Look up stored workflow definition from the trigger's DagYAML field.
+		// If no stored definition, fall back to a minimal single-task DAG.
+		dagYAML := trigger.DagYAML
+		if dagYAML == "" {
+			dagYAML = fmt.Sprintf("name: %s\ntasks:\n  cron-task:\n    handler: %s\n    timeout: 5m\n",
+				trigger.WorkflowName, trigger.WorkflowName)
+			log.Printf("WARN: cron: trigger %q has no stored DAG definition, using fallback", trigger.ID)
+		}
+		_, err = s.coordinator.SubmitWorkflow(ctx, &forgev1.SubmitWorkflowRequest{
+			DagYaml: dagYAML,
+		})
 	}
-
-	_, err := s.coordinator.SubmitWorkflow(ctx, &forgev1.SubmitWorkflowRequest{
-		DagYaml: dagYAML,
-	})
 	if err != nil {
 		log.Printf("ERROR: cron: fire workflow %q failed: %v", trigger.WorkflowName, err)
 	}
