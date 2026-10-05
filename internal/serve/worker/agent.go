@@ -25,6 +25,7 @@ const (
 	envAgentMode          = "FORGE_AGENT_MODE"
 	envAgentWorkspace     = "FORGE_AGENT_WORKSPACE"
 	envAgentGuard         = "FORGE_AGENT_GUARD"
+	envLLMToolMode        = "FORGE_LLM_TOOL_MODE"
 	envWebSearchProvider  = "FORGE_WEB_SEARCH_PROVIDER"
 	envWebSearchAPIKey    = "FORGE_WEB_SEARCH_API_KEY"
 	envWebSearchEndpoint  = "FORGE_WEB_SEARCH_ENDPOINT"
@@ -73,6 +74,16 @@ func registerAgent(r *worker.Registry) {
 	guardEnabled := agentGuardEnabled()
 	if guardEnabled {
 		opts = append(opts, agentcore.WithToolOutputGuard(guardrails.NewInjectionDetector()))
+	}
+
+	// Native function calling (N2): on by default, off only when explicitly
+	// asked. The endpoint gets the first word — a provider that refuses the
+	// tools field downgrades this run to the prompt path with one warning.
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envLLMToolMode))) {
+	case "prompt", "off", "0", "false":
+		// explicit opt-out keeps the prompt-encoded JSON convention
+	default:
+		opts = append(opts, agentcore.WithNativeTools(true))
 	}
 
 	switch mode {

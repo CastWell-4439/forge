@@ -28,6 +28,13 @@ type LoopConfig struct {
 	// a negative value disables the streak stop (the non-idempotent duplicate
 	// guard stays on regardless — see no_progress.go).
 	NoProgressThreshold int
+	// NativeTools asks the model for provider-native function calling
+	// (tools/tool_calls with per-parameter JSON Schema) instead of the
+	// prompt-encoded JSON convention. It is a request, not a promise: an
+	// endpoint that refuses the tools field downgrades this run to the prompt
+	// path with one warning (see ChatWithTools). Clients that do not implement
+	// ToolAwareLLM — every test mock — simply stay on the prompt path.
+	NativeTools bool
 }
 
 // DefaultLoopConfig returns config with sensible defaults.
@@ -392,6 +399,20 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	}
 	journalBase := len(messages)
 
+	// Native function calling (N2): requested by config, enabled only when the
+	// client actually speaks the protocol, and switchable off mid-run when the
+	// endpoint refuses it.
+	nativeEnabled := l.config.NativeTools && l.router != nil
+	var toolCaller ToolAwareLLM
+	if nativeEnabled {
+		if tc, ok := l.llm.(ToolAwareLLM); ok {
+			toolCaller = tc
+		} else {
+			log.Printf("[harness] native tool calling requested but the LLM client does not implement ChatWithTools; using the prompt path")
+			nativeEnabled = false
+		}
+	}
+
 	var steps []StepRecord
 
 	for step := startStep; step < l.config.MaxSteps; step++ {
@@ -439,7 +460,20 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		}
 
 		// --- Call LLM ---
-		chatResult, err := l.llm.ChatWithUsage(ctx, messages)
+		// Native mode is a request, not a promise: if the endpoint refuses the
+		// tools field the run degrades to the prompt path once (the client
+		// remembers the refusal) and continues this very step without it.
+		var chatResult core.ChatResult
+		if nativeEnabled {
+			chatResult, err = toolCaller.ChatWithTools(ctx, messages, l.router.registry.ListTools())
+			if errors.Is(err, ErrToolsUnsupported) {
+				log.Printf("[harness] endpoint does not support native tool calling (%v); using the prompt path for the rest of this run", err)
+				nativeEnabled = false
+				chatResult, err = l.llm.ChatWithUsage(ctx, messages)
+			}
+		} else {
+			chatResult, err = l.llm.ChatWithUsage(ctx, messages)
+		}
 		if err != nil {
 			// Keep the steps accumulated so far. Returning nil here discarded
 			// the entire trace and made failures impossible to diagnose.
@@ -492,14 +526,49 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 
 		raw := chatResult.Content
 
-		// --- Parse Structured Output (M8) with retry ---
-		agentResp, err := structured.ParseWithRetry(raw, func(feedback string) (string, error) {
-			retryMsgs := append(messages, core.Message{Role: "assistant", Content: raw})
-			retryMsgs = append(retryMsgs, core.Message{Role: "user", Content: feedback})
-			return l.llm.Chat(ctx, retryMsgs)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("step %d: failed to parse agent response: %w", step, err)
+		// --- Native path: the provider already told us the tool calls ---
+		if len(chatResult.ToolCalls) > 0 {
+			if err := l.runNativeToolBatch(ctx, sessionID, step, &messages, &steps, &ledger, &journalBase, chatResult); err != nil {
+				return nil, err
+			}
+			// The streak check mirrors the prompt path: identical calls past
+			// the threshold end the run honestly (see no_progress.go).
+			if threshold := l.noProgressThreshold(); threshold > 0 && l.noProgress >= threshold {
+				reason := fmt.Sprintf("%d consecutive identical tool calls", l.noProgress)
+				l.emitRunEnded(ctx, sessionID, step, "no_progress", reason)
+				return &RunResult{
+					Answer: fmt.Sprintf(
+						"Stopped: the same tool call was repeated %d times without change. "+
+							"Different parameters, a different tool, or your answer would move the task forward.",
+						l.noProgress),
+					Steps:  steps,
+					Reason: "no_progress",
+				}, nil
+			}
+			continue
+		}
+
+		// Both paths converge here: one produces agentResp from the provider's
+		// native answer, the other parses the prompt-encoded JSON contract.
+		// Everything below (guard, journal, checkpoint, memory) is shared.
+		var agentResp *structured.AgentResponse
+		if nativeEnabled {
+			if chatResult.Content == "" {
+				l.emitRunEnded(ctx, sessionID, step, "error", "native response had neither tool calls nor content")
+				return &RunResult{Steps: steps, Reason: "error"},
+					fmt.Errorf("step %d: native response had neither tool calls nor content", step)
+			}
+			agentResp = &structured.AgentResponse{Answer: chatResult.Content}
+		} else {
+			var parseErr error
+			agentResp, parseErr = structured.ParseWithRetry(raw, func(feedback string) (string, error) {
+				retryMsgs := append(messages, core.Message{Role: "assistant", Content: raw})
+				retryMsgs = append(retryMsgs, core.Message{Role: "user", Content: feedback})
+				return l.llm.Chat(ctx, retryMsgs)
+			})
+			if parseErr != nil {
+				return nil, fmt.Errorf("step %d: failed to parse agent response: %w", step, parseErr)
+			}
 		}
 
 		// --- Terminal: Agent has a final answer ---
@@ -610,11 +679,7 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			var toolResult *core.ToolResult
 			if !ledger[len(ledger)-1].Idempotent && l.nonIdempotentDone[fingerprint] {
 				toolResult = &core.ToolResult{
-					Error: fmt.Sprintf(
-						"duplicate call refused: %s(%s) already ran in this run and is not idempotent, "+
-							"so running it again would repeat its side effects. Change the parameters, "+
-							"use a different tool, or give your answer.",
-						toolName, compactParams(agentResp.Action.Params)),
+					Error: fmt.Sprintf(duplicateRefusalFormat, toolName, compactParams(agentResp.Action.Params)),
 				}
 			} else {
 				toolResult = l.router.Call(ctx, toolName, agentResp.Action.Params)

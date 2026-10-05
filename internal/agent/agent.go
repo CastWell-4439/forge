@@ -28,13 +28,18 @@ type Agent struct {
 	// ToolOutputGuard screens untrusted tool output before it is shown to the
 	// model (nil = pass through, the historical behaviour).
 	ToolOutputGuard core.InputGuard
-	Budget          core.BudgetChecker
-	Retriever       core.Retriever
-	Memory          core.MemoryStore
-	Checkpoint      core.CheckpointStore
-	Journal         harness.Journal
-	MCP             core.MCPManager
-	Verifier        core.Verifier
+	// NativeTools requests provider-native function calling (tools/tool_calls
+	// with real parameter schemas) instead of the prompt-encoded JSON
+	// convention. It is a request: an endpoint that refuses the tools field
+	// downgrades to the prompt path with one warning.
+	NativeTools bool
+	Budget      core.BudgetChecker
+	Retriever   core.Retriever
+	Memory      core.MemoryStore
+	Checkpoint  core.CheckpointStore
+	Journal     harness.Journal
+	MCP         core.MCPManager
+	Verifier    core.Verifier
 
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
@@ -128,6 +133,13 @@ func WithWorkspace(dir string) Option { return func(a *Agent) { a.Workspace = di
 // search backend, fetch policy, ...) every time the loop is built.
 func WithToolConfig(apply func(*workers.HandlerConfig)) Option {
 	return func(a *Agent) { a.toolConfigApply = append(a.toolConfigApply, apply) }
+}
+
+// WithNativeTools enables provider-native function calling for this agent.
+// The wiring decides (env at assembly); the loop treats it as a request the
+// endpoint may refuse, degrading to the prompt path with one warning.
+func WithNativeTools(enabled bool) Option {
+	return func(a *Agent) { a.NativeTools = enabled }
 }
 
 // WithVerifier enables D5 self-verification loop.
@@ -238,6 +250,7 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		// 0 picks harness.DefaultNoProgressThreshold — an agent stuck repeating
 		// itself stops honestly instead of burning the whole step budget.
 		NoProgressThreshold: 0,
+		NativeTools:         a.NativeTools,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 
