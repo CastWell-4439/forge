@@ -22,6 +22,19 @@ type ChatResult struct {
 	// Callers must check it: "length" means the response was cut off by the
 	// token limit and its content is incomplete.
 	FinishReason string
+	// ToolCalls carries the provider's native function-calling requests when
+	// the client was asked with tools (ChatWithTools). Empty on the prompt
+	// path — there the model's JSON lives in Content instead.
+	ToolCalls []NativeToolCall
+}
+
+// NativeToolCall is one function-calling request as the provider returned it.
+type NativeToolCall struct {
+	// ID correlates the call with its result message in the history.
+	ID string `json:"id"`
+	// Name is the tool name; Arguments are the parsed parameter object.
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
 }
 
 // LLMClient is the interface for communicating with a Large Language Model.
@@ -35,9 +48,16 @@ type LLMClient interface {
 }
 
 // Message represents a single message in an LLM conversation.
+//
+// ToolCalls and ToolCallID are the native function-calling history: an
+// assistant message may carry requests, and a "tool" message answers one of
+// them by ID. They are empty on the prompt path, which keeps its plain
+// user/assistant text history unchanged.
 type Message struct {
-	Role    string `json:"role"` // "user" | "assistant" | "system"
-	Content string `json:"content"`
+	Role       string           `json:"role"` // "user" | "assistant" | "system" | "tool"
+	Content    string           `json:"content"`
+	ToolCalls  []NativeToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 // ToolCall represents a tool invocation request from the Agent.
