@@ -86,6 +86,17 @@ class CoordinatorService final {
     std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ListWorkersResponse>> PrepareAsyncListWorkers(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest& request, ::grpc::CompletionQueue* cq) {
       return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ListWorkersResponse>>(PrepareAsyncListWorkersRaw(context, request, cq));
     }
+    // ResolveTaskPause approves or rejects a task the runtime gate parked
+    // awaiting human review. Approval returns the task to the scheduler's queue;
+    // rejection fails it through the ordinary failure path. This is the entry
+    // point that makes "pause" more than a permanent halt.
+    virtual ::grpc::Status ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::forge::v1::ResolveTaskPauseResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ResolveTaskPauseResponse>> AsyncResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ResolveTaskPauseResponse>>(AsyncResolveTaskPauseRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ResolveTaskPauseResponse>> PrepareAsyncResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ResolveTaskPauseResponse>>(PrepareAsyncResolveTaskPauseRaw(context, request, cq));
+    }
     class async_interface {
      public:
       virtual ~async_interface() {}
@@ -107,6 +118,12 @@ class CoordinatorService final {
       // ListWorkers returns a paginated list of registered workers.
       virtual void ListWorkers(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest* request, ::forge::v1::ListWorkersResponse* response, std::function<void(::grpc::Status)>) = 0;
       virtual void ListWorkers(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest* request, ::forge::v1::ListWorkersResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
+      // ResolveTaskPause approves or rejects a task the runtime gate parked
+      // awaiting human review. Approval returns the task to the scheduler's queue;
+      // rejection fails it through the ordinary failure path. This is the entry
+      // point that makes "pause" more than a permanent halt.
+      virtual void ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
     };
     typedef class async_interface experimental_async_interface;
     virtual class async_interface* async() { return nullptr; }
@@ -124,6 +141,8 @@ class CoordinatorService final {
     virtual ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::GetOverviewResponse>* PrepareAsyncGetOverviewRaw(::grpc::ClientContext* context, const ::forge::v1::GetOverviewRequest& request, ::grpc::CompletionQueue* cq) = 0;
     virtual ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ListWorkersResponse>* AsyncListWorkersRaw(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest& request, ::grpc::CompletionQueue* cq) = 0;
     virtual ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ListWorkersResponse>* PrepareAsyncListWorkersRaw(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ResolveTaskPauseResponse>* AsyncResolveTaskPauseRaw(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::forge::v1::ResolveTaskPauseResponse>* PrepareAsyncResolveTaskPauseRaw(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) = 0;
   };
   class Stub final : public StubInterface {
    public:
@@ -170,6 +189,13 @@ class CoordinatorService final {
     std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::forge::v1::ListWorkersResponse>> PrepareAsyncListWorkers(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest& request, ::grpc::CompletionQueue* cq) {
       return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::forge::v1::ListWorkersResponse>>(PrepareAsyncListWorkersRaw(context, request, cq));
     }
+    ::grpc::Status ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::forge::v1::ResolveTaskPauseResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>> AsyncResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>>(AsyncResolveTaskPauseRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>> PrepareAsyncResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>>(PrepareAsyncResolveTaskPauseRaw(context, request, cq));
+    }
     class async final :
       public StubInterface::async_interface {
      public:
@@ -185,6 +211,8 @@ class CoordinatorService final {
       void GetOverview(::grpc::ClientContext* context, const ::forge::v1::GetOverviewRequest* request, ::forge::v1::GetOverviewResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
       void ListWorkers(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest* request, ::forge::v1::ListWorkersResponse* response, std::function<void(::grpc::Status)>) override;
       void ListWorkers(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest* request, ::forge::v1::ListWorkersResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
+      void ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response, std::function<void(::grpc::Status)>) override;
+      void ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
      private:
       friend class Stub;
       explicit async(Stub* stub): stub_(stub) { }
@@ -208,12 +236,15 @@ class CoordinatorService final {
     ::grpc::ClientAsyncResponseReader< ::forge::v1::GetOverviewResponse>* PrepareAsyncGetOverviewRaw(::grpc::ClientContext* context, const ::forge::v1::GetOverviewRequest& request, ::grpc::CompletionQueue* cq) override;
     ::grpc::ClientAsyncResponseReader< ::forge::v1::ListWorkersResponse>* AsyncListWorkersRaw(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest& request, ::grpc::CompletionQueue* cq) override;
     ::grpc::ClientAsyncResponseReader< ::forge::v1::ListWorkersResponse>* PrepareAsyncListWorkersRaw(::grpc::ClientContext* context, const ::forge::v1::ListWorkersRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>* AsyncResolveTaskPauseRaw(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>* PrepareAsyncResolveTaskPauseRaw(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) override;
     const ::grpc::internal::RpcMethod rpcmethod_SubmitWorkflow_;
     const ::grpc::internal::RpcMethod rpcmethod_GetWorkflow_;
     const ::grpc::internal::RpcMethod rpcmethod_ListWorkflows_;
     const ::grpc::internal::RpcMethod rpcmethod_CancelWorkflow_;
     const ::grpc::internal::RpcMethod rpcmethod_GetOverview_;
     const ::grpc::internal::RpcMethod rpcmethod_ListWorkers_;
+    const ::grpc::internal::RpcMethod rpcmethod_ResolveTaskPause_;
   };
   static std::unique_ptr<Stub> NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options = ::grpc::StubOptions());
 
@@ -233,6 +264,11 @@ class CoordinatorService final {
     virtual ::grpc::Status GetOverview(::grpc::ServerContext* context, const ::forge::v1::GetOverviewRequest* request, ::forge::v1::GetOverviewResponse* response);
     // ListWorkers returns a paginated list of registered workers.
     virtual ::grpc::Status ListWorkers(::grpc::ServerContext* context, const ::forge::v1::ListWorkersRequest* request, ::forge::v1::ListWorkersResponse* response);
+    // ResolveTaskPause approves or rejects a task the runtime gate parked
+    // awaiting human review. Approval returns the task to the scheduler's queue;
+    // rejection fails it through the ordinary failure path. This is the entry
+    // point that makes "pause" more than a permanent halt.
+    virtual ::grpc::Status ResolveTaskPause(::grpc::ServerContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response);
   };
   template <class BaseClass>
   class WithAsyncMethod_SubmitWorkflow : public BaseClass {
@@ -354,7 +390,27 @@ class CoordinatorService final {
       ::grpc::Service::RequestAsyncUnary(5, context, request, response, new_call_cq, notification_cq, tag);
     }
   };
-  typedef WithAsyncMethod_SubmitWorkflow<WithAsyncMethod_GetWorkflow<WithAsyncMethod_ListWorkflows<WithAsyncMethod_CancelWorkflow<WithAsyncMethod_GetOverview<WithAsyncMethod_ListWorkers<Service > > > > > > AsyncService;
+  template <class BaseClass>
+  class WithAsyncMethod_ResolveTaskPause : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_ResolveTaskPause() {
+      ::grpc::Service::MarkMethodAsync(6);
+    }
+    ~WithAsyncMethod_ResolveTaskPause() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ResolveTaskPause(::grpc::ServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestResolveTaskPause(::grpc::ServerContext* context, ::forge::v1::ResolveTaskPauseRequest* request, ::grpc::ServerAsyncResponseWriter< ::forge::v1::ResolveTaskPauseResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(6, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  typedef WithAsyncMethod_SubmitWorkflow<WithAsyncMethod_GetWorkflow<WithAsyncMethod_ListWorkflows<WithAsyncMethod_CancelWorkflow<WithAsyncMethod_GetOverview<WithAsyncMethod_ListWorkers<WithAsyncMethod_ResolveTaskPause<Service > > > > > > > AsyncService;
   template <class BaseClass>
   class WithCallbackMethod_SubmitWorkflow : public BaseClass {
    private:
@@ -517,7 +573,34 @@ class CoordinatorService final {
     virtual ::grpc::ServerUnaryReactor* ListWorkers(
       ::grpc::CallbackServerContext* /*context*/, const ::forge::v1::ListWorkersRequest* /*request*/, ::forge::v1::ListWorkersResponse* /*response*/)  { return nullptr; }
   };
-  typedef WithCallbackMethod_SubmitWorkflow<WithCallbackMethod_GetWorkflow<WithCallbackMethod_ListWorkflows<WithCallbackMethod_CancelWorkflow<WithCallbackMethod_GetOverview<WithCallbackMethod_ListWorkers<Service > > > > > > CallbackService;
+  template <class BaseClass>
+  class WithCallbackMethod_ResolveTaskPause : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_ResolveTaskPause() {
+      ::grpc::Service::MarkMethodCallback(6,
+          new ::grpc::internal::CallbackUnaryHandler< ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response) { return this->ResolveTaskPause(context, request, response); }));}
+    void SetMessageAllocatorFor_ResolveTaskPause(
+        ::grpc::MessageAllocator< ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(6);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_ResolveTaskPause() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ResolveTaskPause(::grpc::ServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ResolveTaskPause(
+      ::grpc::CallbackServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/)  { return nullptr; }
+  };
+  typedef WithCallbackMethod_SubmitWorkflow<WithCallbackMethod_GetWorkflow<WithCallbackMethod_ListWorkflows<WithCallbackMethod_CancelWorkflow<WithCallbackMethod_GetOverview<WithCallbackMethod_ListWorkers<WithCallbackMethod_ResolveTaskPause<Service > > > > > > > CallbackService;
   typedef CallbackService ExperimentalCallbackService;
   template <class BaseClass>
   class WithGenericMethod_SubmitWorkflow : public BaseClass {
@@ -617,6 +700,23 @@ class CoordinatorService final {
     }
     // disable synchronous version of this method
     ::grpc::Status ListWorkers(::grpc::ServerContext* /*context*/, const ::forge::v1::ListWorkersRequest* /*request*/, ::forge::v1::ListWorkersResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithGenericMethod_ResolveTaskPause : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_ResolveTaskPause() {
+      ::grpc::Service::MarkMethodGeneric(6);
+    }
+    ~WithGenericMethod_ResolveTaskPause() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ResolveTaskPause(::grpc::ServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/) override {
       abort();
       return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
     }
@@ -739,6 +839,26 @@ class CoordinatorService final {
     }
     void RequestListWorkers(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
       ::grpc::Service::RequestAsyncUnary(5, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithRawMethod_ResolveTaskPause : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_ResolveTaskPause() {
+      ::grpc::Service::MarkMethodRaw(6);
+    }
+    ~WithRawMethod_ResolveTaskPause() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ResolveTaskPause(::grpc::ServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestResolveTaskPause(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(6, context, request, response, new_call_cq, notification_cq, tag);
     }
   };
   template <class BaseClass>
@@ -871,6 +991,28 @@ class CoordinatorService final {
       return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
     }
     virtual ::grpc::ServerUnaryReactor* ListWorkers(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithRawCallbackMethod_ResolveTaskPause : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_ResolveTaskPause() {
+      ::grpc::Service::MarkMethodRawCallback(6,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->ResolveTaskPause(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_ResolveTaskPause() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ResolveTaskPause(::grpc::ServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ResolveTaskPause(
       ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
   };
   template <class BaseClass>
@@ -1035,9 +1177,36 @@ class CoordinatorService final {
     // replace default version of method with streamed unary
     virtual ::grpc::Status StreamedListWorkers(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::forge::v1::ListWorkersRequest,::forge::v1::ListWorkersResponse>* server_unary_streamer) = 0;
   };
-  typedef WithStreamedUnaryMethod_SubmitWorkflow<WithStreamedUnaryMethod_GetWorkflow<WithStreamedUnaryMethod_ListWorkflows<WithStreamedUnaryMethod_CancelWorkflow<WithStreamedUnaryMethod_GetOverview<WithStreamedUnaryMethod_ListWorkers<Service > > > > > > StreamedUnaryService;
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_ResolveTaskPause : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_ResolveTaskPause() {
+      ::grpc::Service::MarkMethodStreamed(6,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse>* streamer) {
+                       return this->StreamedResolveTaskPause(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_ResolveTaskPause() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status ResolveTaskPause(::grpc::ServerContext* /*context*/, const ::forge::v1::ResolveTaskPauseRequest* /*request*/, ::forge::v1::ResolveTaskPauseResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedResolveTaskPause(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::forge::v1::ResolveTaskPauseRequest,::forge::v1::ResolveTaskPauseResponse>* server_unary_streamer) = 0;
+  };
+  typedef WithStreamedUnaryMethod_SubmitWorkflow<WithStreamedUnaryMethod_GetWorkflow<WithStreamedUnaryMethod_ListWorkflows<WithStreamedUnaryMethod_CancelWorkflow<WithStreamedUnaryMethod_GetOverview<WithStreamedUnaryMethod_ListWorkers<WithStreamedUnaryMethod_ResolveTaskPause<Service > > > > > > > StreamedUnaryService;
   typedef Service SplitStreamedService;
-  typedef WithStreamedUnaryMethod_SubmitWorkflow<WithStreamedUnaryMethod_GetWorkflow<WithStreamedUnaryMethod_ListWorkflows<WithStreamedUnaryMethod_CancelWorkflow<WithStreamedUnaryMethod_GetOverview<WithStreamedUnaryMethod_ListWorkers<Service > > > > > > StreamedService;
+  typedef WithStreamedUnaryMethod_SubmitWorkflow<WithStreamedUnaryMethod_GetWorkflow<WithStreamedUnaryMethod_ListWorkflows<WithStreamedUnaryMethod_CancelWorkflow<WithStreamedUnaryMethod_GetOverview<WithStreamedUnaryMethod_ListWorkers<WithStreamedUnaryMethod_ResolveTaskPause<Service > > > > > > > StreamedService;
 };
 
 }  // namespace v1

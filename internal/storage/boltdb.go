@@ -333,10 +333,58 @@ func (s *BoltStorage) UpdateTaskStatus(_ context.Context, taskID string, status 
 	})
 }
 
+// RebaseTaskDeadline rewrites timeout_at on a task (see the interface).
+func (s *BoltStorage) RebaseTaskDeadline(_ context.Context, taskID string, deadline *time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTasks)
+		raw := b.Get([]byte(taskID))
+		if raw == nil {
+			return nil
+		}
+		var task Task
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
+		}
+		task.TimeoutAt = deadline
+		updated, err := json.Marshal(&task)
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", taskID, err)
+		}
+		return b.Put([]byte(taskID), updated)
+	})
+}
+
 // isTerminalTaskStatus reports whether a task status is a terminal state that
 // must not be overwritten by subsequent Complete/Fail calls.
 func isTerminalTaskStatus(s TaskStatus) bool {
 	return s == TaskStatusCompleted || s == TaskStatusFailed || s == TaskStatusSkipped
+}
+
+// ReleaseTask clears the worker assignment on a task. A task with no worker,
+// or one that does not exist, is a no-op — releasing is a cleanup, not a
+// guarantee about the task's state.
+func (s *BoltStorage) ReleaseTask(_ context.Context, taskID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTasks)
+		raw := b.Get([]byte(taskID))
+		if raw == nil {
+			return nil
+		}
+		var task Task
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
+		}
+		if task.WorkerID == "" && task.ScheduledAt == nil {
+			return nil
+		}
+		task.WorkerID = ""
+		task.ScheduledAt = nil
+		updated, err := json.Marshal(&task)
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", taskID, err)
+		}
+		return b.Put([]byte(taskID), updated)
+	})
 }
 
 // CompleteTask marks a task as COMPLETED and persists its output.

@@ -30,6 +30,7 @@ static const char* CoordinatorService_method_names[] = {
   "/forge.v1.CoordinatorService/CancelWorkflow",
   "/forge.v1.CoordinatorService/GetOverview",
   "/forge.v1.CoordinatorService/ListWorkers",
+  "/forge.v1.CoordinatorService/ResolveTaskPause",
 };
 
 std::unique_ptr< CoordinatorService::Stub> CoordinatorService::NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options) {
@@ -45,6 +46,7 @@ CoordinatorService::Stub::Stub(const std::shared_ptr< ::grpc::ChannelInterface>&
   , rpcmethod_CancelWorkflow_(CoordinatorService_method_names[3], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
   , rpcmethod_GetOverview_(CoordinatorService_method_names[4], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
   , rpcmethod_ListWorkers_(CoordinatorService_method_names[5], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
+  , rpcmethod_ResolveTaskPause_(CoordinatorService_method_names[6], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
   {}
 
 ::grpc::Status CoordinatorService::Stub::SubmitWorkflow(::grpc::ClientContext* context, const ::forge::v1::SubmitWorkflowRequest& request, ::forge::v1::SubmitWorkflowResponse* response) {
@@ -185,6 +187,29 @@ void CoordinatorService::Stub::async::ListWorkers(::grpc::ClientContext* context
   return result;
 }
 
+::grpc::Status CoordinatorService::Stub::ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::forge::v1::ResolveTaskPauseResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_ResolveTaskPause_, context, request, response);
+}
+
+void CoordinatorService::Stub::async::ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ResolveTaskPause_, context, request, response, std::move(f));
+}
+
+void CoordinatorService::Stub::async::ResolveTaskPause(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ResolveTaskPause_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>* CoordinatorService::Stub::PrepareAsyncResolveTaskPauseRaw(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::forge::v1::ResolveTaskPauseResponse, ::forge::v1::ResolveTaskPauseRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_ResolveTaskPause_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::forge::v1::ResolveTaskPauseResponse>* CoordinatorService::Stub::AsyncResolveTaskPauseRaw(::grpc::ClientContext* context, const ::forge::v1::ResolveTaskPauseRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncResolveTaskPauseRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
 CoordinatorService::Service::Service() {
   AddMethod(new ::grpc::internal::RpcServiceMethod(
       CoordinatorService_method_names[0],
@@ -246,6 +271,16 @@ CoordinatorService::Service::Service() {
              ::forge::v1::ListWorkersResponse* resp) {
                return service->ListWorkers(ctx, req, resp);
              }, this)));
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      CoordinatorService_method_names[6],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< CoordinatorService::Service, ::forge::v1::ResolveTaskPauseRequest, ::forge::v1::ResolveTaskPauseResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](CoordinatorService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::forge::v1::ResolveTaskPauseRequest* req,
+             ::forge::v1::ResolveTaskPauseResponse* resp) {
+               return service->ResolveTaskPause(ctx, req, resp);
+             }, this)));
 }
 
 CoordinatorService::Service::~Service() {
@@ -287,6 +322,13 @@ CoordinatorService::Service::~Service() {
 }
 
 ::grpc::Status CoordinatorService::Service::ListWorkers(::grpc::ServerContext* context, const ::forge::v1::ListWorkersRequest* request, ::forge::v1::ListWorkersResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+::grpc::Status CoordinatorService::Service::ResolveTaskPause(::grpc::ServerContext* context, const ::forge::v1::ResolveTaskPauseRequest* request, ::forge::v1::ResolveTaskPauseResponse* response) {
   (void) context;
   (void) request;
   (void) response;
