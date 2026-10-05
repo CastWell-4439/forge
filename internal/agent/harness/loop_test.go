@@ -156,6 +156,10 @@ func TestAgentLoopMaxSteps(t *testing.T) {
 	router := NewToolRouter(registry)
 	config := DefaultLoopConfig()
 	config.MaxSteps = 3 // Low limit for testing.
+	// This test measures the max_steps exit, and its script repeats one call
+	// on purpose; the no-progress guard would exit first with a different
+	// reason, so it is disabled here rather than blunted globally.
+	config.NoProgressThreshold = -1
 	loop := NewAgentLoop(llm, router, config)
 
 	result, err := loop.Run(context.Background(), "test-session", "infinite loop")
@@ -356,6 +360,10 @@ func TestAgentLoopVerifierAlwaysRejects(t *testing.T) {
 	router := NewToolRouter(registry)
 	config := DefaultLoopConfig()
 	config.MaxSteps = 3
+	// Same reason as TestAgentLoopMaxSteps: this measures the verifier path
+	// with a deliberately repeating script, so the no-progress stop (which
+	// would fire first) is disabled for this test only.
+	config.NoProgressThreshold = -1
 	loop := NewAgentLoop(llm, router, config)
 
 	verifier := &mockVerifier{rejectCount: 100} // never passes

@@ -23,6 +23,11 @@ type LoopConfig struct {
 	MaxSteps         int
 	MaxContextTokens int
 	SystemPrompt     string
+	// NoProgressThreshold ends the run with Reason "no_progress" after this
+	// many consecutive identical tool calls. 0 means DefaultNoProgressThreshold;
+	// a negative value disables the streak stop (the non-idempotent duplicate
+	// guard stays on regardless — see no_progress.go).
+	NoProgressThreshold int
 }
 
 // DefaultLoopConfig returns config with sensible defaults.
@@ -75,6 +80,12 @@ type AgentLoop struct {
 	// memoryJudge decides whether a finished run is worth remembering; nil
 	// means the default gate (see SetMemoryWriteJudge).
 	memoryJudge MemoryWriteJudge
+
+	// Duplicate detection state (see no_progress.go). Rebuilt from the ledger
+	// at the start of every run, including resumes.
+	nonIdempotentDone map[string]bool
+	lastFingerprint   string
+	noProgress        int
 }
 
 // NewAgentLoop creates a new ReAct loop.
@@ -358,6 +369,11 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		}
 	}
 
+	// Duplicate/no-progress detection starts from whatever the ledger already
+	// knows: side effects recorded before a crash still count, so a resumed
+	// run keeps refusing calls that already ran.
+	l.initProgressTracking(ledger)
+
 	// --- Long-term memory recall (M5, optional) ---
 	// A fresh run brings a fresh prompt, so this is where the agent "remembers
 	// what it learned before". Knowledge retrieval stays agentic (the tool); a
@@ -552,6 +568,7 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				ID:         fmt.Sprintf("%s-step-%d-%s", sessionID, step, toolName),
 				StepIndex:  step,
 				Tool:       toolName,
+				Params:     agentResp.Action.Params,
 				Idempotent: l.toolIsIdempotent(toolName),
 				Status:     core.ToolCallStarted,
 				StartedAt:  time.Now().UTC(),
@@ -570,6 +587,7 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				Data: map[string]any{
 					"id":         ledger[len(ledger)-1].ID,
 					"idempotent": ledger[len(ledger)-1].Idempotent,
+					"params":     agentResp.Action.Params,
 					"turn":       marshalAssistantTurn(agentResp),
 				},
 			}); jerr != nil {
@@ -582,7 +600,28 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 				return nil, err
 			}
 
-			toolResult := l.router.Call(ctx, toolName, agentResp.Action.Params)
+			// Duplicate guard: a non-idempotent call whose identical twin
+			// already ran in this run is refused BEFORE the handler — replaying
+			// its side effect is the one thing the ledger exists to prevent.
+			// The refusal is an observation the model can act on, and the
+			// fingerprint feeds the streak either way.
+			fingerprint := toolFingerprint(toolName, agentResp.Action.Params)
+			streak := l.noteProgress(fingerprint)
+			var toolResult *core.ToolResult
+			if !ledger[len(ledger)-1].Idempotent && l.nonIdempotentDone[fingerprint] {
+				toolResult = &core.ToolResult{
+					Error: fmt.Sprintf(
+						"duplicate call refused: %s(%s) already ran in this run and is not idempotent, "+
+							"so running it again would repeat its side effects. Change the parameters, "+
+							"use a different tool, or give your answer.",
+						toolName, compactParams(agentResp.Action.Params)),
+				}
+			} else {
+				toolResult = l.router.Call(ctx, toolName, agentResp.Action.Params)
+				if !ledger[len(ledger)-1].Idempotent {
+					l.nonIdempotentDone[fingerprint] = true
+				}
+			}
 
 			ledger[len(ledger)-1].Status = core.ToolCallCompleted
 			ledger[len(ledger)-1].Result = toolResult.Output
@@ -691,6 +730,24 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			// Persist the finished step. This is the checkpoint a resume loads.
 			if err := l.saveCheckpoint(ctx, sessionID, step, messages, ledger); err != nil {
 				return nil, err
+			}
+
+			// --- No progress: the same call, again, past the threshold ---
+			// Checked AFTER the step is journaled and checkpointed, so the
+			// refusal that tripped it is fully on the record — the run stops
+			// with everything it did, exactly like max_steps.
+			if threshold := l.noProgressThreshold(); threshold > 0 && streak >= threshold {
+				reason := fmt.Sprintf("%d consecutive identical tool calls (%s)", streak, toolName)
+				l.emitRunEnded(ctx, sessionID, step, "no_progress", reason)
+				return &RunResult{
+					Answer: fmt.Sprintf(
+						"Stopped: the same tool call %s was repeated %d times without change. "+
+							"Nothing new can come from repeating it — different parameters, a different tool, "+
+							"or your answer would move the task forward.",
+						toolName, streak),
+					Steps:  steps,
+					Reason: "no_progress",
+				}, nil
 			}
 
 			continue
