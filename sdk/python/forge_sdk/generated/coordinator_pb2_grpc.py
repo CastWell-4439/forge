@@ -5,7 +5,7 @@ import grpc
 import coordinator_pb2 as coordinator__pb2
 
 
-class CoordinatorServiceStub(object):
+class CoordinatorServiceStub:
     """CoordinatorService manages workflow lifecycle.
     """
 
@@ -45,9 +45,14 @@ class CoordinatorServiceStub(object):
                 request_serializer=coordinator__pb2.ListWorkersRequest.SerializeToString,
                 response_deserializer=coordinator__pb2.ListWorkersResponse.FromString,
                 _registered_method=True)
+        self.ResolveTaskPause = channel.unary_unary(
+                '/forge.v1.CoordinatorService/ResolveTaskPause',
+                request_serializer=coordinator__pb2.ResolveTaskPauseRequest.SerializeToString,
+                response_deserializer=coordinator__pb2.ResolveTaskPauseResponse.FromString,
+                _registered_method=True)
 
 
-class CoordinatorServiceServicer(object):
+class CoordinatorServiceServicer:
     """CoordinatorService manages workflow lifecycle.
     """
 
@@ -93,6 +98,16 @@ class CoordinatorServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ResolveTaskPause(self, request, context):
+        """ResolveTaskPause approves or rejects a task the runtime gate parked
+        awaiting human review. Approval returns the task to the scheduler's queue;
+        rejection fails it through the ordinary failure path. This is the entry
+        point that makes "pause" more than a permanent halt.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_CoordinatorServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -126,6 +141,11 @@ def add_CoordinatorServiceServicer_to_server(servicer, server):
                     request_deserializer=coordinator__pb2.ListWorkersRequest.FromString,
                     response_serializer=coordinator__pb2.ListWorkersResponse.SerializeToString,
             ),
+            'ResolveTaskPause': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResolveTaskPause,
+                    request_deserializer=coordinator__pb2.ResolveTaskPauseRequest.FromString,
+                    response_serializer=coordinator__pb2.ResolveTaskPauseResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'forge.v1.CoordinatorService', rpc_method_handlers)
@@ -134,7 +154,7 @@ def add_CoordinatorServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class CoordinatorService(object):
+class CoordinatorService:
     """CoordinatorService manages workflow lifecycle.
     """
 
@@ -290,6 +310,33 @@ class CoordinatorService(object):
             '/forge.v1.CoordinatorService/ListWorkers',
             coordinator__pb2.ListWorkersRequest.SerializeToString,
             coordinator__pb2.ListWorkersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ResolveTaskPause(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/forge.v1.CoordinatorService/ResolveTaskPause',
+            coordinator__pb2.ResolveTaskPauseRequest.SerializeToString,
+            coordinator__pb2.ResolveTaskPauseResponse.FromString,
             options,
             channel_credentials,
             insecure,
