@@ -91,16 +91,23 @@ const (
 // ToolCallStarted before the tool is invoked and rewritten to ToolCallCompleted
 // afterwards, so a record left in ToolCallStarted is precisely the "it may or
 // may not have happened" case that a resume must not resolve by guessing.
+//
+// Params records what the tool was called with. It makes the ledger's own
+// stated purpose enforceable at runtime: "this exact call already ran" is only
+// answerable when the record says what the call was, and it also lets an
+// operator reconstruct the invocation afterwards instead of seeing only its
+// result.
 type ToolCallRecord struct {
-	ID          string    `json:"id"`
-	StepIndex   int       `json:"step_index"`
-	Tool        string    `json:"tool"`
-	Idempotent  bool      `json:"idempotent"`
-	Status      string    `json:"status"`
-	Result      string    `json:"result,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
+	ID          string         `json:"id"`
+	StepIndex   int            `json:"step_index"`
+	Tool        string         `json:"tool"`
+	Params      map[string]any `json:"params,omitempty"`
+	Idempotent  bool           `json:"idempotent"`
+	Status      string         `json:"status"`
+	Result      string         `json:"result,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	StartedAt   time.Time      `json:"started_at"`
+	CompletedAt time.Time      `json:"completed_at,omitempty"`
 }
 
 // Checkpoint represents a saved agent state for recovery.

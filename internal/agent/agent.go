@@ -235,6 +235,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		// to 128000 while harness.DefaultMaxContextTokens (and every caller that
 		// passes a budget, e.g. workers/ai and workers/review) used 100000.
 		MaxContextTokens: harness.DefaultMaxContextTokens,
+		// 0 picks harness.DefaultNoProgressThreshold — an agent stuck repeating
+		// itself stops honestly instead of burning the whole step budget.
+		NoProgressThreshold: 0,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 
