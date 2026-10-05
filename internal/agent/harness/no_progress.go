@@ -32,6 +32,14 @@ import (
 // disables the check entirely.
 const DefaultNoProgressThreshold = 3
 
+// duplicateRefusalFormat is the shared refusal text for a re-issued
+// non-idempotent call. One constant, two paths (prompt and native): the
+// message the model sees must not depend on which protocol delivered the
+// request.
+const duplicateRefusalFormat = "duplicate call refused: %s(%s) already ran in this run and is not idempotent, " +
+	"so running it again would repeat its side effects. Change the parameters, " +
+	"use a different tool, or give your answer."
+
 // toolFingerprint identifies a call by name + canonical parameters.
 func toolFingerprint(tool string, params map[string]any) string {
 	encoded, err := json.Marshal(params)

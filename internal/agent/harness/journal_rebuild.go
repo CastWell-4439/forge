@@ -76,6 +76,7 @@ func RebuildCheckpoint(events []RunEvent) (*core.Checkpoint, error) {
 		toolTurns   = map[int]string{}
 		toolResults = map[int]*core.ToolResult{}
 		toolNames   = map[int]string{}
+		toolNative  = map[int]string{} // provider-native id of the step's last completed call
 	)
 
 	for _, ev := range events[scope+1:] {
@@ -114,6 +115,9 @@ func RebuildCheckpoint(events []RunEvent) (*core.Checkpoint, error) {
 				Error:  asString(ev.Data["error"]),
 			}
 			toolNames[ev.Step] = ev.Tool
+			if nativeID := asString(ev.Data["native_id"]); nativeID != "" {
+				toolNative[ev.Step] = nativeID
+			}
 		case EventStepCompleted:
 			turns, err := decodeMessages(ev.Data["turns"])
 			if err != nil {
@@ -131,17 +135,28 @@ func RebuildCheckpoint(events []RunEvent) (*core.Checkpoint, error) {
 
 	// A tool that completed while its step never did: reconstruct the two
 	// messages the loop would have appended, so the run continues past the
-	// step instead of repeating the tool.
+	// step instead of repeating the tool. Native turns rebuild into the
+	// protocol shape (assistant with requests, tool-role answer); the prompt
+	// path keeps its assistant-text + user-observation pair.
 	if !completed && lastStep+1 >= 0 {
 		p := lastStep + 1
 		if result, ok := toolResults[p]; ok {
 			if turn := toolTurns[p]; turn != "" {
-				messages = append(messages, core.Message{Role: "assistant", Content: turn})
+				if thought, calls, native := decodeNativeTurn(turn); native {
+					messages = append(messages, core.Message{Role: "assistant", Content: thought, ToolCalls: calls})
+					messages = append(messages, core.Message{
+						Role:       "tool",
+						ToolCallID: toolNative[p],
+						Content:    formatObservation(toolNames[p], result),
+					})
+				} else {
+					messages = append(messages, core.Message{Role: "assistant", Content: turn})
+					messages = append(messages, core.Message{
+						Role:    "user",
+						Content: formatObservation(toolNames[p], result),
+					})
+				}
 			}
-			messages = append(messages, core.Message{
-				Role:    "user",
-				Content: formatObservation(toolNames[p], result),
-			})
 			lastStep = p
 		}
 	}
