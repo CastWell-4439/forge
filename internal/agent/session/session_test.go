@@ -200,6 +200,10 @@ func (m *mockCoordinatorClient) ListWorkers(_ context.Context, _ *forgev1.ListWo
 	return nil, nil
 }
 
+func (m *mockCoordinatorClient) ResolveTaskPause(_ context.Context, _ *forgev1.ResolveTaskPauseRequest, _ ...grpc.CallOption) (*forgev1.ResolveTaskPauseResponse, error) {
+	return nil, nil
+}
+
 func TestForgeClientSubmit(t *testing.T) {
 	mock := &mockCoordinatorClient{
 		submitResp: &forgev1.SubmitWorkflowResponse{WorkflowId: "wf-abc-123"},

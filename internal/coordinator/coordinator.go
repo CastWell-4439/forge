@@ -640,6 +640,16 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		EndedAt:    callEndedAt,
 	})
 
+	if resp.GetPaused() {
+		// Held for a human. This is NOT a failure and NOT a completion: park
+		// the task so the worker is released, and let an approval move it back
+		// to READY for normal re-dispatch.
+		if pauseErr := c.OnTaskPaused(ctx, task.ID, resp.GetPauseReason()); pauseErr != nil {
+			log.Printf("ERROR: handle task %s pause: %v", task.ID, pauseErr)
+		}
+		return
+	}
+
 	if resp.GetSuccess() {
 		if err := c.OnTaskCompleted(ctx, task.ID, resp.GetOutput()); err != nil {
 			log.Printf("ERROR: handle task %s completion: %v", task.ID, err)
@@ -994,6 +1004,8 @@ func workflowStatusToProto(s storage.WorkflowStatus) forgev1.WorkflowStatus {
 		return forgev1.WorkflowStatus_WORKFLOW_STATUS_CANCELLED
 	case storage.WorkflowStatusCompensating:
 		return forgev1.WorkflowStatus_WORKFLOW_STATUS_COMPENSATING
+	case storage.WorkflowStatusPaused:
+		return forgev1.WorkflowStatus_WORKFLOW_STATUS_PAUSED
 	default:
 		return forgev1.WorkflowStatus_WORKFLOW_STATUS_UNSPECIFIED
 	}
@@ -1014,6 +1026,8 @@ func protoToWorkflowStatus(s forgev1.WorkflowStatus) storage.WorkflowStatus {
 		return storage.WorkflowStatusCancelled
 	case forgev1.WorkflowStatus_WORKFLOW_STATUS_COMPENSATING:
 		return storage.WorkflowStatusCompensating
+	case forgev1.WorkflowStatus_WORKFLOW_STATUS_PAUSED:
+		return storage.WorkflowStatusPaused
 	default:
 		return ""
 	}
@@ -1054,6 +1068,8 @@ func taskStatusToProto(s storage.TaskStatus) forgev1.TaskStatus {
 		return forgev1.TaskStatus_TASK_STATUS_SKIPPED
 	case storage.TaskStatusCompensating:
 		return forgev1.TaskStatus_TASK_STATUS_COMPENSATING
+	case storage.TaskStatusPaused:
+		return forgev1.TaskStatus_TASK_STATUS_PAUSED
 	default:
 		return forgev1.TaskStatus_TASK_STATUS_UNSPECIFIED
 	}
