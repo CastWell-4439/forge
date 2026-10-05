@@ -92,6 +92,7 @@ func RebuildCheckpoint(events []RunEvent) (*core.Checkpoint, error) {
 				ID:         asString(ev.Data["id"]),
 				StepIndex:  ev.Step,
 				Tool:       ev.Tool,
+				Params:     asAnyMap(ev.Data["params"]),
 				Idempotent: asBool(ev.Data["idempotent"]),
 				Status:     core.ToolCallStarted,
 				StartedAt:  ev.TS,
@@ -184,6 +185,12 @@ func asString(v any) string {
 func asBool(v any) bool {
 	b, _ := v.(bool)
 	return b
+}
+
+// asAnyMap reads a params object after its JSON round trip.
+func asAnyMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
 }
 
 func asInt(v any) int {
