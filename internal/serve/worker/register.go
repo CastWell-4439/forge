@@ -3,7 +3,9 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/castwell/forge/internal/agent/core"
@@ -26,6 +28,7 @@ const (
 	envProjectConfig = "FORGE_PROJECT_CONFIG"
 	envLLMAPIKey     = "FORGE_LLM_API_KEY"
 	envLLMBaseURL    = "FORGE_LLM_BASE_URL"
+	envLLMStream     = "FORGE_LLM_STREAM"
 	envMCPEndpoint   = "FORGE_MCP_ENDPOINT"
 	envMCPToken      = "FORGE_MCP_TOKEN"
 	envPGDSN         = "FORGE_PG_DSN"
@@ -202,7 +205,26 @@ func newEnvLLMClient(model string, temperature float64, maxTokens int) core.LLMC
 	}
 	cfg.Temperature = temperature
 	cfg.MaxTokens = maxTokens
+	// N2b decision 9: streaming on unless explicitly off; a typo leans toward
+	// "on" because streaming degrades to buffered responses on its own, while
+	// the benefit (no whole-response timeout) is what is lost when off.
+	cfg.Streaming = llmStreamEnabled()
 	return harness.NewLLMClient(cfg)
+}
+
+// llmStreamEnabled resolves FORGE_LLM_STREAM: off/0/false/no disable;
+// anything else keeps streaming on, with a warning for values that are not
+// recognised affirmative answers (a typo must not silently disable it either).
+func llmStreamEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(envLLMStream))) {
+	case "off", "0", "false", "no":
+		return false
+	case "", "on", "1", "true", "yes":
+		return true
+	default:
+		log.Printf("WARN: unknown %s %q (want on|off); keeping streaming on", envLLMStream, os.Getenv(envLLMStream))
+		return true
+	}
 }
 
 // unconfiguredHandler reports exactly what a worker is missing. A node that

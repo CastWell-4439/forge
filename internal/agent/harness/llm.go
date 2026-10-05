@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strings"
@@ -26,6 +27,10 @@ type LLMConfig struct {
 	MaxTokens   int
 	Timeout     time.Duration
 	MaxRetries  int // max retry attempts on transient errors (default 3)
+	// Streaming requests SSE delivery (N2b). It doubles as the read watchdog
+	// interval: every data line restarts it, silence beyond it fails the read.
+	// The whole-response Timeout keeps governing non-streaming requests.
+	Streaming bool
 }
 
 // DefaultLLMConfig returns config with sensible defaults.
@@ -36,6 +41,7 @@ func DefaultLLMConfig() LLMConfig {
 		MaxTokens:   4096,
 		Timeout:     60 * time.Second,
 		MaxRetries:  3,
+		Streaming:   true,
 	}
 }
 
@@ -48,6 +54,13 @@ type LLMClient struct {
 	// capability is a property of the endpoint, not of one request, so every
 	// later call skips the attempt and reports ErrToolsUnsupported directly.
 	toolsBroken atomic.Bool
+	// streamBroken latches once the endpoint refuses the "stream" field —
+	// the same reasoning as toolsBroken (N2b decision 9's companion).
+	streamBroken atomic.Bool
+	// streamClient deliberately has NO whole-request timeout: streaming is
+	// guarded by the per-line watchdog inside readStream instead, so a slow
+	// but flowing answer survives — the exact bug streaming exists to fix.
+	streamClient *http.Client
 }
 
 // NewLLMClient creates a new LLM API client.
@@ -56,8 +69,9 @@ func NewLLMClient(config LLMConfig) *LLMClient {
 		config.MaxRetries = 3
 	}
 	return &LLMClient{
-		config: config,
-		client: &http.Client{Timeout: config.Timeout},
+		config:       config,
+		client:       &http.Client{Timeout: config.Timeout},
+		streamClient: &http.Client{},
 	}
 }
 
@@ -69,6 +83,9 @@ type chatRequest struct {
 	MaxTokens   int           `json:"max_tokens,omitempty"`
 	// Tools is the native function-calling list (absent on the prompt path).
 	Tools []openAITool `json:"tools,omitempty"`
+	// Stream selects SSE delivery; StreamOptions asks for the usage trailer.
+	Stream        *bool          `json:"stream,omitempty"`
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
 }
 
 type chatMessage struct {
@@ -124,7 +141,8 @@ func (c *LLMClient) Chat(ctx context.Context, messages []core.Message) (string, 
 // Implements core.LLMClient.ChatWithUsage.
 // Retries on 429 (rate limit) and 5xx (server error) with exponential backoff.
 func (c *LLMClient) ChatWithUsage(ctx context.Context, messages []core.Message) (core.ChatResult, error) {
-	return c.retrying(ctx, c.buildRequest(messages, nil), false)
+	buffered, streamed := c.pairRequest(messages, nil)
+	return c.retrying(ctx, buffered, streamed, false)
 }
 
 // ChatWithTools sends messages plus the tool definitions and parses native
@@ -138,11 +156,24 @@ func (c *LLMClient) ChatWithTools(ctx context.Context, messages []core.Message, 
 	if c.toolsBroken.Load() {
 		return core.ChatResult{}, ErrToolsUnsupported
 	}
-	return c.retrying(ctx, c.buildRequest(messages, defs), true)
+	buffered, streamed := c.pairRequest(messages, defs)
+	return c.retrying(ctx, buffered, streamed, true)
 }
 
-// buildRequest assembles the wire body; defs non-nil turns on native tools.
-func (c *LLMClient) buildRequest(messages []core.Message, defs []*core.ToolDef) []byte {
+// pairRequest builds the buffered body plus, when streaming is on, the
+// stream:true twin of it. The buffered body always exists: it is the
+// fallback whenever the endpoint refuses streaming (N2b decisions 2 and 7).
+func (c *LLMClient) pairRequest(messages []core.Message, defs []*core.ToolDef) (buffered, streamed []byte) {
+	buffered = c.buildRequest(messages, defs, false)
+	if c.config.Streaming {
+		streamed = c.buildRequest(messages, defs, true)
+	}
+	return buffered, streamed
+}
+
+// buildRequest assembles the wire body; defs non-nil turns on native tools,
+// stream true adds the SSE fields.
+func (c *LLMClient) buildRequest(messages []core.Message, defs []*core.ToolDef, stream bool) []byte {
 	req := chatRequest{
 		Model:       c.config.Model,
 		Messages:    wireMessages(messages),
@@ -161,6 +192,11 @@ func (c *LLMClient) buildRequest(messages []core.Message, defs []*core.ToolDef) 
 				},
 			})
 		}
+	}
+	if stream {
+		on := true
+		req.Stream = &on
+		req.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -186,7 +222,10 @@ func wireMessages(messages []core.Message) []chatMessage {
 }
 
 // retrying runs the request with exponential backoff (1s, 2s, 4s...).
-func (c *LLMClient) retrying(ctx context.Context, body []byte, native bool) (core.ChatResult, error) {
+// The buffered body always rides along: it is what any streamed attempt falls
+// back to when the endpoint refuses streaming or the stream breaks (decisions
+// 4 and 7).
+func (c *LLMClient) retrying(ctx context.Context, buffered, streamed []byte, native bool) (core.ChatResult, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
 		if attempt > 0 {
@@ -198,7 +237,7 @@ func (c *LLMClient) retrying(ctx context.Context, body []byte, native bool) (cor
 			}
 		}
 
-		result, err := c.chatOnce(ctx, body, native)
+		result, err := c.chatOnce(ctx, buffered, streamed, native)
 		if err == nil {
 			return result, nil
 		}
@@ -211,8 +250,19 @@ func (c *LLMClient) retrying(ctx context.Context, body []byte, native bool) (cor
 	return core.ChatResult{}, fmt.Errorf("LLM API failed after %d retries: %w", c.config.MaxRetries, lastErr)
 }
 
-// chatOnce performs one HTTP round trip and classifies the outcome.
-func (c *LLMClient) chatOnce(ctx context.Context, body []byte, native bool) (core.ChatResult, error) {
+// chatOnce performs one HTTP round trip and classifies the outcome. When
+// streaming is in effect the response is read as SSE inside this call.
+func (c *LLMClient) chatOnce(ctx context.Context, buffered, streamed []byte, native bool) (core.ChatResult, error) {
+	streaming := streamed != nil && !c.streamBroken.Load()
+	body := buffered
+	httpClient := c.client
+	if streaming {
+		body = streamed
+		// No whole-request timeout: the per-line watchdog guards silence, so
+		// a slow-but-flowing answer survives (N2b decision 3).
+		httpClient = c.streamClient
+	}
+
 	url := c.config.BaseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -224,20 +274,26 @@ func (c *LLMClient) chatOnce(ctx context.Context, body []byte, native bool) (cor
 		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 	}
 
-	resp, err := c.client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return core.ChatResult{}, &retryableError{err: fmt.Errorf("LLM API call failed: %w", err)}
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return core.ChatResult{}, fmt.Errorf("read response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		// The tools field specifically was refused: latch the capability
-		// and surface the sentinel instead of a status dump.
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return core.ChatResult{}, fmt.Errorf("read response: %w", err)
+		}
+
+		// Layered capability refusals: the stream field first (it was the
+		// attempt in flight), then tools. A stream rejection latches and
+		// re-runs this same call on the buffered body — no wasted attempt.
+		if streaming && streamParamRejected(resp.StatusCode, respBody) {
+			c.streamBroken.Store(true)
+			log.Printf("[harness] endpoint rejected the stream field (status %d); using buffered responses from now on", resp.StatusCode)
+			return c.chatOnce(ctx, buffered, nil, native)
+		}
 		if native && toolsUnsupported(resp.StatusCode, respBody) {
 			c.toolsBroken.Store(true)
 			return core.ChatResult{}, fmt.Errorf("%w (status %d): %s", ErrToolsUnsupported, resp.StatusCode, truncateBody(respBody, 300))
@@ -262,7 +318,32 @@ func (c *LLMClient) chatOnce(ctx context.Context, body []byte, native bool) (cor
 		return core.ChatResult{}, apiErr
 	}
 
+	// Success: an event-stream answer is parsed incrementally; anything else
+	// (a provider that answered whole JSON despite stream:true) takes the
+	// buffered decode — decision 7's tolerance for misbehaving endpoints.
+	if streaming && strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		acc := newStreamAccumulator()
+		if err := readStream(ctx, resp.Body, acc, c.config.Timeout); err != nil {
+			return core.ChatResult{}, err // retryableError types retry; provider errors settle
+		}
+		return acc.result()
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return core.ChatResult{}, fmt.Errorf("read response: %w", err)
+	}
 	return decodeCompletion(respBody, native)
+}
+
+// streamParamRejected reports whether a 4xx refusal is about the stream
+// field specifically (the body names it) — a refusal about something else
+// must not silently disable streaming.
+func streamParamRejected(status int, body []byte) bool {
+	if status != http.StatusBadRequest && status != http.StatusNotFound && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(body)), "stream")
 }
 
 // decodeCompletion parses the provider response, including native tool_calls.
