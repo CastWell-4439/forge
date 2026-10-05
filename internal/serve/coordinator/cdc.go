@@ -20,18 +20,23 @@ import (
 //
 //	FORGE_CDC_TRIGGERS    path to a triggers YAML (triggers: [...]); unset = CDC off
 //	FORGE_WORKFLOWS_DIR   workflow definitions the triggers submit (default workflows)
-//	FORGE_CDC_MODE        wal (default, real logical replication) | poll (slot-peek legacy)
+//	FORGE_CDC_MODE        wal (default: logical replication with AUTO-DOWNGRADE to
+//	                      SELECT polling when the database lacks the capability) |
+//	                      poll (true SELECT-based polling, never needs logical decoding)
+//	FORGE_CDC_CURSOR_COLUMN  timestamp column polling advances on (default created_at)
 //	FORGE_PG_REPL_DSN     replication DSN for wal mode (default: FORGE_PG_DSN + replication=database)
 //	FORGE_CDC_PUBLICATION publication name (default forge_pub; auto-created)
 const (
 	envCDCTriggers     = "FORGE_CDC_TRIGGERS"
 	envCDCMode         = "FORGE_CDC_MODE"
+	envCDCCursorColumn = "FORGE_CDC_CURSOR_COLUMN"
 	envPGReplDSN       = "FORGE_PG_REPL_DSN"
 	envCDCPublication  = "FORGE_CDC_PUBLICATION"
 	envWorkflowsDir    = "FORGE_WORKFLOWS_DIR"
 	envPGDSNForCDC     = "FORGE_PG_DSN"
 	defaultWorkflows   = "workflows"
 	defaultPublication = "forge_pub"
+	defaultCursorCol   = "created_at"
 )
 
 // setupCDC wires CDC triggers when configured and returns a cleanup the
@@ -121,11 +126,17 @@ func setupCDC(ctx context.Context, coord *coordinator.Coordinator) (func(), erro
 	}, nil
 }
 
-// newCDCSource builds one trigger's source. wal (default): PGWALSource —
-// real logical replication with auto slot and auto publication. poll: the
-// slot-peek polling source. Both paths talk to logical decoding (see D-19
-// for the honest gap against README's "WAL 不可用时降级" promise); a typo'd
-// mode or missing DSN fails loudly instead of silently not capturing.
+// newCDCSource builds one trigger's source.
+//
+//	wal  (default): logical replication, wrapped in an auto-downgrade — a
+//	                 capability failure (no permission / no plugin / old server)
+//	                 switches to SELECT polling mid-subscribe, which is what
+//	                 README's "WAL 不可用时自动降级为轮询" promises.
+//	poll:            pure SELECT polling — no slot, no logical decoding at all
+//	                 (the previous slot-peek "poll" still needed logical
+//	                 decoding and could not serve as a fallback).
+//
+// A typo'd mode or missing DSN fails loudly instead of silently not capturing.
 func newCDCSource(ctx context.Context, src cdc.TriggerSource, dsn string, pollPool **pgxpool.Pool) (cdc.Source, error) {
 	if src.Type != "" && src.Type != "postgres" {
 		return nil, fmt.Errorf("unsupported CDC source type %q (postgres only)", src.Type)
@@ -135,11 +146,36 @@ func newCDCSource(ctx context.Context, src cdc.TriggerSource, dsn string, pollPo
 	}
 
 	cfg := cdc.SourceConfig{
-		Type:     "postgres",
-		Table:    src.Table,
-		Events:   cdcOperations(src.Events),
-		Filter:   src.Filter,
-		SlotName: cdcSlotName(src.Table),
+		Type:         "postgres",
+		Table:        src.Table,
+		Events:       cdcOperations(src.Events),
+		Filter:       src.Filter,
+		SlotName:     cdcSlotName(src.Table),
+		CursorColumn: envOrDefault(envCDCCursorColumn, defaultCursorCol),
+	}
+
+	// The polling path queries through a pool; both modes need one because
+	// wal mode falls back to polling.
+	ensurePool := func() (*pgxpool.Pool, error) {
+		if *pollPool == nil {
+			pool, err := pgxpool.New(ctx, dsn)
+			if err != nil {
+				return nil, fmt.Errorf("cdc: connect: %w", err)
+			}
+			*pollPool = pool
+		}
+		return *pollPool, nil
+	}
+	newPollingSource := func() (cdc.Source, error) {
+		pool, err := ensurePool()
+		if err != nil {
+			return nil, err
+		}
+		source, err := cdc.NewPGPollingSource(pgQueryFunc(pool), cfg)
+		if err != nil {
+			return nil, err
+		}
+		return source, nil
 	}
 
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(envCDCMode))) {
@@ -149,16 +185,14 @@ func newCDCSource(ctx context.Context, src cdc.TriggerSource, dsn string, pollPo
 			repl = withReplication(dsn)
 		}
 		publication := envOrDefault(envCDCPublication, defaultPublication)
-		return cdc.NewPGWALSource(repl, cfg, publication, cdc.WithAutoCreateSlot(true)), nil
-	case "poll":
-		if *pollPool == nil {
-			pool, err := pgxpool.New(ctx, dsn)
-			if err != nil {
-				return nil, fmt.Errorf("cdc poll: connect: %w", err)
-			}
-			*pollPool = pool
+		primary := cdc.NewPGWALSource(repl, cfg, publication, cdc.WithAutoCreateSlot(true))
+		fallback, err := newPollingSource()
+		if err != nil {
+			return nil, err
 		}
-		return cdc.NewPGCDCSource(dsn, cfg, cdc.WithQueryFunc(pgQueryFunc(*pollPool))), nil
+		return cdc.NewFallbackSource(src.Table, primary, fallback), nil
+	case "poll":
+		return newPollingSource()
 	default:
 		mode := os.Getenv(envCDCMode)
 		return nil, fmt.Errorf("unknown %s %q (want wal or poll)", envCDCMode, mode)

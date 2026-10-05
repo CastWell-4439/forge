@@ -27,7 +27,8 @@ type Metadata struct {
 type TriggerDef struct {
 	Type     string `yaml:"type"`      // "poll", "webhook", "cron", "manual"
 	Source   string `yaml:"source"`    // e.g. "feishu_mcp"
-	Interval string `yaml:"interval"`  // e.g. "2m"
+	Interval string `yaml:"interval"`  // e.g. "2m" (poll)
+	Expr     string `yaml:"expr"`      // 5-field cron expression (cron), e.g. "*/5 * * * *"
 	Query    string `yaml:"query"`     // filter expression
 	DedupKey string `yaml:"dedup_key"` // template for deduplication
 }
@@ -88,6 +89,7 @@ type CompiledTrigger struct {
 	Type     string
 	Source   string
 	Interval time.Duration
+	Expr     string // 5-field cron expression (cron triggers)
 	Query    string
 	DedupKey string
 }
