@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 	"github.com/castwell/forge/internal/agent/structured"
 )
 
@@ -103,7 +104,7 @@ func TestRequirementParserParse(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/source.mp4", req.SourceVideos[0].URL)
 
 	// Quality.
-	assert.Equal(t, core.QualityStandard, req.QualityLevel)
+	assert.Equal(t, domain.QualityStandard, req.QualityLevel)
 }
 
 func TestRequirementParserDefaults(t *testing.T) {
@@ -118,7 +119,7 @@ func TestRequirementParserDefaults(t *testing.T) {
 	assert.Equal(t, "make a video", req.Description) // fallback from input
 	assert.Equal(t, "16:9", req.AspectRatio)
 	assert.Equal(t, "1080p", req.Resolution)
-	assert.Equal(t, core.QualityStandard, req.QualityLevel)
+	assert.Equal(t, domain.QualityStandard, req.QualityLevel)
 }
 
 func TestRequirementParserMarkdownWrapped(t *testing.T) {

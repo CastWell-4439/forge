@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 	"github.com/castwell/forge/internal/agent/workers"
 )
 
@@ -17,14 +18,14 @@ func TestDAGGeneratorTemplateStrategy(t *testing.T) {
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &core.VideoRequirement{
-		FaceSwap: &core.FaceSwapReq{
-			TargetFace: core.MediaRef{URL: "https://cdn.example.com/face.jpg"},
+	req := &domain.VideoRequirement{
+		FaceSwap: &domain.FaceSwapReq{
+			TargetFace: domain.MediaRef{URL: "https://cdn.example.com/face.jpg"},
 		},
-		TTS:       &core.TTSReq{Text: "Hello", Voice: "zh-CN-XiaoxiaoNeural", Language: "zh-CN"},
-		BGM:       &core.BGMReq{Style: "upbeat", Volume: 0.3},
-		Subtitles: &core.SubtitleReq{Language: "zh-CN"},
-		SourceVideos: []core.MediaRef{
+		TTS:       &domain.TTSReq{Text: "Hello", Voice: "zh-CN-XiaoxiaoNeural", Language: "zh-CN"},
+		BGM:       &domain.BGMReq{Style: "upbeat", Volume: 0.3},
+		Subtitles: &domain.SubtitleReq{Language: "zh-CN"},
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://cdn.example.com/source.mp4"},
 		},
 		Resolution: "1080p",
@@ -72,9 +73,9 @@ tasks:
 	gen := NewDAGGenerator(mock, registry)
 
 	// No template match —will use LLM.
-	req := &core.VideoRequirement{
+	req := &domain.VideoRequirement{
 		Description: "trim a video",
-		SourceVideos: []core.MediaRef{
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://example.com/video.mp4"},
 		},
 	}
@@ -112,7 +113,7 @@ tasks:
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &core.VideoRequirement{Description: "download a file"}
+	req := &domain.VideoRequirement{Description: "download a file"}
 
 	result, err := gen.Generate(context.Background(), req)
 	require.NoError(t, err)
@@ -129,9 +130,9 @@ func TestDAGGeneratorFallbackStrategy(t *testing.T) {
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &core.VideoRequirement{
+	req := &domain.VideoRequirement{
 		Description: "something complex",
-		SourceVideos: []core.MediaRef{
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://example.com/source.mp4"},
 		},
 		Resolution: "720p",
@@ -152,8 +153,8 @@ func TestDAGGeneratorFallbackUsesReqParams(t *testing.T) {
 	require.NoError(t, err)
 	gen := NewDAGGenerator(mock, registry)
 
-	req := &core.VideoRequirement{
-		SourceVideos: []core.MediaRef{
+	req := &domain.VideoRequirement{
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://cdn.example.com/my-video.mp4"},
 		},
 		Resolution: "4K",

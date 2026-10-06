@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 )
 
 // dagYAML is the top-level struct for generating DAG YAML via yaml.Marshal.
@@ -44,9 +45,9 @@ type DAGTemplate struct {
 	// Description explains what this template is for.
 	Description string
 	// Match returns true if the given requirement fits this template.
-	Match func(req *core.VideoRequirement) bool
+	Match func(req *domain.VideoRequirement) bool
 	// Build generates a YAML DAG string from the requirement.
-	Build func(req *core.VideoRequirement) string
+	Build func(req *domain.VideoRequirement) string
 }
 
 // TaskPlanner converts a structured requirement into Forge DAG YAML.
@@ -69,7 +70,7 @@ func NewTaskPlanner(llm core.LLMClient, registry *core.ToolRegistry) *TaskPlanne
 
 // Plan generates a DAG YAML string for the given requirement.
 // It checks templates first, then falls back to LLM generation.
-func (p *TaskPlanner) Plan(ctx context.Context, req *core.VideoRequirement) (string, error) {
+func (p *TaskPlanner) Plan(ctx context.Context, req *domain.VideoRequirement) (string, error) {
 	// Strategy A: try template matching first (fast, stable).
 	for _, tmpl := range p.templates {
 		if tmpl.Match(req) {
@@ -82,7 +83,7 @@ func (p *TaskPlanner) Plan(ctx context.Context, req *core.VideoRequirement) (str
 }
 
 // planWithLLM uses the LLM to dynamically generate a DAG.
-func (p *TaskPlanner) planWithLLM(ctx context.Context, req *core.VideoRequirement) (string, error) {
+func (p *TaskPlanner) planWithLLM(ctx context.Context, req *domain.VideoRequirement) (string, error) {
 	selectedTools := p.selectTools(req)
 	toolsPrompt := p.registry.FormatForPrompt()
 
@@ -128,7 +129,7 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *core.VideoRequiremen
 // inspected, every transformation is a scripted step, the result is written out
 // and checked. Which requirement block triggers which recommendation still keys
 // off VideoRequirement until that type goes domain-neutral (A.11).
-func (p *TaskPlanner) selectTools(req *core.VideoRequirement) []string {
+func (p *TaskPlanner) selectTools(req *domain.VideoRequirement) []string {
 	var selected []string
 	seen := make(map[string]bool)
 	add := func(names ...string) {
@@ -161,7 +162,7 @@ func (p *TaskPlanner) selectTools(req *core.VideoRequirement) []string {
 	add("code.execute", "file.write")
 
 	// Quality levels are checked by running a checker, not by a dedicated tool.
-	if req.QualityLevel == core.QualityStandard || req.QualityLevel == core.QualityPremium {
+	if req.QualityLevel == domain.QualityStandard || req.QualityLevel == domain.QualityPremium {
 		add("shell.run")
 	}
 
@@ -207,7 +208,7 @@ func SourcePipelineTemplate() DAGTemplate {
 	return DAGTemplate{
 		Name:        "source_pipeline",
 		Description: "Fetch sources, transform them with scripted steps, publish the result",
-		Match: func(req *core.VideoRequirement) bool {
+		Match: func(req *domain.VideoRequirement) bool {
 			return req.FaceSwap != nil &&
 				req.TTS != nil &&
 				req.BGM != nil &&
@@ -222,7 +223,7 @@ func SourcePipelineTemplate() DAGTemplate {
 // Requirement values (narration text, soundtrack style, resolution, ...) travel
 // as data inside the scripted steps, so the YAML stays readable from the
 // requirement alone.
-func buildSourcePipeline(req *core.VideoRequirement) string {
+func buildSourcePipeline(req *domain.VideoRequirement) string {
 	sourceURL := ""
 	if len(req.SourceVideos) > 0 {
 		sourceURL = req.SourceVideos[0].URL

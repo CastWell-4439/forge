@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 	"github.com/castwell/forge/internal/coordinator"
 )
 
@@ -45,7 +46,7 @@ type GenerateResult struct {
 
 // Generate produces a validated DAG from a VideoRequirement.
 // It tries three strategies in order: template, LLM+validate, fallback.
-func (g *DAGGenerator) Generate(ctx context.Context, req *core.VideoRequirement) (*GenerateResult, error) {
+func (g *DAGGenerator) Generate(ctx context.Context, req *domain.VideoRequirement) (*GenerateResult, error) {
 	// Strategy 1: Template matching — check if any template fits.
 	for _, tmpl := range g.planner.templates {
 		if tmpl.Match(req) {
@@ -102,7 +103,7 @@ func (g *DAGGenerator) Generate(ctx context.Context, req *core.VideoRequirement)
 
 // generateWithLLM calls the LLM to generate a DAG, optionally including
 // error feedback from a previous attempt.
-func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *core.VideoRequirement, previousErrors string) (string, error) {
+func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *domain.VideoRequirement, previousErrors string) (string, error) {
 	if previousErrors == "" {
 		return g.planner.planWithLLM(ctx, req)
 	}
@@ -152,7 +153,7 @@ func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *core.VideoRequi
 // buildFallbackDAG creates a minimal but valid DAG that covers the basic
 // operations. This always succeeds but may lose some detail from the
 // original requirement.
-func (g *DAGGenerator) buildFallbackDAG(req *core.VideoRequirement) string {
+func (g *DAGGenerator) buildFallbackDAG(req *domain.VideoRequirement) string {
 	// Fetch the source, run one scripted step over it, publish the result -
 	// the smallest pipeline every requirement can answer to.
 	sourceURL := "input"

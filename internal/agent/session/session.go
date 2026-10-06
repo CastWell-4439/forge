@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 )
 
 // SessionState represents the current state of an agent session.
@@ -45,7 +46,7 @@ type Session struct {
 	ID          string
 	State       SessionState
 	Messages    []core.Message
-	Requirement *core.VideoRequirement
+	Requirement *domain.VideoRequirement
 	RetryCount  int
 	WorkflowID  string
 	CreatedAt   time.Time
@@ -119,7 +120,7 @@ func (s *Session) SetWorkflowID(id string) {
 }
 
 // SetRequirement sets the parsed requirement.
-func (s *Session) SetRequirement(req *core.VideoRequirement) {
+func (s *Session) SetRequirement(req *domain.VideoRequirement) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Requirement = req

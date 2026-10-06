@@ -11,6 +11,7 @@ import (
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 )
 
 // --- Session state machine tests ---
@@ -125,7 +126,7 @@ func TestSessionSetters(t *testing.T) {
 	s.SetWorkflowID("wf-123")
 	assert.Equal(t, "wf-123", s.WorkflowID)
 
-	req := &core.VideoRequirement{Description: "test"}
+	req := &domain.VideoRequirement{Description: "test"}
 	s.SetRequirement(req)
 	assert.Equal(t, "test", s.Requirement.Description)
 }
