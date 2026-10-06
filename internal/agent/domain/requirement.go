@@ -1,4 +1,16 @@
-package core
+// Package domain holds product-domain types that used to live in agent/core.
+//
+// The core package carries the agent's generic contract (messages, tools,
+// config) and must stay domain-free — a zero-dependency vocabulary every layer
+// can import. Video production requirements are not part of that contract:
+// they are one product's input shape, so they live here.
+//
+// Compatibility note (A.11, author decision): core keeps type aliases for
+// every name that moved, so the ~40 existing call sites (session, planning,
+// tests) keep compiling untouched. Aliases are a long-term compatibility
+// layer, not a to-be-deleted shim: legacy code stays where it is, and new code
+// imports this package directly.
+package domain
 
 import (
 	"encoding/json"

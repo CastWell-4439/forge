@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 	"github.com/castwell/forge/internal/agent/structured"
 )
 
@@ -23,7 +24,7 @@ func NewRequirementParser(llm core.LLMClient) *RequirementParser {
 }
 
 // Parse sends the user's text to the LLM and returns a structured VideoRequirement.
-func (p *RequirementParser) Parse(ctx context.Context, userText string) (*core.VideoRequirement, error) {
+func (p *RequirementParser) Parse(ctx context.Context, userText string) (*domain.VideoRequirement, error) {
 	systemPrompt := `你是一个视频制作需求分析师。根据用户的自然语言描述，提取结构化的视频制作需求。
 
 请输出 JSON 格式的需求分析结果，包含以下字段：
@@ -61,7 +62,7 @@ func (p *RequirementParser) Parse(ctx context.Context, userText string) (*core.V
 	// Extract JSON from the response (handles markdown fences, string escapes, etc.).
 	jsonStr := structured.ExtractJSONObject(raw)
 
-	var req core.VideoRequirement
+	var req domain.VideoRequirement
 	if err := json.Unmarshal([]byte(jsonStr), &req); err != nil {
 		return nil, fmt.Errorf("parse requirement: invalid JSON from LLM: %w", err)
 	}
@@ -84,7 +85,7 @@ func (p *RequirementParser) Parse(ctx context.Context, userText string) (*core.V
 		req.Resolution = "1080p"
 	}
 	if req.QualityLevel == "" {
-		req.QualityLevel = core.QualityStandard
+		req.QualityLevel = domain.QualityStandard
 	}
 
 	return &req, nil

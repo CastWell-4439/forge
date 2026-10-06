@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -308,11 +309,14 @@ func (c *LLMClient) chatOnce(ctx context.Context, buffered, streamed []byte, nat
 
 		// 400/413 raised because the request exceeded the context window can
 		// never succeed on retry, so say why instead of dumping a raw status.
+		// The sentinel form is what lets the loop take action (E5): the
+		// transport reports, the loop — which owns the message list — decides
+		// to compact and try the step again.
 		if isContextOverflow(resp.StatusCode, respBody) {
 			return core.ChatResult{}, fmt.Errorf(
-				"LLM context window exceeded (status %d); the request is too large — "+
-					"reduce the prompt or lower the compaction threshold: %w",
-				resp.StatusCode, apiErr)
+				"%w (status %d); the request is too large — "+
+					"reduce the prompt or lower the compaction threshold: %s",
+				errContextOverflow, resp.StatusCode, apiErr)
 		}
 
 		return core.ChatResult{}, apiErr
@@ -445,6 +449,11 @@ func isContextOverflow(status int, body []byte) bool {
 // run: it is a provider capability, not a transient fault, so retrying the
 // same request can never succeed.
 var ErrToolsUnsupported = fmt.Errorf("endpoint does not support native tool calling")
+
+// errContextOverflow marks the provider refusing the request for exceeding its
+// window. The transport cannot fix it (shrinking is not its job); the loop
+// compacts and retries the step once — the E5 static rule.
+var errContextOverflow = errors.New("LLM context window exceeded")
 
 // ToolAwareLLM is the optional capability a client can advertise: send the
 // tool definitions and receive native tool_calls. Keeping it a separate

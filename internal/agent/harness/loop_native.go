@@ -46,6 +46,32 @@ func (l *AgentLoop) runNativeToolBatch(
 	})
 
 	for i, call := range calls {
+		// Context tools are loop meta-operations (N2c): they act on the
+		// loop's own window, so they get no ledger entry, no duplicate guard
+		// and no streak. The assistant message carrying the whole batch was
+		// appended above — exactly where a compaction needs to find it.
+		if isContextTool(call.Name) {
+			toolResult := l.runContextTool(ctx, call.Name, call.Arguments, messages, sessionID, step)
+			if toolResult.Error == "" && call.Name == "context.compact" {
+				// Wholesale replacement: restart the journal delta at the new
+				// snapshot; the observation appended next is the only thing
+				// this step should hand a rebuild.
+				*journalBase = len(*messages)
+			}
+			*messages = append(*messages, core.Message{
+				Role:       "tool",
+				ToolCallID: call.ID,
+				Content:    formatObservation(call.Name, toolResult),
+			})
+			*steps = append(*steps, StepRecord{
+				Step:    step,
+				Thought: thought,
+				Action:  &structured.ToolCallRequest{Name: call.Name, Params: call.Arguments},
+				Result:  toolResult,
+			})
+			continue
+		}
+
 		id := fmt.Sprintf("%s-step-%d-%s", sessionID, step, call.Name)
 		if i > 0 {
 			id += fmt.Sprintf("-%d", i)

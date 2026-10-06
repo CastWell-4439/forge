@@ -1,14 +1,17 @@
 package worker
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	agentcore "github.com/castwell/forge/internal/agent"
 	"github.com/castwell/forge/internal/agent/guardrails"
 	"github.com/castwell/forge/internal/agent/workers"
+	"github.com/castwell/forge/internal/forgex/skillpack"
 	"github.com/castwell/forge/internal/worker"
 	agentworker "github.com/castwell/forge/internal/workers/agent"
 )
@@ -21,16 +24,28 @@ import (
 //	FORGE_WEB_SEARCH_API_KEY     key for the brave provider
 //	FORGE_WEB_SEARCH_ENDPOINT    endpoint override (tests point this at httptest)
 //	FORGE_WEB_FETCH_ALLOW_PRIVATE  lift the web.fetch SSRF guard (dev only)
+//	FORGE_SKILLPACK_DIR          directory of published skill packs for skill.activate
+//	                            (default configs/forgex/skills; unset+missing = the
+//	                            tool names the gap instead of failing quietly)
+//	FORGE_CONTEXT_REMIND_AT      first water line as a fraction of the window
+//	                            (default 0.7; off = no reminders)
+//	FORGE_CONTEXT_URGENT_AT      second, stronger line (default 0.9)
+//	FORGE_CONTEXT_KEEP_MESSAGES  trailing messages kept by a compaction (default 4)
 const (
-	envAgentMode          = "FORGE_AGENT_MODE"
-	envAgentWorkspace     = "FORGE_AGENT_WORKSPACE"
-	envAgentGuard         = "FORGE_AGENT_GUARD"
-	envLLMToolMode        = "FORGE_LLM_TOOL_MODE"
-	envWebSearchProvider  = "FORGE_WEB_SEARCH_PROVIDER"
-	envWebSearchAPIKey    = "FORGE_WEB_SEARCH_API_KEY"
-	envWebSearchEndpoint  = "FORGE_WEB_SEARCH_ENDPOINT"
-	envWebFetchAllowPriv  = "FORGE_WEB_FETCH_ALLOW_PRIVATE"
-	defaultAgentWorkspace = ".forge-workspace"
+	envAgentMode           = "FORGE_AGENT_MODE"
+	envAgentWorkspace      = "FORGE_AGENT_WORKSPACE"
+	envAgentGuard          = "FORGE_AGENT_GUARD"
+	envLLMToolMode         = "FORGE_LLM_TOOL_MODE"
+	envWebSearchProvider   = "FORGE_WEB_SEARCH_PROVIDER"
+	envWebSearchAPIKey     = "FORGE_WEB_SEARCH_API_KEY"
+	envWebSearchEndpoint   = "FORGE_WEB_SEARCH_ENDPOINT"
+	envWebFetchAllowPriv   = "FORGE_WEB_FETCH_ALLOW_PRIVATE"
+	envSkillpackDir        = "FORGE_SKILLPACK_DIR"
+	envContextRemindAt     = "FORGE_CONTEXT_REMIND_AT"
+	envContextUrgentAt     = "FORGE_CONTEXT_URGENT_AT"
+	envContextKeepMessages = "FORGE_CONTEXT_KEEP_MESSAGES"
+	defaultAgentWorkspace  = ".forge-workspace"
+	defaultSkillpackDir    = "configs/forgex/skills"
 )
 
 // registerAgent wires the tenth workflow worker: a task that runs the full
@@ -63,8 +78,21 @@ func registerAgent(r *worker.Registry) {
 			cfg.WebSearchAPIKey = os.Getenv(envWebSearchAPIKey)
 			cfg.WebSearchEndpoint = os.Getenv(envWebSearchEndpoint)
 			cfg.WebFetchAllowPrivate = truthy(os.Getenv(envWebFetchAllowPriv))
+			// skill.activate's loader: reads a published SkillPack from disk
+			// and hands the model the full document. Always set — with no
+			// directory configured the error NAMES the env var, which is the
+			// "缺目录=点名" rule; an unset loader would say something vaguer.
+			cfg.LoadSkill = skillLoader(os.Getenv(envSkillpackDir))
 		}),
 	}
+
+	// Water-line reminders and compaction keep-count (N2c): env lives here,
+	// the loop only ever sees numbers (0 = defaults, remind < 0 = off).
+	opts = append(opts, agentcore.WithContextTuning(
+		envFraction(envContextRemindAt),
+		envFraction(envContextUrgentAt),
+		envInt(envContextKeepMessages),
+	))
 
 	// Tool output is untrusted input to the model: a fetched page can say
 	// "ignore your instructions", and the observation is delivered as a
@@ -124,4 +152,57 @@ func truthy(v string) bool {
 	default:
 		return false
 	}
+}
+
+// skillLoader returns skill.activate's loader: a published SkillPack rendered
+// as the document the model follows. With no directory the returned error
+// names the env var, so "not configured" is always actionable.
+func skillLoader(dir string) workers.LoadSkillFunc {
+	if dir == "" {
+		dir = defaultSkillpackDir
+	}
+	return func(_ context.Context, id string) (string, error) {
+		pack, err := skillpack.NewStore(dir).Load(id)
+		if err != nil {
+			return "", fmt.Errorf(
+				"skill %q not loadable from %s (set %s to your published skill packs): %w",
+				id, dir, envSkillpackDir, err)
+		}
+		return skillpack.RenderDocument(pack), nil
+	}
+}
+
+// envFraction parses a fraction env value: empty = 0 (use the default),
+// "off"/"0" as the REMIND value means disabled (-1), anything else a number.
+// Unparseable input warns and falls back to the default — a typo must not
+// silently change the water lines.
+func envFraction(key string) float64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0
+	}
+	lower := strings.ToLower(raw)
+	if lower == "off" || lower == "none" {
+		return -1
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		log.Printf("WARN: unknown %s %q (want a fraction or off); using the default", key, raw)
+		return 0
+	}
+	return v
+}
+
+// envInt parses an integer env value; empty or invalid = 0 (the default).
+func envInt(key string) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("WARN: unknown %s %q (want an integer); using the default", key, raw)
+		return 0
+	}
+	return v
 }

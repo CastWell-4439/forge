@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/castwell/forge/internal/agent/core"
+	"github.com/castwell/forge/internal/agent/domain"
 	"github.com/castwell/forge/internal/agent/workers"
 )
 
@@ -18,15 +18,15 @@ func TestTaskPlannerTemplateMatch(t *testing.T) {
 	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
-	req := &core.VideoRequirement{
+	req := &domain.VideoRequirement{
 		Description: "face swap video with TTS",
-		FaceSwap: &core.FaceSwapReq{
-			TargetFace: core.MediaRef{URL: "https://cdn.example.com/face.jpg", Type: "image"},
+		FaceSwap: &domain.FaceSwapReq{
+			TargetFace: domain.MediaRef{URL: "https://cdn.example.com/face.jpg", Type: "image"},
 		},
-		TTS:       &core.TTSReq{Text: "Hello world", Voice: "zh-CN-XiaoxiaoNeural", Language: "zh-CN"},
-		BGM:       &core.BGMReq{Style: "upbeat", Volume: 0.3},
-		Subtitles: &core.SubtitleReq{Language: "zh-CN"},
-		SourceVideos: []core.MediaRef{
+		TTS:       &domain.TTSReq{Text: "Hello world", Voice: "zh-CN-XiaoxiaoNeural", Language: "zh-CN"},
+		BGM:       &domain.BGMReq{Style: "upbeat", Volume: 0.3},
+		Subtitles: &domain.SubtitleReq{Language: "zh-CN"},
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://cdn.example.com/source.mp4", Type: "video"},
 		},
 		Resolution: "1080p",
@@ -73,9 +73,9 @@ tasks:
 	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
-	req := &core.VideoRequirement{
+	req := &domain.VideoRequirement{
 		Description: "trim a video from 5s to 15s",
-		SourceVideos: []core.MediaRef{
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://example.com/video.mp4", Type: "video"},
 		},
 	}
@@ -94,7 +94,7 @@ func TestTaskPlannerLLMFallbackWithMarkdown(t *testing.T) {
 	require.NoError(t, err)
 	planner := NewTaskPlanner(mock, registry)
 
-	req := &core.VideoRequirement{Description: "just download"}
+	req := &domain.VideoRequirement{Description: "just download"}
 
 	dagYAML, err := planner.Plan(context.Background(), req)
 	require.NoError(t, err)
@@ -109,19 +109,19 @@ func TestSelectTools(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		req      *core.VideoRequirement
+		req      *domain.VideoRequirement
 		expected []string
 		excluded []string
 	}{
 		{
 			name: "face swap with TTS",
-			req: &core.VideoRequirement{
-				FaceSwap:     &core.FaceSwapReq{},
-				TTS:          &core.TTSReq{},
-				BGM:          &core.BGMReq{},
-				Subtitles:    &core.SubtitleReq{},
-				QualityLevel: core.QualityStandard,
-				SourceVideos: []core.MediaRef{{URL: "test"}},
+			req: &domain.VideoRequirement{
+				FaceSwap:     &domain.FaceSwapReq{},
+				TTS:          &domain.TTSReq{},
+				BGM:          &domain.BGMReq{},
+				Subtitles:    &domain.SubtitleReq{},
+				QualityLevel: domain.QualityStandard,
+				SourceVideos: []domain.MediaRef{{URL: "test"}},
 			},
 			expected: []string{
 				"web.fetch", "file.read", "code.execute", "file.write", "shell.run",
@@ -129,8 +129,8 @@ func TestSelectTools(t *testing.T) {
 		},
 		{
 			name: "minimal request",
-			req: &core.VideoRequirement{
-				QualityLevel: core.QualityDraft,
+			req: &domain.VideoRequirement{
+				QualityLevel: domain.QualityDraft,
 			},
 			expected: []string{"code.execute", "file.write"},
 			excluded: []string{"web.fetch", "file.read", "shell.run"},
@@ -197,47 +197,47 @@ func TestFixDAG(t *testing.T) {
 func TestSourcePipelineTemplateMatch(t *testing.T) {
 	tmpl := SourcePipelineTemplate()
 
-	req := &core.VideoRequirement{
-		FaceSwap:     &core.FaceSwapReq{},
-		TTS:          &core.TTSReq{},
-		BGM:          &core.BGMReq{},
-		Subtitles:    &core.SubtitleReq{},
-		SourceVideos: []core.MediaRef{{URL: "test"}},
+	req := &domain.VideoRequirement{
+		FaceSwap:     &domain.FaceSwapReq{},
+		TTS:          &domain.TTSReq{},
+		BGM:          &domain.BGMReq{},
+		Subtitles:    &domain.SubtitleReq{},
+		SourceVideos: []domain.MediaRef{{URL: "test"}},
 	}
 	assert.True(t, tmpl.Match(req))
 
-	assert.False(t, tmpl.Match(&core.VideoRequirement{
-		TTS:          &core.TTSReq{},
-		BGM:          &core.BGMReq{},
-		Subtitles:    &core.SubtitleReq{},
-		SourceVideos: []core.MediaRef{{URL: "test"}},
+	assert.False(t, tmpl.Match(&domain.VideoRequirement{
+		TTS:          &domain.TTSReq{},
+		BGM:          &domain.BGMReq{},
+		Subtitles:    &domain.SubtitleReq{},
+		SourceVideos: []domain.MediaRef{{URL: "test"}},
 	}))
 
-	assert.False(t, tmpl.Match(&core.VideoRequirement{
-		FaceSwap:     &core.FaceSwapReq{},
-		BGM:          &core.BGMReq{},
-		Subtitles:    &core.SubtitleReq{},
-		SourceVideos: []core.MediaRef{{URL: "test"}},
+	assert.False(t, tmpl.Match(&domain.VideoRequirement{
+		FaceSwap:     &domain.FaceSwapReq{},
+		BGM:          &domain.BGMReq{},
+		Subtitles:    &domain.SubtitleReq{},
+		SourceVideos: []domain.MediaRef{{URL: "test"}},
 	}))
 
-	assert.False(t, tmpl.Match(&core.VideoRequirement{
-		FaceSwap:  &core.FaceSwapReq{},
-		TTS:       &core.TTSReq{},
-		BGM:       &core.BGMReq{},
-		Subtitles: &core.SubtitleReq{},
+	assert.False(t, tmpl.Match(&domain.VideoRequirement{
+		FaceSwap:  &domain.FaceSwapReq{},
+		TTS:       &domain.TTSReq{},
+		BGM:       &domain.BGMReq{},
+		Subtitles: &domain.SubtitleReq{},
 	}))
 }
 
 func TestSourcePipelineTemplateBuild(t *testing.T) {
 	tmpl := SourcePipelineTemplate()
-	req := &core.VideoRequirement{
-		FaceSwap: &core.FaceSwapReq{
-			TargetFace: core.MediaRef{URL: "https://face.jpg"},
+	req := &domain.VideoRequirement{
+		FaceSwap: &domain.FaceSwapReq{
+			TargetFace: domain.MediaRef{URL: "https://face.jpg"},
 		},
-		TTS:       &core.TTSReq{Text: "script text", Voice: "en-US-Jenny", Language: "en-US"},
-		BGM:       &core.BGMReq{Style: "chill", Volume: 0.5},
-		Subtitles: &core.SubtitleReq{Language: "en-US"},
-		SourceVideos: []core.MediaRef{
+		TTS:       &domain.TTSReq{Text: "script text", Voice: "en-US-Jenny", Language: "en-US"},
+		BGM:       &domain.BGMReq{Style: "chill", Volume: 0.5},
+		Subtitles: &domain.SubtitleReq{Language: "en-US"},
+		SourceVideos: []domain.MediaRef{
 			{URL: "https://source.mp4"},
 		},
 		Resolution: "720p",
