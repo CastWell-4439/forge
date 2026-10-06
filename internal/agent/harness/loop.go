@@ -35,6 +35,15 @@ type LoopConfig struct {
 	// path with one warning (see ChatWithTools). Clients that do not implement
 	// ToolAwareLLM — every test mock — simply stay on the prompt path.
 	NativeTools bool
+	// CompactKeepMessages is how many trailing messages survive a compaction
+	// un-summarised (static rule, S1). 0 picks defaultCompactKeepMessages.
+	CompactKeepMessages int
+	// ContextRemindAt is the first water line as a fraction of the window
+	// (0.70 default): crossing it injects ONE relative-value reminder.
+	// Negative disables the reminders entirely. ContextUrgentAt is the second
+	// line (0.90 default) with stronger wording.
+	ContextRemindAt float64
+	ContextUrgentAt float64
 }
 
 // DefaultLoopConfig returns config with sensible defaults.
@@ -93,15 +102,22 @@ type AgentLoop struct {
 	nonIdempotentDone map[string]bool
 	lastFingerprint   string
 	noProgress        int
+
+	// Context-window state (N2c): the archive compaction feeds recall, and
+	// one-shot flags per water line so a reminder never repeats within a run.
+	archive          *ContextArchive
+	remindedWarn     bool
+	remindedCritical bool
 }
 
 // NewAgentLoop creates a new ReAct loop.
 func NewAgentLoop(llm core.LLMClient, router *ToolRouter, config LoopConfig) *AgentLoop {
 	return &AgentLoop{
-		llm:    llm,
-		router: router,
-		ctxMgr: NewContextManager(config.MaxContextTokens, llm),
-		config: config,
+		llm:     llm,
+		router:  router,
+		ctxMgr:  NewContextManager(config.MaxContextTokens, llm),
+		config:  config,
+		archive: NewContextArchive(0),
 	}
 }
 
@@ -459,20 +475,54 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			return nil, jerr
 		}
 
+		// --- Water-line reminder (N2c): one relative-value line per threshold
+		// per run, injected only on the crossing step — the exact figures stay
+		// one context.remaining call away, and repeating them would cost more
+		// than they inform.
+		if usage := l.usage(messages); true {
+			if level := l.reminderLevel(usage); level != "" {
+				messages = append(messages, core.Message{
+					Role:    "user",
+					Content: contextReminderLine(usage, level),
+				})
+			}
+		}
+
 		// --- Call LLM ---
 		// Native mode is a request, not a promise: if the endpoint refuses the
 		// tools field the run degrades to the prompt path once (the client
 		// remembers the refusal) and continues this very step without it.
 		var chatResult core.ChatResult
-		if nativeEnabled {
-			chatResult, err = toolCaller.ChatWithTools(ctx, messages, l.router.registry.ListTools())
-			if errors.Is(err, ErrToolsUnsupported) {
-				log.Printf("[harness] endpoint does not support native tool calling (%v); using the prompt path for the rest of this run", err)
-				nativeEnabled = false
-				chatResult, err = l.llm.ChatWithUsage(ctx, messages)
+		callModel := func() error {
+			var callErr error
+			if nativeEnabled {
+				chatResult, callErr = toolCaller.ChatWithTools(ctx, messages, l.router.registry.ListTools())
+				if errors.Is(callErr, ErrToolsUnsupported) {
+					log.Printf("[harness] endpoint does not support native tool calling (%v); using the prompt path for the rest of this run", callErr)
+					nativeEnabled = false
+					chatResult, callErr = l.llm.ChatWithUsage(ctx, messages)
+				}
+			} else {
+				chatResult, callErr = l.llm.ChatWithUsage(ctx, messages)
 			}
-		} else {
-			chatResult, err = l.llm.ChatWithUsage(ctx, messages)
+			return callErr
+		}
+
+		err = callModel()
+		// E5 static rule: the provider refusing the request as too large is a
+		// problem the loop can solve — compact the window (archiving first)
+		// and try THIS step one more time. A second overflow on the same step
+		// means one shrink was not enough; carrying on would loop forever, so
+		// the original error surfaces instead.
+		if errors.Is(err, errContextOverflow) {
+			_, compacted, cerr := l.compactNow(ctx, &messages, sessionID, step)
+			if cerr == nil && compacted {
+				journalBase = len(messages)
+				log.Printf("[harness] context overflow on step %d: compacted, retrying the call once", step)
+				err = callModel()
+			} else {
+				log.Printf("[harness] context overflow on step %d: cannot compact (%v); surfacing the error", step, cerr)
+			}
 		}
 		if err != nil {
 			// Keep the steps accumulated so far. Returning nil here discarded
@@ -633,6 +683,54 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		// --- Non-terminal: Agent wants to call a tool ---
 		if agentResp.IsToolCall() {
 			toolName := agentResp.Action.Name
+
+			// Context tools are loop meta-operations (N2c): they touch the
+			// loop's own window, not the world, so they never enter the
+			// side-effect ledger, the duplicate guard or the progress streak.
+			// The assistant echo goes in FIRST so a compaction keeps the call
+			// itself inside its kept tail; the observation follows in the
+			// native or prompt protocol shape respectively.
+			if isContextTool(toolName) {
+				messages = append(messages, core.Message{
+					Role:    "assistant",
+					Content: marshalAssistantTurn(agentResp),
+				})
+				toolResult := l.runContextTool(ctx, toolName, agentResp.Action.Params, &messages, sessionID, step)
+				if toolResult.Error == "" && toolName == "context.compact" {
+					// The list was replaced wholesale: restart the journal
+					// delta at the new snapshot so this step's delta carries
+					// only the observation (rebuild treats the compaction
+					// event as a replace).
+					journalBase = len(messages)
+				}
+				messages = append(messages, core.Message{
+					Role:    "user",
+					Content: formatObservation(toolName, toolResult),
+				})
+				steps = append(steps, StepRecord{
+					Step:    step,
+					Thought: agentResp.Thought,
+					Action:  agentResp.Action,
+					Result:  toolResult,
+				})
+				// Same tail as a dispatched step: journal the delta, then
+				// checkpoint, so a resume picks this up.
+				if jerr := l.journalAppend(ctx, RunEvent{
+					RunID: sessionID,
+					Type:  EventStepCompleted,
+					Step:  step,
+					TS:    time.Now().UTC(),
+					Data:  map[string]any{"turns": messages[journalBase:]},
+				}); jerr != nil {
+					return nil, jerr
+				}
+				journalBase = len(messages)
+				if err := l.saveCheckpoint(ctx, sessionID, step, messages, ledger); err != nil {
+					return nil, err
+				}
+				continue
+			}
+
 			ledger = append(ledger, core.ToolCallRecord{
 				ID:         fmt.Sprintf("%s-step-%d-%s", sessionID, step, toolName),
 				StepIndex:  step,

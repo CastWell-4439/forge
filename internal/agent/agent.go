@@ -33,13 +33,19 @@ type Agent struct {
 	// convention. It is a request: an endpoint that refuses the tools field
 	// downgrades to the prompt path with one warning.
 	NativeTools bool
-	Budget      core.BudgetChecker
-	Retriever   core.Retriever
-	Memory      core.MemoryStore
-	Checkpoint  core.CheckpointStore
-	Journal     harness.Journal
-	MCP         core.MCPManager
-	Verifier    core.Verifier
+	// Context-window tuning (N2c): water-line reminders as fractions of the
+	// window (0 = defaults 0.70/0.90; negative remind disables), and how many
+	// trailing messages survive a compaction (0 = default).
+	ContextRemindAt     float64
+	ContextUrgentAt     float64
+	CompactKeepMessages int
+	Budget              core.BudgetChecker
+	Retriever           core.Retriever
+	Memory              core.MemoryStore
+	Checkpoint          core.CheckpointStore
+	Journal             harness.Journal
+	MCP                 core.MCPManager
+	Verifier            core.Verifier
 
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
@@ -140,6 +146,17 @@ func WithToolConfig(apply func(*workers.HandlerConfig)) Option {
 // endpoint may refuse, degrading to the prompt path with one warning.
 func WithNativeTools(enabled bool) Option {
 	return func(a *Agent) { a.NativeTools = enabled }
+}
+
+// WithContextTuning sets the water-line reminder thresholds (fractions of the
+// window; 0 = defaults; remind < 0 disables) and the compaction keep-count.
+// The wiring reads env; the loop only ever sees numbers.
+func WithContextTuning(remind, urgent float64, keepMessages int) Option {
+	return func(a *Agent) {
+		a.ContextRemindAt = remind
+		a.ContextUrgentAt = urgent
+		a.CompactKeepMessages = keepMessages
+	}
 }
 
 // WithVerifier enables D5 self-verification loop.
@@ -251,6 +268,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		// itself stops honestly instead of burning the whole step budget.
 		NoProgressThreshold: 0,
 		NativeTools:         a.NativeTools,
+		ContextRemindAt:     a.ContextRemindAt,
+		ContextUrgentAt:     a.ContextUrgentAt,
+		CompactKeepMessages: a.CompactKeepMessages,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 

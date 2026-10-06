@@ -12,13 +12,17 @@ import (
 //
 // The set is domain-agnostic: generic work a coding agent is given everywhere
 // (files, shell, code, git reads, web, data) plus one human channel, one skill
-// channel and one knowledge channel. Product vocabulary never re-enters this
-// list - domain capabilities belong to the workflow plane's workers.
+// channel, one knowledge channel and three context-window operations. Product
+// vocabulary never re-enters this list - domain capabilities belong to the
+// workflow plane's workers.
 //
 // Keep this sorted: the test compares sorted slices.
 var goldenAgentTools = []string{
 	"ask.user",
 	"code.execute",
+	"context.compact",
+	"context.recall",
+	"context.remaining",
 	"data.query",
 	"file.edit",
 	"file.glob",
