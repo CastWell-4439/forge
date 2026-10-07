@@ -29,11 +29,28 @@ import (
 //
 //	FORGE_LESSONS_FEED   on enables lesson recall for agent runs (default off:
 //	                     a cross-plane bridge is opt-in, like every other one)
-//	FORGEX_INDEX_DB      sqlite index holding the cross-run lessons table
-//	                     (default <FORGEX_RUNTIME_ROOT>/.forgex-index.db)
+//	FORGEX_INDEX_DB      sqlite index holding the cross-run lessons table.
+//	                     Unset means <FORGEX_RUNTIME_ROOT>/index.db — the SAME
+//	                     file the observer's AutoIndex writes. The two defaults
+//	                     MUST agree: a different default on each side would let
+//	                     an operator turn both switches on and still read an
+//	                     empty index, which is the worst kind of
+//	                     misconfiguration (everything looks on, nothing works).
 const (
 	envLessonsFeed = "FORGE_LESSONS_FEED"
 	envIndexDB     = "FORGEX_INDEX_DB"
+)
+
+// defaultIndexFileName is the index file both planes default to, relative to
+// FORGEX_RUNTIME_ROOT. The observer's AutoIndex writes it (see its indexPath);
+// this side reads it.
+const defaultIndexFileName = "index.db"
+
+// The observer's own switches, read here only to warn when the feed is on but
+// nothing will ever put a lesson into the index.
+const (
+	autoIndexEnv       = "FORGEX_RUNTIME_AUTO_INDEX"
+	observerEnabledEnv = "FORGEX_RUNTIME_OBSERVER_ENABLED"
 )
 
 // lessonsEnabled resolves FORGE_LESSONS_FEED. Unset and unrecognised values
@@ -107,7 +124,7 @@ func buildLessonSource() core.LessonSource {
 	path := strings.TrimSpace(os.Getenv(envIndexDB))
 	if path == "" {
 		root := envOrDefault(envRuntimeRoot, defaultRuntimeRoot)
-		path = filepath.Join(root, ".forgex-index.db")
+		path = filepath.Join(root, defaultIndexFileName)
 	}
 
 	// A missing file is the normal first-run state, not a failure: the index
@@ -118,8 +135,44 @@ func buildLessonSource() core.LessonSource {
 			envLessonsFeed, path, err)
 		return nil
 	}
+	warnIfNothingWillIndex(path)
 	log.Printf("INFO: lessons feedback enabled (index=%s)", path)
 	return &forgexLessons{index: index}
+}
+
+// warnIfNothingWillIndex names the two switches that feed this index when they
+// are off.
+//
+// The feed reads a file the OBSERVER writes, so enabling the feed alone can
+// look successful while every recall returns nothing. "Everything looks on,
+// nothing works" is the most expensive kind of misconfiguration to diagnose,
+// and it is cheap to say out loud here.
+func warnIfNothingWillIndex(path string) {
+	var missing []string
+	if !envTruthy(observerEnabledEnv) {
+		missing = append(missing, observerEnabledEnv+"=on")
+	}
+	if !envTruthy(autoIndexEnv) {
+		missing = append(missing, autoIndexEnv+"=on")
+	}
+	if len(missing) == 0 {
+		return
+	}
+	log.Printf("WARN: %s is on and reading %s, but nothing will write lessons into it: set %s "+
+		"(the runtime observer derives and indexes lessons for finished runs)",
+		envLessonsFeed, path, strings.Join(missing, " and "))
+}
+
+// envTruthy reports whether an env var holds an affirmative value. It mirrors
+// the coordinator's own parser rather than importing it: the two planes each
+// own their configuration reading.
+func envTruthy(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // applyLessonsFeed installs the channel on an agent when it is available.
