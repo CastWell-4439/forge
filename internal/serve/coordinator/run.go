@@ -157,7 +157,13 @@ func Run(appCtx context.Context) error {
 		w.Write([]byte("ok"))
 	})
 
-	httpAddr := envOrDefault("FORGE_HTTP_ADDR", ":9090")
+	// --- Workflow entry points (webhook / manual) ---
+	// Mounted on the same listener. Whether they are registered at all depends
+	// on the bind address and the secret (see webhook.go): a routable address
+	// without a secret gets no entry point rather than an open one.
+	registerWorkflowEntryPoints(mux, coord)
+
+	httpAddr := httpAddr()
 	httpLn, err := net.Listen("tcp", httpAddr)
 	if err != nil {
 		return fmt.Errorf("listen HTTP %s: %w", httpAddr, err)
