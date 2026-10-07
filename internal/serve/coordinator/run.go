@@ -81,10 +81,21 @@ func Run(appCtx context.Context) error {
 
 	// --- Kueue GPU queue (optional) ---
 	// FORGE_KUEUE_ENABLED unset = off (dispatch unchanged); enabled but
-	// misconfigured fails startup with the cluster error.
-	if err := setupKueue(coord); err != nil {
+	// misconfigured fails startup with the cluster error. When on, GPU tasks
+	// are submitted to Kubernetes and the reconciler reports their results
+	// back — submission without write-back would park tasks in RUNNING.
+	kueueManager, err := setupKueue(coord)
+	if err != nil {
 		return err
 	}
+	startKueueReconciler(appCtx, coord, kueueManager)
+
+	// --- Task/workflow timeouts ---
+	// The timeout manager was written but never assembled, so no task has ever
+	// been failed for exceeding its deadline. That gap also left Kueue jobs
+	// without a backstop: their deadline is written into TimeoutAt, and this
+	// loop is what reads it.
+	startTimeoutManager(appCtx, coord)
 
 	// --- Workflow triggers (optional) ---
 	// FORGE_WORKFLOW_TRIGGERS unset = off (zero change); on = the cron/poll
