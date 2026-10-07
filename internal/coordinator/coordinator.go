@@ -566,6 +566,16 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		input = rendered
 	}
 
+	// GPU tasks run in Kubernetes under Kueue, not on a worker. They are
+	// submitted and then REPORTED BACK asynchronously by the reconciler —
+	// waiting here would block the dispatch goroutine for the whole job, and
+	// nothing on a worker would ever answer. Everything below this branch is
+	// the existing worker RPC path, unchanged.
+	if c.kueue != nil && c.kueue.Enabled() && IsGPUTask(c.taskDef(task)) {
+		c.dispatchKueueTask(ctx, task, input)
+		return
+	}
+
 	// Track active task count on the appropriate data structure.
 	if c.workerMgr != nil {
 		c.workerMgr.mu.Lock()
@@ -710,7 +720,14 @@ func (c *Coordinator) SetParamRenderer(fn ParamRenderer) { c.paramRenderer = fn 
 // unchanged: tasks go to workers exactly as before. The dispatch routing
 // that consumes this is tracked as #8b; installing it now means a
 // configured-but-broken cluster fails at startup, not at first submit.
+// SetKueue installs the Kueue manager: GPU tasks are then submitted to
+// Kubernetes instead of a worker, with results reported back by the reconciler.
 func (c *Coordinator) SetKueue(m *KueueManager) { c.kueue = m }
+
+// Store exposes the storage backend. Assembly layers need it to build
+// background workers (the Kueue reconciler, the timeout manager) that scan the
+// same task tables the coordinator owns.
+func (c *Coordinator) Store() storage.Storage { return c.store }
 
 // Kueue returns the installed GPU-queue manager, or nil when unset — the
 // assembly-layer counterpart of SetKueue (used by tests and diagnostics).
