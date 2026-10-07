@@ -2,9 +2,12 @@ package coordinator
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/castwell/forge/internal/coordinator"
 )
 
 // newTestCoordinator (discovery_test.go) provides the Coordinator with a
@@ -16,8 +19,10 @@ func TestSetupKueueDisabledIsZeroChange(t *testing.T) {
 	t.Setenv(envKueueEnabled, "")
 	coord := newTestCoordinator(t)
 
-	require.NoError(t, setupKueue(coord))
-	assert.Nil(t, coord.Kueue(), "no manager must be installed when disabled")
+	manager, err := setupKueue(coord)
+	require.NoError(t, err)
+	assert.Nil(t, manager, "no manager is returned when disabled")
+	assert.Nil(t, coord.Kueue(), "and none is installed")
 }
 
 // Enabled but with no cluster reachable fails startup with the config
@@ -29,9 +34,10 @@ func TestSetupKueueEnabledWithoutClusterFailsLoud(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	coord := newTestCoordinator(t)
 
-	err := setupKueue(coord)
+	manager, err := setupKueue(coord)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "kueue")
+	assert.Nil(t, manager, "a failed setup returns no manager")
 	assert.Nil(t, coord.Kueue(), "a failed setup must not install a half-manager")
 }
 
@@ -42,6 +48,24 @@ func TestSetupKueueInvalidKubeconfigFailsBeforeInstall(t *testing.T) {
 	t.Setenv(envKubeconfig, t.TempDir()+"/does-not-exist")
 	coord := newTestCoordinator(t)
 
-	require.Error(t, setupKueue(coord))
+	manager, err := setupKueue(coord)
+	require.Error(t, err)
+	assert.Nil(t, manager)
 	assert.Nil(t, coord.Kueue())
+}
+
+// FORGE_KUEUE_POLL_INTERVAL resolves with a safe fallback: a typo must not
+// stop result write-back, so it warns and uses the default.
+func TestDefaultKueuePollInterval(t *testing.T) {
+	t.Setenv(envKueuePollInterval, "")
+	assert.Equal(t, coordinator.DefaultKueuePollInterval(), defaultKueuePollInterval())
+
+	t.Setenv(envKueuePollInterval, "2s")
+	assert.Equal(t, 2*time.Second, defaultKueuePollInterval())
+
+	for _, bad := range []string{"banana", "0s", "-5s"} {
+		t.Setenv(envKueuePollInterval, bad)
+		assert.Equal(t, coordinator.DefaultKueuePollInterval(), defaultKueuePollInterval(),
+			"%q falls back to the default", bad)
+	}
 }
