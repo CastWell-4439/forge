@@ -57,6 +57,7 @@ const (
 	envSubagentMaxDepth     = "FORGE_SUBAGENT_MAX_DEPTH"
 	envSubagentMaxConc      = "FORGE_SUBAGENT_MAX_CONCURRENT"
 	envSubagentTools        = "FORGE_SUBAGENT_TOOLS"
+	envNoProgressThreshold  = "FORGE_AGENT_NO_PROGRESS_THRESHOLD"
 	defaultAgentWorkspace   = ".forge-workspace"
 	defaultSkillpackDir     = "configs/forgex/skills"
 )
@@ -118,6 +119,11 @@ func registerAgent(r *worker.Registry) {
 	// gets no subagent tool at all — the same posture as the webhook listener
 	// and the Kueue queue.
 	opts = append(opts, agentcore.WithSubagent(subagentConfig()))
+
+	// The streak stop and the S2 slimming profile are deployment decisions: the
+	// right number depends on the work, and both change what the model sees.
+	opts = append(opts, agentcore.WithNoProgressThreshold(noProgressThreshold()))
+	opts = append(opts, agentcore.WithToolSlim(toolSlimConfig()))
 
 	// Authority is the ceiling agent runs may act under (N4 + the risk gate).
 	// It is read here, at assembly, and it is a property of this DEPLOYMENT: a

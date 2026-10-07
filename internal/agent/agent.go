@@ -47,6 +47,12 @@ type Agent struct {
 	// Subagent configures delegation (N5). The zero value is Mode "off": no
 	// subagent tool is registered and nothing about this agent changes.
 	Subagent core.SubagentConfig
+	// NoProgressThreshold is how many consecutive identical tool calls end a run
+	// (0 = the harness default, negative = disabled).
+	NoProgressThreshold int
+	// ToolSlim is the S2 slimming policy: which head/tail split applies to which
+	// tool (zero value = the historical profile).
+	ToolSlim core.ToolSlimConfig
 	// Authority is the ceiling runs may act under (L0..L4). Empty means
 	// core.DefaultAuthority. A deployment-level decision, read at assembly.
 	Authority core.Authority
@@ -218,6 +224,22 @@ func WithOutputReserve(tokens int) Option {
 	return func(a *Agent) { a.OutputReserve = tokens }
 }
 
+// WithNoProgressThreshold sets how many consecutive identical tool calls end a
+// run (N5 follow-up). 0 means the harness default; negative disables the streak
+// stop. It is a deployment decision because the right number depends on the
+// work: exploring a question may legitimately re-read the same file, while a
+// batch pipeline repeating a call three times is already stuck.
+func WithNoProgressThreshold(n int) Option {
+	return func(a *Agent) { a.NoProgressThreshold = n }
+}
+
+// WithToolSlim sets the S2 slimming policy: which head/tail split applies to
+// which tool. The zero value reproduces the historical fixed profile, so an
+// unconfigured deployment is byte-for-byte unchanged.
+func WithToolSlim(cfg core.ToolSlimConfig) Option {
+	return func(a *Agent) { a.ToolSlim = cfg.Normalize() }
+}
+
 // WithSubagent configures delegation (N5).
 //
 // The zero value disables it: a deployment that does not ask for subagents gets
@@ -375,7 +397,8 @@ func (a *Agent) baseLoopConfig() harness.LoopConfig {
 		MaxContextTokens: harness.DefaultMaxContextTokens,
 		// 0 picks harness.DefaultNoProgressThreshold — an agent stuck repeating
 		// itself stops honestly instead of burning the whole step budget.
-		NoProgressThreshold:  0,
+		NoProgressThreshold:  a.NoProgressThreshold,
+		ToolSlim:             a.ToolSlim,
 		NativeTools:          a.NativeTools,
 		ContextRemindAt:      a.ContextRemindAt,
 		ContextUrgentAt:      a.ContextUrgentAt,
