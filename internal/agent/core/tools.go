@@ -101,6 +101,21 @@ func (r *ToolRegistry) GetTool(name string) *ToolDef {
 	return r.tools[name]
 }
 
+// Unregister removes a tool and its handler.
+//
+// It exists for narrowing a registry after it was built (N5: a delegated child
+// may be given a subset of its parent's tools). Removal rather than a call-time
+// filter, because a tool the child must not use should not appear in its prompt
+// either — a description costs tokens, and a tool that is visible but always
+// refused is worse feedback than one that is absent.
+//
+// Removing a name that is not registered is a no-op, so callers can remove a
+// list without checking each entry first.
+func (r *ToolRegistry) Unregister(name string) {
+	delete(r.tools, name)
+	delete(r.handlers, name)
+}
+
 // GetHandler returns the handler function for a named tool, or nil if not found.
 func (r *ToolRegistry) GetHandler(name string) HandlerFunc {
 	return r.handlers[name]

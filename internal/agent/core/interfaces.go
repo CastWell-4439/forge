@@ -132,6 +132,68 @@ const (
 	ToolCallCompleted = "completed"
 )
 
+// SubagentRequest is one delegation (N5).
+//
+// It carries the task and, when continuing, which child to continue. The
+// remaining configuration (report shape, limits, tool narrowing) belongs to the
+// deployment, not to the call: a model choosing "return full steps" would
+// silently spend its own context, so that decision stays with the operator.
+type SubagentRequest struct {
+	// Task is what the child is asked to do.
+	Task string
+	// ChildID, when set, continues an existing child instead of creating one.
+	// Only meaningful in continuable mode; a one-shot child is gone by the time
+	// anyone could name it.
+	ChildID string
+	// Depth is the delegation depth of the CALLER (0 for the top-level agent).
+	// It is passed in rather than stored globally because the same agent
+	// instance may serve a root run and a nested one.
+	Depth int
+}
+
+// SubagentResult is what comes back from a delegation.
+type SubagentResult struct {
+	// ChildID identifies the child, so a continuable deployment can address it
+	// again. It is empty in one-shot modes.
+	ChildID string
+	// Answer is the child's final output. It is always present on success:
+	// returning "it finished" without the result would make the tool useless.
+	Answer string
+	// Reason is the child's stop reason, so the parent can tell "completed"
+	// from "ran out of steps" (see harness.RunResult.Reason).
+	Reason string
+	// Steps carries the child's trace when the report setting asks for it.
+	// Empty under SubagentReportAnswer — that emptiness IS the isolation.
+	Steps []SubagentStep
+	// Paused/PauseReason mirror a child that stopped to ask a human. A child
+	// cannot itself get an answer (it has no interactive channel), so the parent
+	// must be told: swallowing it would leave a paused child nobody knows about.
+	Paused      bool
+	PauseReason string
+}
+
+// SubagentStep is one step of a child's trace, as reported to the parent.
+type SubagentStep struct {
+	Step    int    `json:"step"`
+	Thought string `json:"thought,omitempty"`
+	Action  string `json:"action,omitempty"`
+	// Result is the tool result, included only under SubagentReportSteps. Under
+	// Summary it is empty, which is what keeps a trace cheap.
+	Result string `json:"result,omitempty"`
+}
+
+// SubagentRunner runs a delegation. Implemented by the harness (which owns the
+// loop) and injected into the tool, so the worker layer does not need to import
+// the loop — the dependency direction stays workers -> core.
+type SubagentRunner interface {
+	// RunSubagent performs one delegation. An error means the delegation could
+	// not be performed at all (depth exceeded, child failed to start); a child
+	// that ran and failed comes back as a result whose Reason says so.
+	RunSubagent(ctx context.Context, req SubagentRequest) (*SubagentResult, error)
+	// SubagentDepth reports the caller's current delegation depth.
+	SubagentDepth(ctx context.Context) int
+}
+
 // ToolCallRecord is one entry of a checkpoint's side-effect ledger.
 //
 // Recovery needs to know which tools already ran: replaying a non-idempotent

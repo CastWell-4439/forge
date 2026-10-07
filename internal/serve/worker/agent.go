@@ -52,6 +52,11 @@ const (
 	envContextOutputReserve = "FORGE_CONTEXT_OUTPUT_RESERVE"
 	envAgentAuthority       = "FORGE_AGENT_AUTHORITY"
 	envAgentVisibleTools    = "FORGE_AGENT_VISIBLE_TOOLS"
+	envSubagentMode         = "FORGE_SUBAGENT_MODE"
+	envSubagentReport       = "FORGE_SUBAGENT_REPORT"
+	envSubagentMaxDepth     = "FORGE_SUBAGENT_MAX_DEPTH"
+	envSubagentMaxConc      = "FORGE_SUBAGENT_MAX_CONCURRENT"
+	envSubagentTools        = "FORGE_SUBAGENT_TOOLS"
 	defaultAgentWorkspace   = ".forge-workspace"
 	defaultSkillpackDir     = "configs/forgex/skills"
 )
@@ -108,6 +113,11 @@ func registerAgent(r *worker.Registry) {
 	// context budget covers the whole window, so without this the input can
 	// fill it and the generation that follows overflows. 0 = no reservation.
 	opts = append(opts, agentcore.WithOutputReserve(envInt(envContextOutputReserve)))
+
+	// N5: delegation. The zero value is "off", so a deployment that sets nothing
+	// gets no subagent tool at all — the same posture as the webhook listener
+	// and the Kueue queue.
+	opts = append(opts, agentcore.WithSubagent(subagentConfig()))
 
 	// Authority is the ceiling agent runs may act under (N4 + the risk gate).
 	// It is read here, at assembly, and it is a property of this DEPLOYMENT: a
