@@ -27,7 +27,15 @@ type LoopConfig struct {
 	// many consecutive identical tool calls. 0 means DefaultNoProgressThreshold;
 	// a negative value disables the streak stop (the non-idempotent duplicate
 	// guard stays on regardless — see no_progress.go).
+	//
+	// It is configurable because the right answer depends on the work: an
+	// exploratory task may legitimately re-read the same file while narrowing
+	// down a question, while a batch pipeline repeating a call three times is
+	// already stuck.
 	NoProgressThreshold int
+	// ToolSlim is the S2 slimming policy: which head/tail split applies to which
+	// tool. The zero value reproduces the historical fixed profile exactly.
+	ToolSlim core.ToolSlimConfig
 	// NativeTools asks the model for provider-native function calling
 	// (tools/tool_calls with per-parameter JSON Schema) instead of the
 	// prompt-encoded JSON convention. It is a request, not a promise: an
@@ -160,6 +168,8 @@ func NewAgentLoop(llm core.LLMClient, router *ToolRouter, config LoopConfig) *Ag
 	// measured against the whole window, and a request that "fit" overflows the
 	// moment the model generates its answer.
 	ctxMgr.SetOutputReserve(config.OutputReserve)
+	// S2: the per-tool slimming policy. Zero value = the historical profile.
+	ctxMgr.SetToolSlim(config.ToolSlim)
 	return &AgentLoop{
 		llm:     llm,
 		router:  router,

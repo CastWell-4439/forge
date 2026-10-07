@@ -36,9 +36,10 @@ const (
 	// Layered eviction (S2): oversized TOOL observations are slimmed first —
 	// they are the heaviest and most rebuildable content — and only what still
 	// does not fit gets summarised. Ordinary user text is never slimmed.
-	toolSlimThresholdChars = 2000
-	toolSlimHeadChars      = 1500
-	toolSlimTailChars      = 500
+	//
+	// The three numbers that used to live here are now a per-tool profile
+	// (core.SlimProfile): see slimming.go for why one fixed split was wrong.
+	// The defaults reproduce the old constants exactly.
 
 	// Calibration bounds (N3). The ratio observed/estimated is clamped to this
 	// range: one anomalous response must not be able to move the estimate by an
@@ -77,11 +78,25 @@ type ContextManager struct {
 	// reserveWarned makes the "unaffordable reservation" warning fire once, so
 	// the log does not fill on every budget query.
 	reserveWarned bool
+	// slim is the S2 slimming policy: which profile applies to which tool.
+	slim core.ToolSlimConfig
 	// calibration is the observed/estimated ratio learned from real usage
 	// reports (N3), with its sample count. Zero samples means "not calibrated
 	// yet" and the default heuristic stands.
 	calibrationRatio   float64
 	calibrationSamples int
+}
+
+// SetToolSlim installs the S2 slimming policy.
+//
+// Exposed as a setter rather than a constructor argument so existing callers
+// keep compiling: an unconfigured manager uses core.DefaultToolSlimConfig(),
+// which reproduces the previous fixed-constant behaviour exactly.
+func (cm *ContextManager) SetToolSlim(cfg core.ToolSlimConfig) {
+	if cm == nil {
+		return
+	}
+	cm.slim = cfg.Normalize()
 }
 
 // NewContextManager creates a new ContextManager.
@@ -94,6 +109,7 @@ func NewContextManager(maxTokens int, llm core.LLMClient) *ContextManager {
 		llm:           llm,
 		keep:          defaultCompactKeepMessages,
 		compactTarget: defaultCompactTarget,
+		slim:          core.DefaultToolSlimConfig(),
 	}
 }
 
@@ -269,26 +285,81 @@ func lastToolObservationIndex(conv []core.Message) int {
 // slimToolObservations returns a copy where oversized tool observations are
 // cut to head+tail with an honest marker. Non-tool content is never touched:
 // a user's long message is not ours to edit.
+//
+// Which end gets the larger share comes from the slimming configuration
+// (core.SlimProfile): a log's answer is at its end, a source listing's at its
+// start, and one fixed split served the first case well and the second badly.
 func (cm *ContextManager) slimToolObservations(messages []core.Message) []core.Message {
 	changed := false
 	out := make([]core.Message, len(messages))
 	copy(out, messages)
 	for i := range out {
-		if len(out[i].Content) <= toolSlimThresholdChars || !isToolObservation(out[i]) {
+		if !isToolObservation(out[i]) {
+			continue
+		}
+		profile := cm.slim.ProfileFor(toolNameOf(out[i]))
+		if len(out[i].Content) <= profile.Threshold {
 			continue
 		}
 		orig := len(out[i].Content)
-		head := truncateAtRuneBoundary(out[i].Content, toolSlimHeadChars)
-		tail := tailRuneBoundary(out[i].Content, toolSlimTailChars)
-		out[i].Content = head +
-			fmt.Sprintf("\n\n[...slimmed for the context budget: original %d chars, kept head and tail. Ask for specific sections if needed.]\n\n", orig) +
-			tail
+		head := truncateAtRuneBoundary(out[i].Content, profile.Head)
+		marker := fmt.Sprintf(
+			"\n\n[...slimmed for the context budget: original %d chars, kept head and tail. "+
+				"Ask for specific sections if needed.]\n\n", orig)
+		if profile.Tail <= 0 {
+			// Head-only: the marker still explains what happened, so the model
+			// knows the content was cut rather than ending there.
+			out[i].Content = head + marker
+			changed = true
+			continue
+		}
+		tail := tailRuneBoundary(out[i].Content, profile.Tail)
+		out[i].Content = head + marker + tail
 		changed = true
 	}
 	if !changed {
 		return messages
 	}
 	return out
+}
+
+// toolNameOf recovers which tool produced an observation, so a per-tool profile
+// can be selected.
+//
+// The name is not carried as a field on the message: the prompt path echoes the
+// observation as user text with a known prefix (see formatObservation:
+// `[Tool "name" result]: ...`), and the native path uses role "tool" without
+// the name. Recovering it from the content keeps the message shape unchanged —
+// adding a field would change what is persisted in every checkpoint.
+//
+// A name that cannot be recovered returns "" and the caller falls back to the
+// default profile. That is the right failure: applying a log's tail-heavy cut to
+// a source file is worse than applying the general policy.
+func toolNameOf(m core.Message) string {
+	if m.Role == "tool" {
+		// The native path does not repeat the tool name in the content, so the
+		// honest answer is "unknown" rather than a guess.
+		return ""
+	}
+	// Prompt path, exactly as formatObservation writes it:
+	//   [Tool "file.read" result]: ...
+	//   [Tool "file.read" returned error]: ...
+	const prefix = "[Tool "
+	content := m.Content
+	if !strings.HasPrefix(content, prefix) {
+		return ""
+	}
+	rest := content[len(prefix):]
+	// The name is quoted. An unquoted form is not one of ours, so it is not
+	// guessed at — guessing would apply a profile to something we did not write.
+	if len(rest) == 0 || rest[0] != '"' {
+		return ""
+	}
+	end := strings.IndexByte(rest[1:], '"')
+	if end < 0 {
+		return ""
+	}
+	return rest[1 : 1+end]
 }
 
 // tailRuneBoundary takes the last n bytes of s, adjusted forward to a rune
