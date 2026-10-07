@@ -101,6 +101,12 @@ type AgentLoop struct {
 	// means the default gate (see SetMemoryWriteJudge).
 	memoryJudge MemoryWriteJudge
 
+	// lessons is the read-only lessons channel (F3) and lessonFilter the
+	// read-side gate that decides which recalled lessons reach the prompt.
+	// Both nil = no lesson recall, which is the historical behaviour.
+	lessons      core.LessonSource
+	lessonFilter LessonFilter
+
 	// Duplicate detection state (see no_progress.go). Rebuilt from the ledger
 	// at the start of every run, including resumes.
 	nonIdempotentDone map[string]bool
@@ -248,6 +254,24 @@ type MemoryWriteJudge func(ctx context.Context, sessionID string, result *RunRes
 // defaultMemoryWriteJudge) keeps runs that actually did something and skips
 // one-shot answers, which have no experience to store.
 func (l *AgentLoop) SetMemoryWriteJudge(j MemoryWriteJudge) { l.memoryJudge = j }
+
+// LessonFilter decides which recalled lessons are worth putting in front of the
+// model. It is the read-side counterpart of MemoryWriteJudge: same shape
+// (explicit, replaceable, deterministic by default), opposite direction — that
+// gate decides what the agent writes about itself, this one decides what
+// another plane's lessons may claim a place in the prompt.
+//
+// sessionID is passed so a filter can drop lessons produced BY this very run:
+// feeding an agent its own verdict is how a system starts teaching itself its
+// own mistakes.
+type LessonFilter func(ctx context.Context, sessionID string, item core.RecallItem) bool
+
+// SetLessonFilter overrides the default lesson filter (see defaultLessonFilter).
+func (l *AgentLoop) SetLessonFilter(f LessonFilter) { l.lessonFilter = f }
+
+// SetLessonSource installs the read-only lessons channel. A nil source keeps
+// the historical behaviour: no lesson recall at all.
+func (l *AgentLoop) SetLessonSource(s core.LessonSource) { l.lessons = s }
 
 // SetVerifier enables D5 self-verification loop.
 func (l *AgentLoop) SetVerifier(v core.Verifier) { l.verifier = v }
@@ -418,6 +442,14 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	// bounded (top 3) and cheap. Resumed runs already carry their history.
 	if !resume && l.memory != nil && userInput != "" {
 		l.recallInto(ctx, &messages, userInput)
+	}
+
+	// --- Lessons recall (F3, optional) ---
+	// The control plane distils lessons from finished runs; a fresh agent run
+	// starts from them. Read-only and gated (self-feedback guard included),
+	// and never fatal: a broken lessons store must not stop a run.
+	if !resume && l.lessons != nil && userInput != "" {
+		l.recallLessonsInto(ctx, &messages, sessionID, userInput)
 	}
 
 	// --- Run journal (D-12): record where this logical run begins. ---

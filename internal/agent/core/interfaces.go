@@ -45,6 +45,39 @@ type MemoryStore interface {
 	SearchLongTerm(ctx context.Context, query string, topK int) ([]MemoryEntry, error)
 }
 
+// LessonSource supplies lessons distilled elsewhere — today, by ForgeX from
+// finished workflow runs — so an agent can start from what was already learned
+// instead of rediscovering it.
+//
+// It is deliberately a separate, narrow interface rather than a second
+// MemoryStore: the two have opposite directions. Memory is written BY the
+// agent about itself; lessons are written by another plane ABOUT runs the
+// agent did not necessarily take part in, and are read-only here. Sharing one
+// interface would have made "remember this" and "learn this" indistinguishable
+// at the call site, which is exactly the confusion recallInto's naming already
+// risks.
+//
+// Implementations live outside internal/agent (assembly wires them): the agent
+// plane must not import the control plane.
+type LessonSource interface {
+	// Recall returns up to topK lessons relevant to query, newest first when
+	// relevance ties. An empty result is normal, not an error.
+	Recall(ctx context.Context, query string, topK int) ([]RecallItem, error)
+}
+
+// RecallItem is one lesson as the agent plane sees it: no forgex types, no
+// storage layout, just the fields a prompt can use. SourceRunID is carried so
+// the model (and the audit trail) can tell where a claim came from — a lesson
+// without provenance is an assertion the model cannot weigh.
+type RecallItem struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Category    string    `json:"category"`
+	Content     string    `json:"content"`
+	SourceRunID string    `json:"source_run_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+}
+
 // CheckpointStore persists agent state for crash recovery. (M12 Checkpointing)
 type CheckpointStore interface {
 	Save(ctx context.Context, cp *Checkpoint) error
