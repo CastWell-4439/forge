@@ -100,16 +100,28 @@ func (l *AgentLoop) noteProgress(fingerprint string) int {
 	return l.noProgress
 }
 
-// noProgressThreshold resolves the configured threshold: 0 (unset) means the
-// default, a negative value explicitly disables the streak stop. The duplicate
-// guard for non-idempotent tools is NOT configurable — replaying a side effect
-// is never correct, so there is no setting that should allow it.
+// noProgressThreshold resolves the configured threshold.
+//
+// Three cases, and the encoding is worth stating because two of them share the
+// number 0 in the config:
+//
+//	unset (0)      -> DefaultNoProgressThreshold
+//	negative       -> 0, meaning "never stop on a streak"
+//	positive n     -> n
+//
+// Callers test `> 0`, so a returned 0 always means "disabled" — the default is
+// never returned as 0. Keeping that invariant in one place is what stops the
+// two meanings of "0" from being confused at a call site.
+//
+// The duplicate guard for non-idempotent tools is NOT configurable: replaying a
+// side effect is never correct, so there is no setting that should allow it.
 func (l *AgentLoop) noProgressThreshold() int {
-	if l.config.NoProgressThreshold < 0 {
-		return 0
-	}
-	if l.config.NoProgressThreshold == 0 {
+	switch {
+	case l.config.NoProgressThreshold < 0:
+		return 0 // disabled
+	case l.config.NoProgressThreshold == 0:
 		return DefaultNoProgressThreshold
+	default:
+		return l.config.NoProgressThreshold
 	}
-	return l.config.NoProgressThreshold
 }
