@@ -365,7 +365,7 @@ const (
 // Run executes the full ReAct loop for a user input.
 // Returns the final answer and a trace of all steps.
 func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string) (*RunResult, error) {
-	return l.run(ctx, sessionID, userInput, false)
+	return l.run(ctx, sessionID, userInput, runFresh)
 }
 
 // Resume continues a session from its latest checkpoint instead of restarting it.
@@ -375,13 +375,34 @@ func (l *AgentLoop) Run(ctx context.Context, sessionID string, userInput string)
 // that is not idempotent is never replayed: repeating its side effect would be
 // worse than stopping. The run then ends with Reason "unresolved_side_effect".
 func (l *AgentLoop) Resume(ctx context.Context, sessionID string) (*RunResult, error) {
-	return l.run(ctx, sessionID, "", true)
+	return l.run(ctx, sessionID, "", runResume)
 }
 
-func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string, resume bool) (*RunResult, error) {
+// runMode distinguishes the three ways a run can begin.
+//
+// Two booleans would have been the obvious encoding and the wrong one: "resume"
+// and "continue" differ in exactly the place that matters (what to do with a
+// session that already finished), and a pair of flags invites a combination
+// that means nothing.
+type runMode int
+
+const (
+	// runFresh starts a new conversation.
+	runFresh runMode = iota
+	// runResume re-enters a run that stopped, with no new input.
+	runResume
+	// runContinue appends a NEW user turn to an existing session, including one
+	// that already completed. This is what "give the child more work" means, and
+	// it is why delegation cannot simply reuse Resume: a finished run has
+	// nothing left to do, so Resume returns its old answer and stops.
+	runContinue
+)
+
+func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string, mode runMode) (*RunResult, error) {
 	// --- Input Guard (M6, optional) ---
-	// Only a fresh run has new input to check.
-	if !resume && l.inputGuard != nil {
+	// Only a fresh run and a continuation have new input to check; a resume is
+	// re-entering work that was already screened.
+	if mode != runResume && l.inputGuard != nil {
 		if err := l.inputGuard.Check(ctx, userInput); err != nil {
 			return &RunResult{Reason: "input_blocked", Answer: err.Error()}, nil
 		}
@@ -397,7 +418,7 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	var cp *core.Checkpoint
 	resumeSource := ""
 
-	if resume {
+	if mode != runFresh {
 		var err error
 		// With a checkpoint store, load it. Without one, resume still works
 		// when a journal is configured (the journal can rebuild on its own);
@@ -433,14 +454,30 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		}
 		if cp != nil {
 			// A finished run has nothing left to do; re-asking the model could
-			// only repeat work that was already delivered.
-			if cp.Completed {
+			// only repeat work that was already delivered. A CONTINUATION is the
+			// exception: it brings new input, so the finished state is the
+			// starting point rather than a reason to stop.
+			if cp.Completed && mode != runContinue {
 				return &RunResult{Answer: cp.Answer, Reason: "completed"}, nil
 			}
 
 			messages = cp.Messages
 			startStep = cp.StepIndex + 1
 			ledger = cp.ToolCalls
+
+			if mode == runContinue {
+				// Append the new turn to the child's own history. This is the
+				// whole of "continue": the session remembers, the new task is
+				// just another user message.
+				messages = append(messages, core.Message{Role: "user", Content: userInput})
+				// The round starts with a clean progress state. Carrying the
+				// previous round's ledger would make the duplicate-call guard
+				// refuse a re-read the model is entitled to ask for in a new
+				// round ("check the file again"). The JOURNAL still holds every
+				// call from every round, so nothing is lost from the audit
+				// trail — only the per-round checkpoint is scoped to its round.
+				ledger = nil
+			}
 
 			if pending, ok := cp.UnresolvedToolCall(); ok {
 				// This step was recorded before its tool ran and never recorded a
@@ -479,8 +516,10 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	// A fresh run brings a fresh prompt, so this is where the agent "remembers
 	// what it learned before". Knowledge retrieval stays agentic (the tool); a
 	// run's own past experience is recalled automatically because it is local,
-	// bounded (top 3) and cheap. Resumed runs already carry their history.
-	if !resume && l.memory != nil && userInput != "" {
+	// bounded (top 3) and cheap. Resumed runs already carry their history — and
+	// a CONTINUATION is a new round of work, so it recalls like a fresh run
+	// does: the child is being asked something new, not re-entering old work.
+	if mode != runResume && l.memory != nil && userInput != "" {
 		l.recallInto(ctx, &messages, userInput)
 	}
 
@@ -488,7 +527,7 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	// The control plane distils lessons from finished runs; a fresh agent run
 	// starts from them. Read-only and gated (self-feedback guard included),
 	// and never fatal: a broken lessons store must not stop a run.
-	if !resume && l.lessons != nil && userInput != "" {
+	if mode != runResume && l.lessons != nil && userInput != "" {
 		l.recallLessonsInto(ctx, &messages, sessionID, userInput)
 	}
 
@@ -496,7 +535,11 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	// Everything the loop writes from here on is appended relative to this
 	// snapshot: journalBase is how far the messages have been journaled, and
 	// each step reports the delta beyond it.
-	if err := l.emitRunStart(ctx, sessionID, resume, cp != nil, resumeSource, userInput, messages, startStep); err != nil {
+	//
+	// A continuation is reported as its own run START (not a resume) because it
+	// carries new input: a reader of the journal should see "a new round began
+	// here", which is exactly what it is.
+	if err := l.emitRunStart(ctx, sessionID, mode == runResume, cp != nil, resumeSource, userInput, messages, startStep); err != nil {
 		return nil, err
 	}
 	journalBase := len(messages)
