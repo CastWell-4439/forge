@@ -18,6 +18,9 @@ type Client struct {
 	// during negotiation.
 	version string
 	modern  bool
+	// inputHandler answers server-to-client requests expressed as an
+	// InputRequiredResult (H4). Nil means the refusing default.
+	inputHandler InputHandler
 }
 
 // ServerInfo contains metadata returned by the MCP server during initialization.
@@ -125,20 +128,14 @@ func (c *Client) ListTools(ctx context.Context) ([]ToolDefinition, error) {
 }
 
 // CallTool invokes a tool on the MCP server and returns the text result.
+//
+// A modern server may answer with an InputRequiredResult instead of a final
+// result; that round trip is handled by callToolWithInput, so callers keep
+// seeing "the tool's output or an error" rather than a protocol detail.
 func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMessage) (string, error) {
-	params := toolCallParams{
-		Name:      name,
-		Arguments: arguments,
-	}
-
-	resp, err := c.call(ctx, "tools/call", params)
+	result, err := c.callToolWithInput(ctx, name, arguments)
 	if err != nil {
 		return "", fmt.Errorf("tools/call %q: %w", name, err)
-	}
-
-	var result toolCallResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return "", fmt.Errorf("parse tools/call result: %w", err)
 	}
 
 	if result.IsError {

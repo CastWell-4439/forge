@@ -156,7 +156,6 @@ func compileTrigger(t TriggerDef) (CompiledTrigger, error) {
 func compileConfig(cfg WorkflowConfig) (CompiledConfig, error) {
 	cc := CompiledConfig{
 		MaxRetries: cfg.MaxRetries,
-		HITL:       cfg.HITL,
 	}
 	if cfg.Timeout != "" {
 		d, err := time.ParseDuration(cfg.Timeout)
