@@ -24,6 +24,7 @@ func KnowledgeSearchDef() *core.ToolDef {
 			"results": {Type: "array", Description: "List of {id, content, score} documents"},
 		},
 		RequiredParams: []string{"query"},
+		Effect:         core.EffectRead,
 		EstimatedTime:  2 * time.Second,
 	}
 }

@@ -14,6 +14,15 @@ type ParamDef = core.ParamDef
 type ToolRegistry = core.ToolRegistry
 type HandlerFunc = core.HandlerFunc
 
+// Tool effect classes, aliased the same way: a tool definition here declares
+// what it does to the world (read < write < delete), and the pre-execution gate
+// compares that against the run's authority.
+const (
+	EffectRead   = core.EffectRead
+	EffectWrite  = core.EffectWrite
+	EffectDelete = core.EffectDelete
+)
+
 // NewToolRegistry creates a new empty tool registry.
 var NewToolRegistry = core.NewToolRegistry
 

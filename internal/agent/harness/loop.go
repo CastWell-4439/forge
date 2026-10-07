@@ -48,6 +48,15 @@ type LoopConfig struct {
 	// line (0.90 default) with stronger wording.
 	ContextRemindAt float64
 	ContextUrgentAt float64
+	// Authority is the ceiling this run may act under (L0..L4). Empty means
+	// core.DefaultAuthority (L2: read-only without asking). It is a property of
+	// the RUN, not of the workflow: a pipeline author cannot raise it.
+	Authority core.Authority
+	// TaskEffect is what the workflow declared this task does (read < write <
+	// delete). The gate takes the STRONGER of this and the tool's own effect,
+	// so a lenient task cannot wave a destructive tool through. Empty means
+	// write, matching the tool-side default.
+	TaskEffect core.ToolEffect
 }
 
 // DefaultLoopConfig returns config with sensible defaults.
@@ -290,8 +299,13 @@ type RunResult struct {
 	Answer string
 	Steps  []StepRecord
 	// Reason is one of: "completed", "max_steps", "budget_exceeded",
-	// "input_blocked", "truncated", "error".
+	// "input_blocked", "truncated", "paused", "no_progress", "error".
 	Reason string
+	// PauseReason explains a "paused" ending: what the run needs a human to
+	// decide. Empty for every other reason. The person releasing the run reads
+	// only this, so a pause that cannot say why is refused before it happens
+	// (see the agent.pause interception).
+	PauseReason string
 }
 
 // CheckpointFailurePolicy decides what a failed checkpoint write means.
@@ -624,8 +638,15 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 
 		// --- Native path: the provider already told us the tool calls ---
 		if len(chatResult.ToolCalls) > 0 {
-			if err := l.runNativeToolBatch(ctx, sessionID, step, &messages, &steps, &ledger, &journalBase, chatResult); err != nil {
+			pauseResult, err := l.runNativeToolBatch(ctx, sessionID, step, &messages, &steps, &ledger, &journalBase, chatResult)
+			if err != nil {
 				return nil, err
+			}
+			if pauseResult != nil {
+				// The batch stopped for a human (a pause request or a refused
+				// call). The run is saved and resumable; report it as such.
+				pauseResult.Steps = steps
+				return pauseResult, nil
 			}
 			// The streak check mirrors the prompt path: identical calls past
 			// the threshold end the run honestly (see no_progress.go).
@@ -729,6 +750,40 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		// --- Non-terminal: Agent wants to call a tool ---
 		if agentResp.IsToolCall() {
 			toolName := agentResp.Action.Name
+
+			// Pause is a loop meta-operation (N4): the model decided it needs a
+			// human before going further. Reported as its own Reason rather
+			// than as an error or an answer, because it is neither — the work
+			// is unfinished and the run can continue from here.
+			//
+			// A pause that cannot say why is refused: the person releasing it
+			// would have nothing to decide on, so the observation tells the
+			// model to state a reason instead of parking the run.
+			if toolName == PauseToolName {
+				reason := pauseReason(agentResp.Action.Params)
+				if reason == "" {
+					messages = append(messages, core.Message{
+						Role:    "assistant",
+						Content: marshalAssistantTurn(agentResp),
+					})
+					messages = append(messages, core.Message{
+						Role: "user",
+						Content: fmt.Sprintf("[%s refused]: a pause must state the 'reason' parameter — "+
+							"what decision is needed and from whom. Continue, or call it again with a reason.",
+							PauseToolName),
+					})
+					continue
+				}
+				return l.pauseRun(ctx, sessionID, step, messages, ledger, reason)
+			}
+
+			// Permission gate (before any side effect): the run's authority must
+			// cover the stronger of what the task declared and what the tool
+			// does. A refusal is a PAUSE, not an error — a human can approve
+			// this call and the run resumes from here.
+			if decision, ok := l.checkToolAuthority(toolName); !ok {
+				return l.authorityPauseResult(toolName, decision)
+			}
 
 			// Context tools are loop meta-operations (N2c): they touch the
 			// loop's own window, not the world, so they never enter the

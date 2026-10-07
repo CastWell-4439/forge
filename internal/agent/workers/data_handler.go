@@ -34,6 +34,7 @@ func DataQueryDef() *ToolDef {
 			"row_count": {Type: "integer", Description: "Number of rows returned"},
 		},
 		RequiredParams: []string{"sql"},
+		Effect:         EffectWrite,
 		EstimatedTime:  3 * time.Second,
 	}
 }

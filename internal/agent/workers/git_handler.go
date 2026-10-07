@@ -28,6 +28,7 @@ func GitStatusDef() *ToolDef {
 		OutputSchema: map[string]ParamDef{
 			"output": {Type: "string", Description: "Short-format git status output"},
 		},
+		Effect:        EffectRead,
 		EstimatedTime: 1 * time.Second,
 	}
 }
@@ -45,6 +46,7 @@ func GitLogDef() *ToolDef {
 		OutputSchema: map[string]ParamDef{
 			"output": {Type: "string", Description: "Oneline git log output"},
 		},
+		Effect:        EffectRead,
 		EstimatedTime: 1 * time.Second,
 	}
 }
@@ -62,6 +64,7 @@ func GitDiffDef() *ToolDef {
 		OutputSchema: map[string]ParamDef{
 			"output": {Type: "string", Description: "Unified diff output"},
 		},
+		Effect:        EffectRead,
 		EstimatedTime: 1 * time.Second,
 	}
 }

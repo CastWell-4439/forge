@@ -60,6 +60,7 @@ func WebFetchDef() *ToolDef {
 			"status":  {Type: "integer", Description: "HTTP status code"},
 		},
 		RequiredParams: []string{"url"},
+		Effect:         EffectRead,
 		EstimatedTime:  10 * time.Second,
 	}
 }
@@ -203,6 +204,7 @@ func WebSearchDef() *ToolDef {
 			"results": {Type: "array", Description: "Results with title/url/snippet"},
 		},
 		RequiredParams: []string{"query"},
+		Effect:         EffectRead,
 		EstimatedTime:  5 * time.Second,
 	}
 }

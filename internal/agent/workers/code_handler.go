@@ -25,6 +25,7 @@ func CodeExecuteDef() *ToolDef {
 			"exit_code": {Type: "integer", Description: "Process exit code"},
 		},
 		RequiredParams: []string{"language", "code"},
+		Effect:         EffectDelete,
 		EstimatedTime:  10 * time.Second,
 	}
 }

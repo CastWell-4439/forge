@@ -50,6 +50,7 @@ func ContextRemainingDef() *ToolDef {
 			"tokens_used": {Type: "integer", Description: "Tokens currently in the window"},
 			"max_tokens":  {Type: "integer", Description: "The window's budget"},
 		},
+		Effect:        EffectRead,
 		EstimatedTime: 0,
 	}
 }
@@ -66,6 +67,7 @@ func ContextCompactDef() *ToolDef {
 			"tokens_used": {Type: "integer", Description: "Tokens in the window after compacting"},
 			"summary":     {Type: "string", Description: "The summary that replaced the older turns"},
 		},
+		Effect:        EffectRead,
 		EstimatedTime: 0,
 	}
 }
@@ -86,6 +88,7 @@ func ContextRecallDef() *ToolDef {
 			"status":  {Type: "string", Description: `"ok", "no_match", "no_archive" or "archive_unavailable"`},
 		},
 		RequiredParams: []string{"query"},
+		Effect:         EffectRead,
 		EstimatedTime:  0,
 	}
 }
