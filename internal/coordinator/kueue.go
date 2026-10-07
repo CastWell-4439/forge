@@ -73,6 +73,22 @@ func NewKueueManager(config KueueConfig, submitter KueueSubmitter) *KueueManager
 	}
 }
 
+// JobName returns the Kubernetes Job name a task's spec will use. Exposed so
+// the dispatch path can record which job it is waiting on without duplicating
+// the naming rule.
+func (m *KueueManager) JobName(workflowID, taskID string) string {
+	return fmt.Sprintf("forge-%s-%s", truncateID(workflowID, 8), truncateID(taskID, 8))
+}
+
+// Namespace returns the configured namespace.
+func (m *KueueManager) Namespace() string { return m.config.Namespace }
+
+// Enabled reports whether Kueue dispatch is on.
+func (m *KueueManager) Enabled() bool { return m != nil && m.config.Enabled }
+
+// Submitter exposes the submitter for the reconciler's status reads.
+func (m *KueueManager) Submitter() KueueSubmitter { return m.submitter }
+
 // SubmitGPUTask creates a Kueue-managed K8s Job for a GPU task.
 func (m *KueueManager) SubmitGPUTask(ctx context.Context, workflowID, taskID string, taskDef TaskDef) error {
 	if !m.config.Enabled {
@@ -102,7 +118,7 @@ func (m *KueueManager) SubmitGPUTask(ctx context.Context, workflowID, taskID str
 	}
 
 	spec := KueueJobSpec{
-		Name:       fmt.Sprintf("forge-%s-%s", truncateID(workflowID, 8), truncateID(taskID, 8)),
+		Name:       m.JobName(workflowID, taskID),
 		Namespace:  m.config.Namespace,
 		QueueName:  m.config.QueueName,
 		WorkflowID: workflowID,
