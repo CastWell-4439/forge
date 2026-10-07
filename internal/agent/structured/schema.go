@@ -5,6 +5,7 @@ package structured
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -166,7 +167,18 @@ func formatSchema(s *Schema, indent int) string {
 		}
 		var lines []string
 		lines = append(lines, "{")
-		for name, prop := range s.Properties {
+		// Sorted by name, NOT map order. Go randomises map iteration, so the
+		// unsorted version rendered the same schema with a different field
+		// order on every call — which changes the prompt between steps of one
+		// run and costs the provider's prefix reuse from the first moved
+		// field. The schema is a fixed document; it must render as one.
+		names := make([]string, 0, len(s.Properties))
+		for name := range s.Properties {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			prop := s.Properties[name]
 			required := ""
 			for _, r := range s.Required {
 				if r == name {

@@ -41,6 +41,9 @@ type Agent struct {
 	ContextUrgentAt      float64
 	CompactKeepMessages  int
 	ContextCompactTarget float64
+	// OutputReserve is how many tokens to hold back for the model's reply (N3).
+	// Zero means no reservation.
+	OutputReserve int
 	// Authority is the ceiling runs may act under (L0..L4). Empty means
 	// core.DefaultAuthority. A deployment-level decision, read at assembly.
 	Authority core.Authority
@@ -204,6 +207,14 @@ func WithContextTuning(remind, urgent float64, keepMessages int, compactTarget f
 	}
 }
 
+// WithOutputReserve sets how many tokens are held back for the model's reply
+// (N3). The context budget covers the whole window, so without a reservation
+// the input may fill it and the generation that follows overflows — the failure
+// this option exists to prevent. Zero means no reservation.
+func WithOutputReserve(tokens int) Option {
+	return func(a *Agent) { a.OutputReserve = tokens }
+}
+
 // WithVerifier enables D5 self-verification loop.
 func WithVerifier(v core.Verifier) Option { return func(a *Agent) { a.Verifier = v } }
 
@@ -317,6 +328,7 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		ContextUrgentAt:      a.ContextUrgentAt,
 		CompactKeepMessages:  a.CompactKeepMessages,
 		ContextCompactTarget: a.ContextCompactTarget,
+		OutputReserve:        a.OutputReserve,
 		Authority:            a.Authority,
 		VisibleTools:         a.VisibleTools,
 	}
