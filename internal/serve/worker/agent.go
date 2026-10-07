@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	agentcore "github.com/castwell/forge/internal/agent"
+	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/guardrails"
 	"github.com/castwell/forge/internal/agent/workers"
 	"github.com/castwell/forge/internal/forgex/skillpack"
@@ -48,6 +49,7 @@ const (
 	envContextUrgentAt      = "FORGE_CONTEXT_URGENT_AT"
 	envContextKeepMessages  = "FORGE_CONTEXT_KEEP_MESSAGES"
 	envContextCompactTarget = "FORGE_CONTEXT_COMPACT_TARGET"
+	envAgentAuthority       = "FORGE_AGENT_AUTHORITY"
 	defaultAgentWorkspace   = ".forge-workspace"
 	defaultSkillpackDir     = "configs/forgex/skills"
 )
@@ -99,6 +101,13 @@ func registerAgent(r *worker.Registry) {
 		envInt(envContextKeepMessages),
 		envFraction(envContextCompactTarget),
 	))
+
+	// Authority is the ceiling agent runs may act under (N4 + the risk gate).
+	// It is read here, at assembly, and it is a property of this DEPLOYMENT: a
+	// workflow author cannot raise it, which is what stops a pipeline from
+	// granting itself permission to delete. Unset means L2 (read-only without
+	// asking); a tool whose effect exceeds it pauses the run for a human.
+	opts = append(opts, agentcore.WithAuthority(agentAuthority()))
 
 	// F3: lessons from the control plane, when the operator turns the channel
 	// on. Default off — a cross-plane feed is opt-in — and a missing index
@@ -153,6 +162,24 @@ func agentGuardEnabled() bool {
 		log.Printf("WARN: unknown %s %q (want on|off); keeping the guard on", envAgentGuard, os.Getenv(envAgentGuard))
 		return true
 	}
+}
+
+// agentAuthority resolves FORGE_AGENT_AUTHORITY.
+//
+// An unrecognised value falls back to the default (L2) rather than to the most
+// permissive rung: a typo must never hand out more authority than the operator
+// intended. Absent means the default, which is also the safe direction.
+func agentAuthority() core.Authority {
+	raw := strings.TrimSpace(os.Getenv(envAgentAuthority))
+	if raw == "" {
+		return core.DefaultAuthority
+	}
+	authority := core.NormalizeAuthority(raw)
+	if !authority.Valid() {
+		log.Printf("WARN: unknown %s %q (want L0..L4); using %s", envAgentAuthority, raw, core.DefaultAuthority)
+		return core.DefaultAuthority
+	}
+	return authority
 }
 
 // truthy parses the usual affirmative env values.

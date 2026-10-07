@@ -61,6 +61,12 @@ type TaskDef struct {
 	Condition string           `yaml:"condition"` // CEL expression; task runs only if true
 	Timeout   string           `yaml:"timeout"`   // task-level timeout override
 	Retry     *TaskRetryConfig `yaml:"retry"`     // task-level retry override
+	// RiskLevel is the effect this task declares it may have: read, write or
+	// delete. It can only TIGHTEN the gate's judgement, never loosen it: the
+	// run takes the stronger of this and the tool's own declared effect, so a
+	// pipeline cannot wave a destructive tool through by declaring "read".
+	// Omitted means the task states nothing and the tool's effect decides.
+	RiskLevel string `yaml:"risk_level,omitempty"`
 }
 
 // TaskRetryConfig defines per-task retry settings.
