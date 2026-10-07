@@ -37,6 +37,7 @@ func FileReadDef() *ToolDef {
 			"truncated": {Type: "boolean", Description: "True if content was truncated by limit"},
 		},
 		RequiredParams: []string{"path"},
+		Effect:         EffectRead,
 		EstimatedTime:  1 * time.Second,
 	}
 }
@@ -56,6 +57,7 @@ func FileWriteDef() *ToolDef {
 			"bytes_written": {Type: "integer", Description: "Number of bytes written"},
 		},
 		RequiredParams: []string{"path", "content"},
+		Effect:         EffectWrite,
 		EstimatedTime:  1 * time.Second,
 	}
 }
@@ -74,6 +76,7 @@ func FileListDef() *ToolDef {
 			"entries": {Type: "array", Description: "List of {name, size, is_dir}"},
 		},
 		RequiredParams: []string{"path"},
+		Effect:         EffectRead,
 		EstimatedTime:  1 * time.Second,
 	}
 }
@@ -95,6 +98,7 @@ func FileEditDef() *ToolDef {
 			"replacements":  {Type: "integer", Description: "Number of replacements made (always 1)"},
 		},
 		RequiredParams: []string{"path", "old_string", "new_string"},
+		Effect:         EffectWrite,
 		EstimatedTime:  1 * time.Second,
 	}
 }
@@ -113,6 +117,7 @@ func FileGlobDef() *ToolDef {
 			"matches": {Type: "array", Description: "Matching file paths, workspace-relative"},
 		},
 		RequiredParams: []string{"pattern"},
+		Effect:         EffectRead,
 		EstimatedTime:  1 * time.Second,
 	}
 }
@@ -133,6 +138,7 @@ func FileSearchDef() *ToolDef {
 				Description: "True if the match limit was reached"},
 		},
 		RequiredParams: []string{"pattern"},
+		Effect:         EffectRead,
 		EstimatedTime:  2 * time.Second,
 	}
 }

@@ -29,6 +29,7 @@ func SkillActivateDef() *ToolDef {
 			"content": {Type: "string", Description: "The skill document"},
 		},
 		RequiredParams: []string{"id"},
+		Effect:         EffectRead,
 		EstimatedTime:  1 * time.Second,
 	}
 }

@@ -28,6 +28,7 @@ func AskUserDef() *ToolDef {
 			"answer": {Type: "string", Description: "The human's answer"},
 		},
 		RequiredParams: []string{"question"},
+		Effect:         EffectRead,
 		EstimatedTime:  30 * time.Second,
 		Timeout:        0, // bounded by the human's response time, not by a default
 	}
