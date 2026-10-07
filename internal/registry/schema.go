@@ -34,15 +34,17 @@ type TriggerDef struct {
 }
 
 // WorkflowConfig holds execution-level configuration.
+//
+// There is no hitl block. An earlier revision carried `hitl.auto_pause_on`
+// (a list of conditions that should park the workflow for a human), but it was
+// never wired to anything, and the same job is already expressible per task
+// through `condition` — which is what the one workflow that declared it also
+// did, on a neighbouring task. Two mechanisms for one decision is how an
+// author ends up choosing the one that does not work; the field is gone rather
+// than left as a trap.
 type WorkflowConfig struct {
-	Timeout    string     `yaml:"timeout"`
-	MaxRetries int        `yaml:"max_retries"`
-	HITL       HITLConfig `yaml:"hitl"`
-}
-
-// HITLConfig defines human-in-the-loop auto-pause conditions.
-type HITLConfig struct {
-	AutoPauseOn []string `yaml:"auto_pause_on"`
+	Timeout    string `yaml:"timeout"`
+	MaxRetries int    `yaml:"max_retries"`
 }
 
 // Stage represents a pipeline stage containing one or more tasks.
@@ -104,7 +106,6 @@ type CompiledTrigger struct {
 type CompiledConfig struct {
 	Timeout    time.Duration
 	MaxRetries int
-	HITL       HITLConfig
 }
 
 // CompiledStage is a validated stage ready for DAG compilation.

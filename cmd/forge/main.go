@@ -50,6 +50,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return serveOne(serveworker.Run)
 	case "standalone":
 		return runStandalone()
+	case "hook":
+		if len(args) < 2 {
+			hookUsage(stderr)
+			return 1
+		}
+		if args[1] != "send" {
+			fmt.Fprintf(stderr, "forge hook: unknown subcommand %q (want send)\n\n", args[1])
+			hookUsage(stderr)
+			return 1
+		}
+		return runHookSend(args[2:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "forge: unknown command %q\n\n", args[0])
 		usage(stderr)
@@ -187,6 +198,7 @@ Usage:
   forge coordinator   run the coordinator (same as ./cmd/coordinator)
   forge worker        run the worker (same as ./cmd/worker)
   forge standalone    run coordinator + worker in one process (single-node mode)
+  forge hook send     trigger a workflow over the HTTP entry point (signed)
   forge help          show this help
 
 Configuration is environment-driven (FORGE_* variables); see README.

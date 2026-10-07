@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -228,6 +229,47 @@ func TestReconcilerStatusFailureDoesNotFailTask(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, storage.TaskStatusRunning, task.Status)
 	assert.Equal(t, 1, f.reconciler.failStreak["task-6"], "the failure was counted for escalation")
+}
+
+// A Job that no longer exists is an ORPHAN, not a read failure: polling it
+// forever would leave the task RUNNING with nothing able to complete it. It is
+// failed, with a reason naming the job.
+func TestReconcilerFailsOrphanedTask(t *testing.T) {
+	f := newReconcilerFixture(t)
+	f.seedKueueTask(t, "task-orphan", "forge", "job-gone")
+	f.submitter.statusErr = fmt.Errorf("kubesubmit: job forge/job-gone: %w", ErrJobNotFound)
+
+	f.reconciler.reconcileOnce(context.Background())
+
+	require.Contains(t, f.failed, "task-orphan", "the orphaned task was failed, not retried")
+	assert.Contains(t, f.failed["task-orphan"], "job-gone", "the reason names the job")
+	assert.Contains(t, f.failed["task-orphan"], "no longer exists")
+
+	task, err := f.store.GetTask(context.Background(), "task-orphan")
+	require.NoError(t, err)
+	assert.Equal(t, storage.TaskStatusFailed, task.Status)
+
+	// The orphan is not left in the failure streak: it is resolved, not
+	// pending. A streak would keep it in the reconciler's attention forever.
+	assert.Zero(t, f.reconciler.failStreak["task-orphan"], "a resolved orphan leaves no streak")
+}
+
+// A second pass over an already-failed orphan changes nothing: the reconciler
+// only looks at RUNNING tasks.
+func TestReconcilerOrphanFailureIsIdempotent(t *testing.T) {
+	f := newReconcilerFixture(t)
+	f.seedKueueTask(t, "task-orphan2", "forge", "job-gone2")
+	f.submitter.statusErr = fmt.Errorf("%w", ErrJobNotFound)
+
+	f.reconciler.reconcileOnce(context.Background())
+	firstReason := f.failed["task-orphan2"]
+	require.NotEmpty(t, firstReason)
+
+	// Clear the recorded failure so a second report would be visible.
+	delete(f.failed, "task-orphan2")
+	f.reconciler.reconcileOnce(context.Background())
+
+	assert.NotContains(t, f.failed, "task-orphan2", "a failed task is not reconciled again")
 }
 
 // Non-leaders do nothing: every replica runs the loop, and two copies

@@ -172,6 +172,12 @@ func (s *Submitter) SubmitJob(ctx context.Context, spec coordinator.KueueJobSpec
 func (s *Submitter) GetJobStatus(ctx context.Context, namespace, name string) (coordinator.KueueJobStatus, error) {
 	job, err := s.client.BatchV1().Jobs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// The sentinel is declared by the interface's package (this one
+			// already imports it); returning it is what lets the reconciler
+			// tell an orphan from a transient read failure.
+			return coordinator.KueueJobStatus{}, fmt.Errorf("kubesubmit: job %s/%s: %w", namespace, name, coordinator.ErrJobNotFound)
+		}
 		return coordinator.KueueJobStatus{}, fmt.Errorf("kubesubmit: get job %s/%s: %w", namespace, name, err)
 	}
 

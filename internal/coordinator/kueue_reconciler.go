@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,16 @@ import (
 
 	"github.com/castwell/forge/internal/storage"
 )
+
+// ErrJobNotFound reports that a submitted Job no longer exists. It is declared
+// here, next to the interface that returns it, because the implementation
+// (internal/kubesubmit) already imports this package — the sentinel cannot live
+// there without an import cycle.
+//
+// The distinction it draws is the difference between "retry" and "give up": a
+// transient read failure must be retried, while a missing Job will never appear
+// however often it is polled.
+var ErrJobNotFound = errors.New("job not found")
 
 // Kueue dispatch, part two: results.
 //
@@ -162,6 +173,21 @@ func (r *KueueReconciler) reconcileTask(ctx context.Context, task *storage.Task)
 
 	status, err := r.kueue.submitter.GetJobStatus(ctx, namespace, jobName)
 	if err != nil {
+		// An orphan is not a read failure: the Job is gone (deleted by hand, or
+		// swept by a TTL, or never created because the coordinator died between
+		// submitting and recording). Polling it forever would leave the task in
+		// RUNNING with nothing that can ever complete it — the "task hangs"
+		// failure the write-back design exists to prevent. Fail it instead, and
+		// say why, so a human can decide whether to re-run.
+		if errors.Is(err, ErrJobNotFound) {
+			reason := fmt.Sprintf("kueue job %s/%s no longer exists; the task cannot complete on its own", namespace, jobName)
+			log.Printf("WARN: kueue: %s (task %s)", reason, task.ID)
+			delete(r.failStreak, task.ID)
+			if ferr := r.onFail(ctx, task.ID, reason); ferr != nil {
+				log.Printf("ERROR: kueue reconciler fail orphaned task %s: %v", task.ID, ferr)
+			}
+			return
+		}
 		r.noteFailure(task, namespace, jobName, err)
 		return
 	}

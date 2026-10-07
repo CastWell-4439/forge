@@ -15,10 +15,6 @@ triggers:
 config:
   timeout: 30m
   max_retries: 2
-  hitl:
-    auto_pause_on:
-      - "plan.confidence < 0.7"
-      - "plan.affects_other_modules"
 
 inputs:
   work_item_id: "{{.event.work_item_id}}"
