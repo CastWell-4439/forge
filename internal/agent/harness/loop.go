@@ -48,6 +48,11 @@ type LoopConfig struct {
 	// line (0.90 default) with stronger wording.
 	ContextRemindAt float64
 	ContextUrgentAt float64
+	// OutputReserve is how many tokens to hold back for the model's reply (N3).
+	// The context budget covers the whole window, so without a reservation the
+	// input may fill it completely and the generation that follows overflows.
+	// Zero means no reservation (the pre-N3 behaviour).
+	OutputReserve int
 	// Authority is the ceiling this run may act under (L0..L4). Empty means
 	// core.DefaultAuthority (L2: read-only without asking). It is a property of
 	// the RUN, not of the workflow: a pipeline author cannot raise it.
@@ -151,6 +156,10 @@ func NewAgentLoop(llm core.LLMClient, router *ToolRouter, config LoopConfig) *Ag
 	if config.ContextCompactTarget > 0 {
 		ctxMgr.compactTarget = config.ContextCompactTarget
 	}
+	// N3: hold back room for the model's own reply. Without it the input is
+	// measured against the whole window, and a request that "fit" overflows the
+	// moment the model generates its answer.
+	ctxMgr.SetOutputReserve(config.OutputReserve)
 	return &AgentLoop{
 		llm:     llm,
 		router:  router,
@@ -623,6 +632,19 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			},
 		}); jerr != nil {
 			return nil, jerr
+		}
+
+		// --- Token estimate calibration (N3) ---
+		// The provider just told us how many tokens the prompt really was, and
+		// we know what we estimated for the same list. Feeding the ratio back
+		// turns the fixed heuristic into a measured one for THIS deployment —
+		// the alternative (a tokenizer) would have to guess the model, while
+		// this uses the number the model itself reported.
+		//
+		// It sits here, beside the audit, because both consume the same field:
+		// one records it, the other learns from it.
+		if chatResult.Usage.PromptTokens > 0 {
+			l.ctxMgr.ObserveUsage(l.ctxMgr.estimateTokens(messages), chatResult.Usage.PromptTokens)
 		}
 
 		// --- Budget accounting (M6, optional) ---

@@ -49,6 +49,7 @@ const (
 	envContextUrgentAt      = "FORGE_CONTEXT_URGENT_AT"
 	envContextKeepMessages  = "FORGE_CONTEXT_KEEP_MESSAGES"
 	envContextCompactTarget = "FORGE_CONTEXT_COMPACT_TARGET"
+	envContextOutputReserve = "FORGE_CONTEXT_OUTPUT_RESERVE"
 	envAgentAuthority       = "FORGE_AGENT_AUTHORITY"
 	envAgentVisibleTools    = "FORGE_AGENT_VISIBLE_TOOLS"
 	defaultAgentWorkspace   = ".forge-workspace"
@@ -102,6 +103,11 @@ func registerAgent(r *worker.Registry) {
 		envInt(envContextKeepMessages),
 		envFraction(envContextCompactTarget),
 	))
+
+	// N3: how much of the window to hold back for the model's reply. The
+	// context budget covers the whole window, so without this the input can
+	// fill it and the generation that follows overflows. 0 = no reservation.
+	opts = append(opts, agentcore.WithOutputReserve(envInt(envContextOutputReserve)))
 
 	// Authority is the ceiling agent runs may act under (N4 + the risk gate).
 	// It is read here, at assembly, and it is a property of this DEPLOYMENT: a

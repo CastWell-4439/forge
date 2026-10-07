@@ -158,21 +158,26 @@ type contextUsage struct {
 // usage computes the current window usage. Known is false when no budget is
 // configured — the caller must then report null rather than invent a number
 // (Codex's get_context_remaining returns null for the same reason).
+//
+// The numbers are the CALIBRATED estimate against the INPUT budget (N3), so
+// what a model sees here is the same arithmetic the compaction policy uses —
+// reporting raw-window figures would make the tool disagree with the loop.
 func (l *AgentLoop) usage(messages []core.Message) contextUsage {
 	maxTokens := l.ctxMgr.maxTokens
 	if maxTokens <= 0 {
 		return contextUsage{}
 	}
-	used := EstimateTokens(messages)
-	left := maxTokens - used
+	budget := l.ctxMgr.inputBudget()
+	used := l.ctxMgr.estimateTokens(messages)
+	left := budget - used
 	if left < 0 {
 		left = 0
 	}
 	return contextUsage{
 		Used:     used,
-		Max:      maxTokens,
+		Max:      budget,
 		Left:     left,
-		Fraction: float64(used) / float64(maxTokens),
+		Fraction: float64(used) / float64(budget),
 		Known:    true,
 	}
 }
