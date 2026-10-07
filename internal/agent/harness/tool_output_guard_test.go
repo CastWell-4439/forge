@@ -55,6 +55,9 @@ func runToolOutputCase(t *testing.T, guard core.InputGuard, strict bool) (llm *t
 		Name:        "web.fetch",
 		Description: "fetch",
 		InputSchema: map[string]core.ParamDef{"url": {Type: "string"}},
+		// Read: fetching observes. Without this the permission gate pauses the
+		// run before the output guard under test is reached.
+		Effect: core.EffectRead,
 	}, (&yellingTool{output: injectionPayload}).Execute)
 
 	loop := NewAgentLoop(&toolOutputLLM{}, NewToolRouter(registry), LoopConfig{MaxSteps: 4})
@@ -127,6 +130,7 @@ func TestToolOutputGuardKeepsRawInLedger(t *testing.T) {
 		Name:        "web.fetch",
 		Description: "fetch",
 		InputSchema: map[string]core.ParamDef{"url": {Type: "string"}},
+		Effect:      core.EffectRead,
 	}, (&yellingTool{output: injectionPayload}).Execute)
 
 	store := newMemoryStore()

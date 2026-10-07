@@ -66,6 +66,10 @@ type TaskDef struct {
 	Output     string                 `yaml:"output,omitempty"` // result variable name; successors reference it as {{.name}}
 	OnResult   OnResult               `yaml:"-"`                // Result-based routing
 	Loop       *LoopConfig            `yaml:"loop"`             // Loop/iteration config
+	// RiskLevel is the effect the workflow declared for this task (read, write
+	// or delete). The permission gate takes the stronger of this and the
+	// handler's own effect, so a declaration can tighten but never loosen.
+	RiskLevel string `yaml:"risk_level,omitempty"`
 }
 
 // rawTaskDef is the YAML-friendly representation for task definitions.

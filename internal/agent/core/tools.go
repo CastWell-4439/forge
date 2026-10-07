@@ -44,6 +44,13 @@ type ToolDef struct {
 	// to false, so the safe answer is "do not replay".
 	Idempotent bool `yaml:"idempotent"`
 
+	// Effect is what this tool does to the world (read < write < delete). It
+	// is declared by the tool's author and cannot be raised or lowered by a
+	// workflow: the pre-execution gate takes the STRONGER of this and the
+	// task's own declaration, so a lenient task cannot wave a destructive tool
+	// through. Zero value means "not declared" and is judged as write.
+	Effect ToolEffect `yaml:"effect"`
+
 	// Dependency hints for DAG generation
 	TypicalPredecessors []string `yaml:"typical_predecessors"`
 	TypicalSuccessors   []string `yaml:"typical_successors"`

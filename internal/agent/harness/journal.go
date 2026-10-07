@@ -16,13 +16,17 @@ import (
 	"time"
 )
 
-// Journal event types. The vocabulary mirrors what the loop actually does;
-// run_paused/run_resumed pause semantics arrive with the HITL round, but
-// run_resumed already exists because a crash-recovery resume also restarts
-// the logical run record.
+// Journal event types. The vocabulary mirrors what the loop actually does.
+//
+// run_resumed covers both ways a logical run continues: crash recovery
+// (checkpoint or journal rebuild) and an operator releasing a run that paused
+// for a human. They look identical to the journal — same run, later step, new
+// events — so they share the event and are told apart by what preceded it
+// (run_paused versus run_ended).
 const (
 	EventRunStarted       = "run_started"       // a fresh logical run begins
-	EventRunResumed       = "run_resumed"       // a resume continues a logical run (checkpoint or journal rebuild)
+	EventRunResumed       = "run_resumed"       // a resume continues a logical run (crash recovery or release after a pause)
+	EventRunPaused        = "run_paused"        // the run stopped to wait for a human, and can be resumed
 	EventStepStarted      = "step_started"      // one ReAct iteration begins
 	EventLLMCall          = "llm_call"          // an LLM call returned with usage
 	EventContextCompacted = "context_compacted" // messages were replaced; carries a full snapshot

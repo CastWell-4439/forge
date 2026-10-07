@@ -60,6 +60,7 @@ func ShellRunDef() *ToolDef {
 			"exit_code": {Type: "integer", Description: "Process exit code"},
 		},
 		RequiredParams: []string{"command"},
+		Effect:         EffectWrite,
 		EstimatedTime:  30 * time.Second,
 	}
 }

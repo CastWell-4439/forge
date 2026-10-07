@@ -35,13 +35,14 @@ func knowledgeSearchHandler(cfg HandlerConfig) HandlerFunc {
 	}
 }
 
-// RegisterAll registers all 20 agent tool handlers into the given ToolRegistry.
+// RegisterAll registers all 22 agent tool handlers into the given ToolRegistry.
 // The HandlerConfig controls whether mock or real implementations are used.
 //
 // The set is the generic work every coding agent is given - files, shell, code,
 // git reads, web, data - plus one human channel, one skill channel, one
-// knowledge channel, and three context-window operations. Domain-specific
-// capabilities belong to the workflow plane's workers, not to this registry.
+// knowledge channel, three context-window operations and two agent-control
+// operations. Domain-specific capabilities belong to the workflow plane's
+// workers, not to this registry.
 func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 	registrations := []struct {
 		def     *ToolDef
@@ -88,6 +89,12 @@ func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 		{ContextRemainingDef(), contextToolUnavailable(ToolContextRemaining)},
 		{ContextCompactDef(), contextToolUnavailable(ToolContextCompact)},
 		{ContextRecallDef(), contextToolUnavailable(ToolContextRecall)},
+
+		// Agent control (2): both intercepted by the loop. pause ends the run
+		// and saves it for a human; query asks a question and continues (see
+		// agent_control.go).
+		{AgentPauseDef(), agentControlUnavailable(AgentPauseName)},
+		{AgentQueryDef(), agentControlUnavailable(AgentQueryName)},
 	}
 
 	for _, r := range registrations {

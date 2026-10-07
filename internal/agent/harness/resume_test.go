@@ -129,6 +129,11 @@ func countingRegistry(t *testing.T, name string, idempotent bool) (*workers.Tool
 		Name:        name,
 		Description: "test tool",
 		Idempotent:  idempotent,
+		// Declared read: this scaffold's handler only counts and returns a
+		// constant, so the permission gate (which treats an undeclared effect
+		// as write) would otherwise pause every test that uses it — testing the
+		// gate rather than the behaviour each test is about.
+		Effect: workers.EffectRead,
 	}, func(_ context.Context, _ map[string]interface{}) (map[string]interface{}, error) {
 		calls++
 		return map[string]interface{}{"output": "ok"}, nil

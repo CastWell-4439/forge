@@ -41,13 +41,16 @@ type Agent struct {
 	ContextUrgentAt      float64
 	CompactKeepMessages  int
 	ContextCompactTarget float64
-	Budget               core.BudgetChecker
-	Retriever            core.Retriever
-	Memory               core.MemoryStore
-	Checkpoint           core.CheckpointStore
-	Journal              harness.Journal
-	MCP                  core.MCPManager
-	Verifier             core.Verifier
+	// Authority is the ceiling runs may act under (L0..L4). Empty means
+	// core.DefaultAuthority. A deployment-level decision, read at assembly.
+	Authority  core.Authority
+	Budget     core.BudgetChecker
+	Retriever  core.Retriever
+	Memory     core.MemoryStore
+	Checkpoint core.CheckpointStore
+	Journal    harness.Journal
+	MCP        core.MCPManager
+	Verifier   core.Verifier
 
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
@@ -167,6 +170,14 @@ func WithToolConfig(apply func(*workers.HandlerConfig)) Option {
 // endpoint may refuse, degrading to the prompt path with one warning.
 func WithNativeTools(enabled bool) Option {
 	return func(a *Agent) { a.NativeTools = enabled }
+}
+
+// WithAuthority sets the ceiling this agent's runs may act under (L0..L4).
+// It is a deployment-level decision: a workflow cannot raise it, which is what
+// keeps a pipeline from granting itself permission to delete. Empty means
+// core.DefaultAuthority (L2, read-only without asking).
+func WithAuthority(authority core.Authority) Option {
+	return func(a *Agent) { a.Authority = authority }
 }
 
 // WithContextTuning sets the water-line reminder thresholds (fractions of the
@@ -295,6 +306,7 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		ContextUrgentAt:      a.ContextUrgentAt,
 		CompactKeepMessages:  a.CompactKeepMessages,
 		ContextCompactTarget: a.ContextCompactTarget,
+		Authority:            a.Authority,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 
