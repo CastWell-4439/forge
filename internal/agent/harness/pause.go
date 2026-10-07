@@ -31,11 +31,14 @@ const PauseToolName = "agent.pause"
 // QueryToolName is the query tool as the loop sees it.
 const QueryToolName = "agent.query"
 
+// ToolSearchToolName is the tool-discovery tool as the loop sees it.
+const ToolSearchToolName = "tool.search"
+
 // isControlTool reports whether a tool name is intercepted by the loop rather
 // than dispatched to a handler.
 func isControlTool(name string) bool {
 	switch name {
-	case PauseToolName, QueryToolName:
+	case PauseToolName, QueryToolName, ToolSearchToolName:
 		return true
 	default:
 		return false

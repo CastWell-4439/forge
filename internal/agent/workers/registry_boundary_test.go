@@ -38,6 +38,7 @@ var goldenAgentTools = []string{
 	"knowledge.search",
 	"shell.run",
 	"skill.activate",
+	"tool.search",
 	"web.fetch",
 	"web.search",
 }

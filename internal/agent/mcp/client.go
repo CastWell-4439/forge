@@ -8,11 +8,16 @@ import (
 )
 
 // Client is an MCP protocol client that communicates with a single MCP server
-// through a Transport. It handles the MCP initialization handshake, tool
-// listing, and tool invocation.
+// through a Transport. It negotiates the protocol revision (modern per-request
+// metadata, or the legacy handshake), then lists and invokes tools.
 type Client struct {
 	transport Transport
 	info      ServerInfo
+	// version is the revision in force for this connection, and modern says
+	// whether requests carry `_meta` (see protocol.go). Both are decided once,
+	// during negotiation.
+	version string
+	modern  bool
 }
 
 // ServerInfo contains metadata returned by the MCP server during initialization.
@@ -21,11 +26,30 @@ type ServerInfo struct {
 	Version string `json:"version"`
 }
 
+// ToolAnnotations is what an MCP server claims about a tool's behaviour.
+//
+// These are HINTS, not guarantees: they describe intent as the server sees it,
+// and a malicious or buggy server can claim readOnlyHint while deleting data.
+// The bridge therefore maps them into the agent's effect classes without ever
+// letting a "read-only" claim relax another constraint (see bridge.go).
+type ToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+}
+
 // ToolDefinition is a tool discovered via MCP's tools/list method.
 type ToolDefinition struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	InputSchema map[string]interface{} `json:"inputSchema,omitempty"`
+	// Annotations carries the server's declared behaviour hints. Dropping them
+	// (as this type used to) threw away the only information the server offers
+	// about whether a tool reads or destroys — leaving every remote tool to be
+	// judged as "undeclared", which is safe but blind.
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
 }
 
 // --- MCP Protocol Messages ---
@@ -66,15 +90,22 @@ type toolContent struct {
 
 // --- Client Methods ---
 
-// NewClient creates an MCP client over the given transport, performs the
-// MCP initialization handshake, and sends the "initialized" notification.
+// NewClient creates an MCP client over the given transport and negotiates the
+// protocol revision with the server (see negotiateProtocol).
 func NewClient(ctx context.Context, transport Transport) (*Client, error) {
 	c := &Client{transport: transport}
-	if err := c.initialize(ctx); err != nil {
-		return nil, fmt.Errorf("MCP initialize: %w", err)
+	if err := c.negotiateProtocol(ctx); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
+
+// ProtocolVersion returns the revision in force for this connection.
+func (c *Client) ProtocolVersion() string { return c.version }
+
+// IsModern reports whether this connection uses the per-request-metadata
+// revision rather than the legacy handshake.
+func (c *Client) IsModern() bool { return c.modern }
 
 // ServerName returns the name of the connected MCP server.
 func (c *Client) ServerName() string { return c.info.Name }
@@ -125,29 +156,29 @@ func (c *Client) Close() error {
 
 // --- Internal ---
 
-func (c *Client) initialize(ctx context.Context) error {
-	params := initializeParams{
-		ProtocolVersion: "2024-11-05",
-		ClientInfo:      clientInfo{Name: "forge-agent", Version: "1.0.0"},
-	}
-
-	resp, err := c.call(ctx, "initialize", params)
-	if err != nil {
-		return err
-	}
-
-	var result initializeResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return fmt.Errorf("parse initialize result: %w", err)
-	}
-	c.info = result.ServerInfo
-
-	// Send "initialized" notification per MCP spec.
-	return c.transport.Notify(ctx, Notification{Method: "notifications/initialized"})
-}
-
 // call is a helper that creates a request, sends it, and checks for errors.
 func (c *Client) call(ctx context.Context, method string, params interface{}) (Response, error) {
+	return c.send(ctx, method, params, false)
+}
+
+// callMeta is call for the modern revision: the request carries the `_meta`
+// envelope (version, capabilities, identity), as every request must once the
+// handshake is gone.
+func (c *Client) callMeta(ctx context.Context, method string, params interface{}) (Response, error) {
+	return c.send(ctx, method, params, true)
+}
+
+func (c *Client) send(ctx context.Context, method string, params interface{}, withMeta bool) (Response, error) {
+	// Modern requests carry their protocol version per request; a legacy
+	// server ignores the field, so negotiation can probe with it either way.
+	if withMeta || c.modern {
+		var err error
+		params, err = withMetaEnvelope(params)
+		if err != nil {
+			return Response{}, err
+		}
+	}
+
 	req, err := NewRequest(c.nextID(), method, params)
 	if err != nil {
 		return Response{}, err
@@ -163,6 +194,27 @@ func (c *Client) call(ctx context.Context, method string, params interface{}) (R
 	}
 
 	return resp, nil
+}
+
+// withMetaEnvelope merges the reserved `_meta` keys into a request's params.
+//
+// The MCP specification puts `_meta` inside params; a request that has no
+// params still needs the envelope, so an empty object is created for it. The
+// caller's own params survive: only the reserved keys are written.
+func withMetaEnvelope(params interface{}) (map[string]any, error) {
+	envelope := map[string]any{}
+
+	if params != nil {
+		encoded, err := json.Marshal(params)
+		if err != nil {
+			return nil, fmt.Errorf("marshal params for _meta envelope: %w", err)
+		}
+		if err := json.Unmarshal(encoded, &envelope); err != nil {
+			return nil, fmt.Errorf("params are not an object, cannot carry _meta: %w", err)
+		}
+	}
+	envelope["_meta"] = metaEnvelope()
+	return envelope, nil
 }
 
 func (c *Client) nextID() int64 {
