@@ -55,14 +55,14 @@ func twoToolRegistry(t *testing.T, pushCount, lookupCount *int) *workers.ToolReg
 	t.Helper()
 	reg := workers.NewToolRegistry()
 	require.NoError(t, reg.Register(&core.ToolDef{
-		Name: "test.push", Idempotent: false,
+		Name: "test.push", Idempotent: false, Effect: core.EffectRead,
 		InputSchema: map[string]core.ParamDef{"x": {Type: "integer", Required: true}},
 	}, func(context.Context, map[string]interface{}) (map[string]interface{}, error) {
 		*pushCount++
 		return map[string]interface{}{"ok": true}, nil
 	}))
 	require.NoError(t, reg.Register(&core.ToolDef{
-		Name: "test.lookup", Idempotent: true,
+		Name: "test.lookup", Idempotent: true, Effect: core.EffectRead,
 		InputSchema: map[string]core.ParamDef{"q": {Type: "string", Required: true}},
 	}, func(context.Context, map[string]interface{}) (map[string]interface{}, error) {
 		*lookupCount++

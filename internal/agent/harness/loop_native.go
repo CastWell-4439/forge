@@ -34,7 +34,7 @@ func (l *AgentLoop) runNativeToolBatch(
 	ledger *[]core.ToolCallRecord,
 	journalBase *int,
 	chatResult core.ChatResult,
-) error {
+) (*RunResult, error) {
 	thought := chatResult.Content
 	calls := chatResult.ToolCalls
 
@@ -46,6 +46,33 @@ func (l *AgentLoop) runNativeToolBatch(
 	})
 
 	for i, call := range calls {
+		// Pause is a loop meta-operation (N4) and ends the run: it is checked
+		// before the permission gate, because a model asking for a human must
+		// be able to do so regardless of the authority it holds — otherwise a
+		// low-authority run could not even ask for the permission it lacks.
+		if call.Name == PauseToolName {
+			reason := pauseReason(call.Arguments)
+			if reason == "" {
+				*messages = append(*messages, core.Message{
+					Role:       "tool",
+					ToolCallID: call.ID,
+					Content: fmt.Sprintf("[%s refused]: a pause must state the 'reason' parameter — "+
+						"what decision is needed and from whom. Continue, or call it again with a reason.",
+						PauseToolName),
+				})
+				continue
+			}
+			result, err := l.pauseRun(ctx, sessionID, step, *messages, *ledger, reason)
+			return result, err
+		}
+
+		// Permission gate, the same check the prompt path applies: one policy,
+		// two protocols. A refusal pauses the run rather than failing it.
+		if decision, ok := l.checkToolAuthority(call.Name); !ok {
+			result, err := l.authorityPauseResult(call.Name, decision)
+			return result, err
+		}
+
 		// Context tools are loop meta-operations (N2c): they act on the
 		// loop's own window, so they get no ledger entry, no duplicate guard
 		// and no streak. The assistant message carrying the whole batch was
@@ -110,10 +137,10 @@ func (l *AgentLoop) runNativeToolBatch(
 				"turn":       turn,
 			},
 		}); jerr != nil {
-			return jerr
+			return nil, jerr
 		}
 		if err := l.saveCheckpoint(ctx, sessionID, step, *messages, *ledger); err != nil {
-			return err
+			return nil, err
 		}
 
 		// The duplicate guard and streak accounting are the SAME code as the
@@ -152,7 +179,7 @@ func (l *AgentLoop) runNativeToolBatch(
 				"native_id": call.ID,
 			},
 		}); jerr != nil {
-			return jerr
+			return nil, jerr
 		}
 
 		*steps = append(*steps, StepRecord{
@@ -168,7 +195,7 @@ func (l *AgentLoop) runNativeToolBatch(
 		if l.toolOutputGuard != nil && toolResult.Output != "" {
 			if gerr := l.toolOutputGuard.Check(ctx, toolResult.Output); gerr != nil {
 				if l.effectPolicy == EffectStrict {
-					return fmt.Errorf("step %d: tool output guard blocked %q output: %w", step, call.Name, gerr)
+					return nil, fmt.Errorf("step %d: tool output guard blocked %q output: %w", step, call.Name, gerr)
 				}
 				log.Printf("[harness] tool output guard blocked %q output: %v", call.Name, gerr)
 				replace := *toolResult
@@ -203,7 +230,7 @@ func (l *AgentLoop) runNativeToolBatch(
 			ok, feedback, verifyErr := l.verifier.Verify(ctx, verifyAction, toolResult)
 			if verifyErr != nil {
 				if l.effectPolicy == EffectStrict {
-					return fmt.Errorf("verifier failed: %w", verifyErr)
+					return nil, fmt.Errorf("verifier failed: %w", verifyErr)
 				}
 				log.Printf("[harness] verifier error: %v", verifyErr)
 			} else if !ok {
@@ -225,10 +252,10 @@ func (l *AgentLoop) runNativeToolBatch(
 		TS:    time.Now().UTC(),
 		Data:  map[string]any{"turns": (*messages)[*journalBase:]},
 	}); jerr != nil {
-		return jerr
+		return nil, jerr
 	}
 	*journalBase = len(*messages)
-	return l.saveCheckpoint(ctx, sessionID, step, *messages, *ledger)
+	return nil, l.saveCheckpoint(ctx, sessionID, step, *messages, *ledger)
 }
 
 // marshalNativeTurn records the assistant's batch for the journal: a rebuild
