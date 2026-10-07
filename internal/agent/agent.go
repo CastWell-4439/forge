@@ -34,18 +34,20 @@ type Agent struct {
 	// downgrades to the prompt path with one warning.
 	NativeTools bool
 	// Context-window tuning (N2c): water-line reminders as fractions of the
-	// window (0 = defaults 0.70/0.90; negative remind disables), and how many
-	// trailing messages survive a compaction (0 = default).
-	ContextRemindAt     float64
-	ContextUrgentAt     float64
-	CompactKeepMessages int
-	Budget              core.BudgetChecker
-	Retriever           core.Retriever
-	Memory              core.MemoryStore
-	Checkpoint          core.CheckpointStore
-	Journal             harness.Journal
-	MCP                 core.MCPManager
-	Verifier            core.Verifier
+	// window (0 = defaults 0.70/0.90; negative remind disables), how many
+	// trailing messages survive a compaction (0 = default 4), and the fraction
+	// of the budget a compaction aims for (0 = default 0.60).
+	ContextRemindAt      float64
+	ContextUrgentAt      float64
+	CompactKeepMessages  int
+	ContextCompactTarget float64
+	Budget               core.BudgetChecker
+	Retriever            core.Retriever
+	Memory               core.MemoryStore
+	Checkpoint           core.CheckpointStore
+	Journal              harness.Journal
+	MCP                  core.MCPManager
+	Verifier             core.Verifier
 
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
@@ -149,13 +151,15 @@ func WithNativeTools(enabled bool) Option {
 }
 
 // WithContextTuning sets the water-line reminder thresholds (fractions of the
-// window; 0 = defaults; remind < 0 disables) and the compaction keep-count.
-// The wiring reads env; the loop only ever sees numbers.
-func WithContextTuning(remind, urgent float64, keepMessages int) Option {
+// window; 0 = defaults; remind < 0 disables), the compaction keep-count and the
+// compaction target fraction (S1/S4). The wiring reads env; the loop only sees
+// numbers.
+func WithContextTuning(remind, urgent float64, keepMessages int, compactTarget float64) Option {
 	return func(a *Agent) {
 		a.ContextRemindAt = remind
 		a.ContextUrgentAt = urgent
 		a.CompactKeepMessages = keepMessages
+		a.ContextCompactTarget = compactTarget
 	}
 }
 
@@ -266,11 +270,12 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		MaxContextTokens: harness.DefaultMaxContextTokens,
 		// 0 picks harness.DefaultNoProgressThreshold — an agent stuck repeating
 		// itself stops honestly instead of burning the whole step budget.
-		NoProgressThreshold: 0,
-		NativeTools:         a.NativeTools,
-		ContextRemindAt:     a.ContextRemindAt,
-		ContextUrgentAt:     a.ContextUrgentAt,
-		CompactKeepMessages: a.CompactKeepMessages,
+		NoProgressThreshold:  0,
+		NativeTools:          a.NativeTools,
+		ContextRemindAt:      a.ContextRemindAt,
+		ContextUrgentAt:      a.ContextUrgentAt,
+		CompactKeepMessages:  a.CompactKeepMessages,
+		ContextCompactTarget: a.ContextCompactTarget,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 

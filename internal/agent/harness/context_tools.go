@@ -290,12 +290,16 @@ func (l *AgentLoop) compactNow(ctx context.Context, messages *[]core.Message, se
 			convMsgs = append(convMsgs, m)
 		}
 	}
-	keep := l.compactKeepMessages()
-	if len(convMsgs) <= keep {
+	// The plan comes from the SAME planner the static path uses (S1 keep, the
+	// last-tool-observation floor, S4 target) — one policy, not two that drift.
+	//
+	// The model's explicit request overrides the S4 target: it asked to compact,
+	// so the whole candidate range goes. Reaching only 60% when the caller said
+	// "compact now" would leave the window heavier than they asked for.
+	toSummarize, toKeep := l.ctxMgr.planCompaction(systemMsgs, convMsgs, true)
+	if len(toSummarize) == 0 {
 		return "", false, fmt.Errorf("nothing to compact: only %d conversation messages remain", len(convMsgs))
 	}
-	toSummarize := convMsgs[:len(convMsgs)-keep]
-	toKeep := convMsgs[len(convMsgs)-keep:]
 
 	summary, err = l.ctxMgr.summarize(ctx, toSummarize)
 	if err != nil {
@@ -347,14 +351,6 @@ func buildCompactSnapshot(systemMsgs []core.Message, summary string, toKeep []co
 	})
 	result = append(result, toKeep...)
 	return result
-}
-
-// compactKeepMessages resolves how many trailing messages stay un-summarised.
-func (l *AgentLoop) compactKeepMessages() int {
-	if l.config.CompactKeepMessages > 0 {
-		return l.config.CompactKeepMessages
-	}
-	return defaultCompactKeepMessages
 }
 
 // defaultCompactKeepMessages keeps the last two exchanges (four messages).

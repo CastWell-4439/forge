@@ -38,6 +38,10 @@ type LoopConfig struct {
 	// CompactKeepMessages is how many trailing messages survive a compaction
 	// un-summarised (static rule, S1). 0 picks defaultCompactKeepMessages.
 	CompactKeepMessages int
+	// ContextCompactTarget is the fraction of the budget a compaction aims for
+	// (S4). 0 picks defaultCompactTarget (0.60). Negative means "drop the whole
+	// candidate range" (the model's explicit request).
+	ContextCompactTarget float64
 	// ContextRemindAt is the first water line as a fraction of the window
 	// (0.70 default): crossing it injects ONE relative-value reminder.
 	// Negative disables the reminders entirely. ContextUrgentAt is the second
@@ -112,10 +116,20 @@ type AgentLoop struct {
 
 // NewAgentLoop creates a new ReAct loop.
 func NewAgentLoop(llm core.LLMClient, router *ToolRouter, config LoopConfig) *AgentLoop {
+	ctxMgr := NewContextManager(config.MaxContextTokens, llm)
+	// S1/S4 wiring: the static path honours the same knobs as the model's
+	// explicit compaction — that shared-ness is what makes them one policy
+	// instead of two that drift.
+	if config.CompactKeepMessages > 0 {
+		ctxMgr.keep = config.CompactKeepMessages
+	}
+	if config.ContextCompactTarget > 0 {
+		ctxMgr.compactTarget = config.ContextCompactTarget
+	}
 	return &AgentLoop{
 		llm:     llm,
 		router:  router,
-		ctxMgr:  NewContextManager(config.MaxContextTokens, llm),
+		ctxMgr:  ctxMgr,
 		config:  config,
 		archive: NewContextArchive(0),
 	}
