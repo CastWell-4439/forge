@@ -38,7 +38,7 @@ func (m *mockLLM) ChatWithUsage(ctx context.Context, messages []core.Message) (c
 // helper: register tool into a new registry (handler must be non-nil for Register).
 func newRegistryWith(name, desc string, handler workers.HandlerFunc) *workers.ToolRegistry {
 	r := workers.NewToolRegistry()
-	_ = r.Register(&workers.ToolDef{Name: name, Description: desc}, handler)
+	_ = r.Register(&workers.ToolDef{Name: name, Description: desc, Effect: workers.EffectRead}, handler)
 	return r
 }
 
