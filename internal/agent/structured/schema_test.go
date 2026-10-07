@@ -2,6 +2,7 @@ package structured
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,6 +62,68 @@ func TestFormatForLLM(t *testing.T) {
 	assert.Contains(t, output, "thought")
 	assert.Contains(t, output, "action")
 	assert.Contains(t, output, "answer")
+}
+
+// The rendered schema must be byte-identical across calls. Go randomises map
+// iteration, so an unsorted renderer produced a different field order every
+// time — and because this text is embedded in the system prompt, that moved the
+// prompt mid-run and cost provider prefix reuse from the first changed field.
+func TestFormatForLLMIsStable(t *testing.T) {
+	schema := GenerateSchema(AgentResponse{})
+
+	first := FormatForLLM(schema)
+	// Repeated renders in one process already expose map-order dependence in
+	// practice; the loop below makes the failure reliable rather than lucky.
+	for i := 0; i < 50; i++ {
+		require.Equal(t, first, FormatForLLM(schema), "render %d differed", i)
+	}
+}
+
+// Fields come out sorted by name, so the document is canonical rather than
+// merely stable-by-accident.
+func TestFormatForLLMSortsFields(t *testing.T) {
+	schema := GenerateSchema(AgentResponse{})
+	out := FormatForLLM(schema)
+
+	action := strings.Index(out, `"action"`)
+	answer := strings.Index(out, `"answer"`)
+	thought := strings.Index(out, `"thought"`)
+	require.Positive(t, action)
+	require.Positive(t, answer)
+	require.Positive(t, thought)
+
+	assert.Less(t, action, answer, "action before answer")
+	assert.Less(t, answer, thought, "answer before thought")
+}
+
+// Nested objects are sorted too: the sort has to apply at every level, or a
+// nested schema reintroduces the instability.
+func TestFormatForLLMSortsNestedFields(t *testing.T) {
+	schema := &Schema{
+		Type: SchemaObject,
+		Properties: map[string]*Schema{
+			"outer": {
+				Type: SchemaObject,
+				Properties: map[string]*Schema{
+					"zulu":  {Type: SchemaString},
+					"alpha": {Type: SchemaString},
+					"mike":  {Type: SchemaString},
+				},
+			},
+		},
+	}
+
+	out := FormatForLLM(schema)
+	alpha := strings.Index(out, `"alpha"`)
+	mike := strings.Index(out, `"mike"`)
+	zulu := strings.Index(out, `"zulu"`)
+	require.Positive(t, alpha)
+	assert.Less(t, alpha, mike, "nested fields sorted")
+	assert.Less(t, mike, zulu)
+
+	for i := 0; i < 30; i++ {
+		assert.Equal(t, out, FormatForLLM(schema), "nested render %d differed", i)
+	}
 }
 
 // --- Types tests ---

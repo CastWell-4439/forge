@@ -39,6 +39,23 @@ const (
 	toolSlimThresholdChars = 2000
 	toolSlimHeadChars      = 1500
 	toolSlimTailChars      = 500
+
+	// Calibration bounds (N3). The ratio observed/estimated is clamped to this
+	// range: one anomalous response must not be able to move the estimate by an
+	// order of magnitude, and a provider that reports something wildly different
+	// from the text length is a reason to distrust the sample, not to trust it
+	// completely.
+	minCalibrationRatio = 0.5
+	maxCalibrationRatio = 3.0
+
+	// calibrationSamples is how many observations are needed before the
+	// estimate is adjusted at all. Below it the default heuristic stands: two
+	// samples are a coincidence, not a ratio.
+	calibrationSamples = 3
+
+	// calibrationSmoothing weights a new observation against the running ratio.
+	// 0.3 keeps the value responsive without letting one sample dominate.
+	calibrationSmoothing = 0.3
 )
 
 // ContextManager manages the conversation history for the ReAct loop.
@@ -53,6 +70,18 @@ type ContextManager struct {
 	// compactTarget is the fraction of the budget a compaction aims to reach
 	// (S4); <=0 in config means defaultCompactTarget.
 	compactTarget float64
+	// reserveOutput is how many tokens to hold back for the model's own reply
+	// (N3). The budget covers the whole window, so a generation that is allowed
+	// to run to MaxTokens would otherwise push the request past it.
+	reserveOutput int
+	// reserveWarned makes the "unaffordable reservation" warning fire once, so
+	// the log does not fill on every budget query.
+	reserveWarned bool
+	// calibration is the observed/estimated ratio learned from real usage
+	// reports (N3), with its sample count. Zero samples means "not calibrated
+	// yet" and the default heuristic stands.
+	calibrationRatio   float64
+	calibrationSamples int
 }
 
 // NewContextManager creates a new ContextManager.
@@ -98,7 +127,10 @@ func EstimateTokens(messages []core.Message) int {
 func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.Message) ([]core.Message, error) {
 	// Layer 1: slim heavy tool output before any decision about summarising.
 	slimmed := cm.slimToolObservations(messages)
-	if EstimateTokens(slimmed) <= cm.maxTokens {
+	// The budget compared against is the INPUT budget (N3): the window minus
+	// the reply reservation, so a request that fits does not then overflow when
+	// the model generates up to MaxTokens.
+	if cm.estimateTokens(slimmed) <= cm.inputBudget() {
 		return slimmed, nil
 	}
 
@@ -193,7 +225,10 @@ func (cm *ContextManager) planCompaction(systemMsgs, convMsgs []core.Message, ex
 
 	targetTokens := 0
 	if !explicit && cm.compactTarget > 0 {
-		targetTokens = int(float64(cm.maxTokens) * cm.compactTarget)
+		// The target is a fraction of the INPUT budget, not of the raw window:
+		// compacting to 60% of a window that also has to hold the reply would
+		// leave the reply unaccounted for (N3).
+		targetTokens = int(float64(cm.inputBudget()) * cm.compactTarget)
 	}
 	if targetTokens <= 0 {
 		// Explicit request (or no target configured): drop the whole range.
@@ -202,9 +237,9 @@ func (cm *ContextManager) planCompaction(systemMsgs, convMsgs []core.Message, ex
 
 	// Minimal drop that reaches the target: each extra message summarised
 	// costs future context, so summarise only as far as needed (S4).
-	systemTokens := EstimateTokens(systemMsgs)
+	systemTokens := cm.estimateTokens(systemMsgs)
 	for drop := 1; drop <= len(candidates); drop++ {
-		projected := systemTokens + EstimateTokens(convMsgs[drop:]) + summaryEstimateTokens
+		projected := systemTokens + cm.estimateTokens(convMsgs[drop:]) + summaryEstimateTokens
 		if projected <= targetTokens {
 			return convMsgs[:drop], convMsgs[drop:]
 		}
