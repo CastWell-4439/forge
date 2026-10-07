@@ -61,6 +61,13 @@ type Agent struct {
 	// finished run is worth remembering.
 	MemoryWriteJudge harness.MemoryWriteJudge
 
+	// LessonSource is the read-only lessons channel (F3): lessons distilled by
+	// the control plane from finished runs. Nil = no lesson recall.
+	LessonSource core.LessonSource
+	// LessonFilter overrides the default read-side gate (deterministic, with
+	// the self-feedback guard). Nil = the default.
+	LessonFilter harness.LessonFilter
+
 	// HandlerMode selects the tool execution mode for this agent. Empty means
 	// real — the production default; tests and demos pass mock explicitly.
 	HandlerMode workers.HandlerMode
@@ -105,6 +112,18 @@ func WithMemoryWriteJudge(j harness.MemoryWriteJudge) Option {
 
 // WithMemory enables M5 short-term and long-term memory.
 func WithMemory(m core.MemoryStore) Option { return func(a *Agent) { a.Memory = m } }
+
+// WithLessonSource enables F3 lesson recall: the agent starts a run with what
+// the control plane learned from earlier runs. Read-only — the agent never
+// writes lessons (see core.LessonSource).
+func WithLessonSource(s core.LessonSource) Option {
+	return func(a *Agent) { a.LessonSource = s }
+}
+
+// WithLessonFilter overrides the default read-side gate on recalled lessons.
+func WithLessonFilter(f harness.LessonFilter) Option {
+	return func(a *Agent) { a.LessonFilter = f }
+}
 
 // WithCheckpoint enables M12 state persistence for crash recovery.
 func WithCheckpoint(c core.CheckpointStore) Option { return func(a *Agent) { a.Checkpoint = c } }
@@ -312,6 +331,12 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	}
 	if a.MemoryWriteJudge != nil {
 		loop.SetMemoryWriteJudge(a.MemoryWriteJudge)
+	}
+	if a.LessonSource != nil {
+		loop.SetLessonSource(a.LessonSource)
+	}
+	if a.LessonFilter != nil {
+		loop.SetLessonFilter(a.LessonFilter)
 	}
 
 	return loop, stop, nil

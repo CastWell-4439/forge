@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -114,6 +115,20 @@ func (idx *SQLiteIndex) Init(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);`,
 		`CREATE INDEX IF NOT EXISTS idx_errors_run_id ON errors(run_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_errors_fingerprint ON errors(fingerprint);`,
+		// Lessons were previously only reachable per-run (LessonsFile(runID)),
+		// so nothing could ask "what has been learned across runs?" — which is
+		// exactly the question F3's feedback channel needs answered.
+		`CREATE TABLE IF NOT EXISTS lessons (
+			id TEXT PRIMARY KEY,
+			run_id TEXT,
+			title TEXT,
+			category TEXT,
+			content TEXT,
+			created_at TEXT,
+			indexed_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_lessons_created_at ON lessons(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_lessons_category ON lessons(category);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
@@ -273,7 +288,69 @@ ON CONFLICT(id) DO UPDATE SET
 			return err
 		}
 	}
+	// Lessons are keyed by their own ID (not re-scoped to the run) so
+	// re-indexing a run updates the same rows rather than duplicating them.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM lessons WHERE run_id = ?`, run.ID); err != nil {
+		return err
+	}
+	for _, lesson := range artifacts.Lessons {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO lessons (id, run_id, title, category, content, created_at, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			lesson.ID, lesson.SourceRunID, lesson.Title, lesson.Category, lesson.Content,
+			formatTime(lesson.CreatedAt), formatTime(time.Now().UTC())); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+// SearchLessons returns lessons across ALL indexed runs, newest first, filtered
+// by a case-insensitive substring match on title/category/content.
+//
+// Substring matching is the deliberate starting point: it needs no index
+// training, works on the first run, and is explainable ("it matched the word
+// you asked about"). Semantic ranking would need every lesson embedded, which
+// is a separate capability with its own cost — the interface hides which one
+// answers, so upgrading later touches only this function.
+//
+// An empty query returns the newest lessons: "what have we learned lately" is
+// a legitimate question with no keywords to match.
+func (idx *SQLiteIndex) SearchLessons(ctx context.Context, query string, limit int) ([]model.Lesson, error) {
+	if limit <= 0 {
+		limit = 3
+	}
+	const cols = `id, COALESCE(run_id, ''), COALESCE(title, ''), COALESCE(category, ''), COALESCE(content, ''), COALESCE(created_at, '')`
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if strings.TrimSpace(query) == "" {
+		rows, err = idx.db.QueryContext(ctx,
+			`SELECT `+cols+` FROM lessons ORDER BY created_at DESC LIMIT ?`, limit)
+	} else {
+		needle := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
+		rows, err = idx.db.QueryContext(ctx,
+			`SELECT `+cols+` FROM lessons
+			 WHERE lower(title) LIKE ? OR lower(category) LIKE ? OR lower(content) LIKE ?
+			 ORDER BY created_at DESC LIMIT ?`,
+			needle, needle, needle, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.Lesson
+	for rows.Next() {
+		var lesson model.Lesson
+		var createdAt string
+		if err := rows.Scan(&lesson.ID, &lesson.SourceRunID, &lesson.Title, &lesson.Category, &lesson.Content, &createdAt); err != nil {
+			return nil, err
+		}
+		lesson.CreatedAt = parseIndexTime(createdAt)
+		out = append(out, lesson)
+	}
+	return out, rows.Err()
 }
 
 // ListRuns returns indexed runs in newest-first order.
@@ -315,6 +392,7 @@ type indexArtifacts struct {
 	ContextPacks        []model.ContextPack
 	Artifacts           []model.ArtifactRecord
 	StateClaims         []model.StateClaim
+	Lessons             []model.Lesson
 	WorldState          *model.WorldState
 	EvalResult          model.EvalResult
 }
@@ -346,6 +424,11 @@ func loadIndexArtifacts(runDir string) (indexArtifacts, error) {
 		return indexArtifacts{}, err
 	}
 	if err := readIndexJSONL(filepath.Join(runDir, "state_claims.jsonl"), &artifacts.StateClaims); err != nil {
+		return indexArtifacts{}, err
+	}
+	// lessons.jsonl lives beside the other per-run artifacts. A run that
+	// produced no lesson simply reads as an empty slice.
+	if err := readIndexJSONL(filepath.Join(runDir, "lessons.jsonl"), &artifacts.Lessons); err != nil {
 		return indexArtifacts{}, err
 	}
 	worldStatePath := filepath.Join(runDir, "world_state.yaml")
