@@ -18,6 +18,8 @@ import (
 //
 // Keep this sorted: the test compares sorted slices.
 var goldenAgentTools = []string{
+	"agent.pause",
+	"agent.query",
 	"ask.user",
 	"code.execute",
 	"context.compact",
