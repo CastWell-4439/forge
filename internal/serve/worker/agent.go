@@ -31,21 +31,25 @@ import (
 //	                            (default 0.7; off = no reminders)
 //	FORGE_CONTEXT_URGENT_AT      second, stronger line (default 0.9)
 //	FORGE_CONTEXT_KEEP_MESSAGES  trailing messages kept by a compaction (default 4)
+//	FORGE_CONTEXT_COMPACT_TARGET  fraction of the budget a compaction aims for
+//	                            (default 0.6; the static path summarises only as
+//	                            far as needed to reach it, so recent turns survive)
 const (
-	envAgentMode           = "FORGE_AGENT_MODE"
-	envAgentWorkspace      = "FORGE_AGENT_WORKSPACE"
-	envAgentGuard          = "FORGE_AGENT_GUARD"
-	envLLMToolMode         = "FORGE_LLM_TOOL_MODE"
-	envWebSearchProvider   = "FORGE_WEB_SEARCH_PROVIDER"
-	envWebSearchAPIKey     = "FORGE_WEB_SEARCH_API_KEY"
-	envWebSearchEndpoint   = "FORGE_WEB_SEARCH_ENDPOINT"
-	envWebFetchAllowPriv   = "FORGE_WEB_FETCH_ALLOW_PRIVATE"
-	envSkillpackDir        = "FORGE_SKILLPACK_DIR"
-	envContextRemindAt     = "FORGE_CONTEXT_REMIND_AT"
-	envContextUrgentAt     = "FORGE_CONTEXT_URGENT_AT"
-	envContextKeepMessages = "FORGE_CONTEXT_KEEP_MESSAGES"
-	defaultAgentWorkspace  = ".forge-workspace"
-	defaultSkillpackDir    = "configs/forgex/skills"
+	envAgentMode            = "FORGE_AGENT_MODE"
+	envAgentWorkspace       = "FORGE_AGENT_WORKSPACE"
+	envAgentGuard           = "FORGE_AGENT_GUARD"
+	envLLMToolMode          = "FORGE_LLM_TOOL_MODE"
+	envWebSearchProvider    = "FORGE_WEB_SEARCH_PROVIDER"
+	envWebSearchAPIKey      = "FORGE_WEB_SEARCH_API_KEY"
+	envWebSearchEndpoint    = "FORGE_WEB_SEARCH_ENDPOINT"
+	envWebFetchAllowPriv    = "FORGE_WEB_FETCH_ALLOW_PRIVATE"
+	envSkillpackDir         = "FORGE_SKILLPACK_DIR"
+	envContextRemindAt      = "FORGE_CONTEXT_REMIND_AT"
+	envContextUrgentAt      = "FORGE_CONTEXT_URGENT_AT"
+	envContextKeepMessages  = "FORGE_CONTEXT_KEEP_MESSAGES"
+	envContextCompactTarget = "FORGE_CONTEXT_COMPACT_TARGET"
+	defaultAgentWorkspace   = ".forge-workspace"
+	defaultSkillpackDir     = "configs/forgex/skills"
 )
 
 // registerAgent wires the tenth workflow worker: a task that runs the full
@@ -86,12 +90,14 @@ func registerAgent(r *worker.Registry) {
 		}),
 	}
 
-	// Water-line reminders and compaction keep-count (N2c): env lives here,
-	// the loop only ever sees numbers (0 = defaults, remind < 0 = off).
+	// Water-line reminders, compaction keep-count and compaction target (N2c
+	// S1/S4): env lives here, the loop only ever sees numbers (0 = defaults,
+	// remind < 0 = off).
 	opts = append(opts, agentcore.WithContextTuning(
 		envFraction(envContextRemindAt),
 		envFraction(envContextUrgentAt),
 		envInt(envContextKeepMessages),
+		envFraction(envContextCompactTarget),
 	))
 
 	// Tool output is untrusted input to the model: a fetched page can say
