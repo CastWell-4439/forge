@@ -95,9 +95,16 @@ type Response struct {
 }
 
 // ResponseError is the error object in a JSON-RPC 2.0 response.
+//
+// Data carries the structured detail some errors are defined to include — the
+// modern MCP specification, for instance, returns the server's supported
+// protocol versions inside UnsupportedProtocolVersionError's data. Dropping it
+// (as this type used to) would leave the client unable to act on an error whose
+// whole purpose is to tell it what to do next.
 type ResponseError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 func (e *ResponseError) Error() string {

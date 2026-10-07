@@ -95,6 +95,10 @@ func RegisterAll(registry *ToolRegistry, cfg HandlerConfig) error {
 		// agent_control.go).
 		{AgentPauseDef(), agentControlUnavailable(AgentPauseName)},
 		{AgentQueryDef(), agentControlUnavailable(AgentQueryName)},
+
+		// Tool discovery (1): intercepted by the loop, which owns the registry
+		// view the prompt was filtered from (see tool_search.go).
+		{ToolSearchDef(), toolSearchUnavailable(ToolSearchName)},
 	}
 
 	for _, r := range registrations {

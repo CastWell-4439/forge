@@ -43,14 +43,17 @@ type Agent struct {
 	ContextCompactTarget float64
 	// Authority is the ceiling runs may act under (L0..L4). Empty means
 	// core.DefaultAuthority. A deployment-level decision, read at assembly.
-	Authority  core.Authority
-	Budget     core.BudgetChecker
-	Retriever  core.Retriever
-	Memory     core.MemoryStore
-	Checkpoint core.CheckpointStore
-	Journal    harness.Journal
-	MCP        core.MCPManager
-	Verifier   core.Verifier
+	Authority core.Authority
+	// VisibleTools caps the tool descriptions injected into the prompt (C3).
+	// 0 = loop default; negative = no filtering.
+	VisibleTools int
+	Budget       core.BudgetChecker
+	Retriever    core.Retriever
+	Memory       core.MemoryStore
+	Checkpoint   core.CheckpointStore
+	Journal      harness.Journal
+	MCP          core.MCPManager
+	Verifier     core.Verifier
 
 	// CheckpointFailurePolicy decides whether a failed checkpoint write is fatal.
 	// Empty keeps the best-effort default.
@@ -180,6 +183,14 @@ func WithAuthority(authority core.Authority) Option {
 	return func(a *Agent) { a.Authority = authority }
 }
 
+// WithVisibleTools caps how many tool descriptions the prompt carries (C3).
+// 0 means the loop's default; negative disables filtering (every tool listed,
+// the pre-C3 behaviour). The native tools path ignores this: there the list is
+// an API parameter, so nothing needs trimming.
+func WithVisibleTools(limit int) Option {
+	return func(a *Agent) { a.VisibleTools = limit }
+}
+
 // WithContextTuning sets the water-line reminder thresholds (fractions of the
 // window; 0 = defaults; remind < 0 disables), the compaction keep-count and the
 // compaction target fraction (S1/S4). The wiring reads env; the loop only sees
@@ -307,6 +318,7 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		CompactKeepMessages:  a.CompactKeepMessages,
 		ContextCompactTarget: a.ContextCompactTarget,
 		Authority:            a.Authority,
+		VisibleTools:         a.VisibleTools,
 	}
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
 

@@ -57,6 +57,10 @@ type LoopConfig struct {
 	// so a lenient task cannot wave a destructive tool through. Empty means
 	// write, matching the tool-side default.
 	TaskEffect core.ToolEffect
+	// VisibleTools caps how many tool descriptions the prompt carries (C3).
+	// 0 means DefaultVisibleTools; negative disables filtering. The native
+	// tools path ignores this — there the list is an API parameter.
+	VisibleTools int
 }
 
 // DefaultLoopConfig returns config with sensible defaults.
@@ -127,6 +131,12 @@ type AgentLoop struct {
 	archive          *ContextArchive
 	remindedWarn     bool
 	remindedCritical bool
+
+	// promptContext and promptUsedTools are what C3's relevance ranking reads.
+	// They are refreshed as the run proceeds because the system prompt is
+	// rebuilt when the conversation changes.
+	promptContext   []core.Message
+	promptUsedTools map[string]bool
 }
 
 // NewAgentLoop creates a new ReAct loop.
@@ -449,6 +459,13 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	// run keeps refusing calls that already ran.
 	l.initProgressTracking(ledger)
 
+	// C3's relevance ranking reads these. They are refreshed at run start and
+	// after each step (below) because the system prompt is rebuilt as the
+	// conversation moves: an early task's vocabulary must not keep an irrelevant
+	// tool visible forever.
+	l.promptContext = messages
+	l.promptUsedTools = usedToolNames(ledger)
+
 	// --- Long-term memory recall (M5, optional) ---
 	// A fresh run brings a fresh prompt, so this is where the agent "remembers
 	// what it learned before". Knowledge retrieval stays agentic (the tool); a
@@ -750,6 +767,38 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 		// --- Non-terminal: Agent wants to call a tool ---
 		if agentResp.IsToolCall() {
 			toolName := agentResp.Action.Name
+
+			// Tool discovery (C3): the prompt lists a relevant subset, so the
+			// model needs a way to find what it cannot see. Answered from the
+			// registry, like the context tools — no handler involved.
+			if toolName == ToolSearchToolName {
+				messages = append(messages, core.Message{
+					Role:    "assistant",
+					Content: marshalAssistantTurn(agentResp),
+				})
+				toolResult := l.runToolSearch(agentResp.Action.Params)
+				messages = append(messages, core.Message{
+					Role:    "user",
+					Content: formatObservation(toolName, toolResult),
+				})
+				steps = append(steps, StepRecord{
+					Step:    step,
+					Thought: agentResp.Thought,
+					Action:  agentResp.Action,
+					Result:  toolResult,
+				})
+				if jerr := l.journalAppend(ctx, RunEvent{
+					RunID: sessionID, Type: EventStepCompleted, Step: step,
+					TS: time.Now().UTC(), Data: map[string]any{"turns": messages[journalBase:]},
+				}); jerr != nil {
+					return nil, jerr
+				}
+				journalBase = len(messages)
+				if err := l.saveCheckpoint(ctx, sessionID, step, messages, ledger); err != nil {
+					return nil, err
+				}
+				continue
+			}
 
 			// Pause is a loop meta-operation (N4): the model decided it needs a
 			// human before going further. Reported as its own Reason rather
@@ -1122,7 +1171,10 @@ func (l *AgentLoop) buildSystemPrompt() string {
 Think step by step, and prefer acting over describing.`
 	}
 
-	toolList := l.router.ListTools()
+	// C3: the prompt carries a RELEVANT subset, not every tool, and says how
+	// many are hidden so the cutoff is discoverable rather than silent.
+	visible, hidden := l.selectVisibleTools(taskTextForPrompt(l.promptContext), l.promptUsedTools)
+	toolList := renderToolList(visible, hidden)
 
 	schema := structured.FormatForLLM(structured.GenerateSchema(structured.AgentResponse{}))
 

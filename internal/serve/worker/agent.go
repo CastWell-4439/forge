@@ -50,6 +50,7 @@ const (
 	envContextKeepMessages  = "FORGE_CONTEXT_KEEP_MESSAGES"
 	envContextCompactTarget = "FORGE_CONTEXT_COMPACT_TARGET"
 	envAgentAuthority       = "FORGE_AGENT_AUTHORITY"
+	envAgentVisibleTools    = "FORGE_AGENT_VISIBLE_TOOLS"
 	defaultAgentWorkspace   = ".forge-workspace"
 	defaultSkillpackDir     = "configs/forgex/skills"
 )
@@ -108,6 +109,12 @@ func registerAgent(r *worker.Registry) {
 	// granting itself permission to delete. Unset means L2 (read-only without
 	// asking); a tool whose effect exceeds it pauses the run for a human.
 	opts = append(opts, agentcore.WithAuthority(agentAuthority()))
+
+	// C3: how many tool descriptions the prompt carries. The prompt path used
+	// to list every tool on every turn; this caps it to a relevant subset and
+	// makes the cutoff discoverable through tool.search. 0 = the loop default,
+	// negative = no filtering (the pre-C3 behaviour).
+	opts = append(opts, agentcore.WithVisibleTools(envInt(envAgentVisibleTools)))
 
 	// F3: lessons from the control plane, when the operator turns the channel
 	// on. Default off — a cross-plane feed is opt-in — and a missing index

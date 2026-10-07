@@ -109,6 +109,21 @@ type MCPToolDef struct {
 	// tools/list. Dropping it left bridged tools with no parameter
 	// information, so the model had to guess argument names and types.
 	InputSchema map[string]interface{} `json:"input_schema,omitempty"`
+	// Annotations is the server's declared behaviour (readOnlyHint,
+	// destructiveHint, ...). It is a HINT, not a guarantee — the bridge maps
+	// it to ToolDef.Effect in the cautious direction only.
+	Annotations *MCPToolAnnotations `json:"annotations,omitempty"`
+}
+
+// MCPToolAnnotations mirrors the MCP specification's tool annotations.
+// Pointers distinguish "the server said false" from "the server said nothing",
+// which is the difference between a declared write and an undeclared tool.
+type MCPToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
 }
 
 // Tool call statuses recorded in a checkpoint's side-effect ledger.

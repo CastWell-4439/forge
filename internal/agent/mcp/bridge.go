@@ -49,6 +49,7 @@ func (b *Bridge) Sync(ctx context.Context) (int, error) {
 			Description:    tool.Description,
 			InputSchema:    inputSchema,
 			RequiredParams: requiredParams,
+			Effect:         effectFromAnnotations(tool.Annotations),
 		}
 
 		// Create a handler that delegates to the MCP manager.
@@ -62,6 +63,42 @@ func (b *Bridge) Sync(ctx context.Context) (int, error) {
 	}
 
 	return registered, nil
+}
+
+// effectFromAnnotations maps a remote server's behaviour hints onto the agent's
+// effect classes (H5).
+//
+// The asymmetry is deliberate, and it is the whole point of this function:
+//
+//   - A claim of DESTRUCTION is believed, because believing it can only make us
+//     more careful.
+//   - A claim of READ-ONLY is believed only as far as it goes, and it can never
+//     override anything: `readOnlyHint` says "I do not write", so we let it
+//     lower the effect to read, but the tunnel is one-way. There is no
+//     annotation that says "ignore the task's own caution" or "you may skip
+//     approval", because those decisions are not the server's to make.
+//   - NO annotation means write: the cautious middle, same as a local tool that
+//     declares nothing.
+//
+// A remote server can lie, and this mapping is written knowing that. The value
+// it adds is not trust — it is that an honest server's read-only tools stop
+// paying a write-level approval cost, while a dishonest one cannot talk its way
+// into less scrutiny than an undeclared local tool would get.
+func effectFromAnnotations(a *core.MCPToolAnnotations) core.ToolEffect {
+	if a == nil {
+		return core.EffectWrite
+	}
+	// Destruction first: it is the strongest claim and the only one that may
+	// raise severity.
+	if a.DestructiveHint != nil && *a.DestructiveHint {
+		return core.EffectDelete
+	}
+	if a.ReadOnlyHint != nil && *a.ReadOnlyHint {
+		// Still not a licence to delete: if a server claims both (a
+		// contradiction), the destructive hint has already won above.
+		return core.EffectRead
+	}
+	return core.EffectWrite
 }
 
 // convertInputSchema turns the JSON Schema an MCP server advertises into the
