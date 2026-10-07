@@ -44,6 +44,9 @@ type Agent struct {
 	// OutputReserve is how many tokens to hold back for the model's reply (N3).
 	// Zero means no reservation.
 	OutputReserve int
+	// Subagent configures delegation (N5). The zero value is Mode "off": no
+	// subagent tool is registered and nothing about this agent changes.
+	Subagent core.SubagentConfig
 	// Authority is the ceiling runs may act under (L0..L4). Empty means
 	// core.DefaultAuthority. A deployment-level decision, read at assembly.
 	Authority core.Authority
@@ -215,6 +218,16 @@ func WithOutputReserve(tokens int) Option {
 	return func(a *Agent) { a.OutputReserve = tokens }
 }
 
+// WithSubagent configures delegation (N5).
+//
+// The zero value disables it: a deployment that does not ask for subagents gets
+// no subagent tool, no schema cost and no prompt cost. That default is the same
+// choice the webhook listener and the Kueue queue make — not configuring a
+// capability must not enable it.
+func WithSubagent(cfg core.SubagentConfig) Option {
+	return func(a *Agent) { a.Subagent = core.NormalizeSubagentConfig(cfg) }
+}
+
 // WithVerifier enables D5 self-verification loop.
 func WithVerifier(v core.Verifier) Option { return func(a *Agent) { a.Verifier = v } }
 
@@ -294,6 +307,30 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		return nil, nil, fmt.Errorf("register tools: %w", err)
 	}
 
+	// 1b. Delegation (N5): register the subagent tool when the deployment asks
+	// for it. The child loop is built by the SAME assembly path as the parent
+	// (see childFactory below), so a child gets the same tools, guards and MCP
+	// bridge — a child that silently lacked them would be a different agent, and
+	// the model would have no way to know.
+	//
+	// The runner is created here rather than per run because its concurrency
+	// limit is a property of this parent: MaxConcurrent bounds how many children
+	// ONE parent runs at once, which is the resource the limit protects.
+	subCfg := core.NormalizeSubagentConfig(a.Subagent)
+	var subRunner *harness.SubagentRunnerImpl
+	if subCfg.Mode.Enabled() {
+		subRunner = harness.NewSubagentRunner(harness.SubagentRunnerConfig{
+			Config:  subCfg,
+			Factory: a.childFactory(registry, cfg, subCfg),
+		})
+		if subRunner != nil {
+			handler := workers.NewSubagentHandler(subRunner, subCfg)
+			if err := registry.Register(workers.SubagentDef(subCfg), handler.Handle); err != nil {
+				return nil, nil, fmt.Errorf("register %s: %w", workers.SubagentName, err)
+			}
+		}
+	}
+
 	stop := func() {}
 
 	// 2. Start MCP servers and bridge their tools into the registry.
@@ -314,7 +351,23 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 
 	// 3. Build the AgentLoop.
 	router := harness.NewToolRouter(registry)
-	loopCfg := harness.LoopConfig{
+	loopCfg := a.baseLoopConfig()
+	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
+
+	// 4. Inject optional modules.
+	a.applyLoopDeps(loop)
+
+	return loop, stop, nil
+}
+
+// baseLoopConfig builds the loop configuration shared by a parent and its
+// children (N5).
+//
+// It is one function so the two cannot drift: a child assembled with a
+// hand-copied config would silently lose whichever knob was added last, and
+// nothing would report it.
+func (a *Agent) baseLoopConfig() harness.LoopConfig {
+	return harness.LoopConfig{
 		MaxSteps: a.Config.MaxSteps,
 		// There is exactly one context-budget default. This used to be hardcoded
 		// to 128000 while harness.DefaultMaxContextTokens (and every caller that
@@ -332,9 +385,15 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 		Authority:            a.Authority,
 		VisibleTools:         a.VisibleTools,
 	}
-	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
+}
 
-	// 4. Inject optional modules.
+// applyLoopDeps installs the optional modules onto a loop.
+//
+// Shared with children for the same reason as baseLoopConfig: the guards and
+// stores a parent has are the ones a child must have too. A child that skipped
+// the output guard would be a hole in the deployment's screening, and the
+// parent could not tell.
+func (a *Agent) applyLoopDeps(loop *harness.AgentLoop) {
 	if a.InputGuard != nil {
 		loop.SetInputGuard(a.InputGuard)
 	}
@@ -374,6 +433,4 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	if a.LessonFilter != nil {
 		loop.SetLessonFilter(a.LessonFilter)
 	}
-
-	return loop, stop, nil
 }
