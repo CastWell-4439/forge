@@ -3,6 +3,7 @@ package planning
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -291,8 +292,20 @@ func (v *DAGValidator) validateParams(dag *coordinator.DAG) []ValidationIssue {
 }
 
 // checkParamTypes validates parameter types against the tool's InputSchema.
+//
+// Parameters are visited in sorted order rather than map order: Go randomises
+// iteration, so the same task would produce its issues in a different sequence
+// on every run. Validation output is compared between runs (and shown to a
+// model), so "same input, same report" has to hold.
 func (v *DAGValidator) checkParamTypes(taskName string, task *coordinator.TaskDef, toolDef *core.ToolDef, issues *[]ValidationIssue) {
-	for paramName, paramVal := range task.Params {
+	paramNames := make([]string, 0, len(task.Params))
+	for paramName := range task.Params {
+		paramNames = append(paramNames, paramName)
+	}
+	sort.Strings(paramNames)
+
+	for _, paramName := range paramNames {
+		paramVal := task.Params[paramName]
 		schemaDef, ok := toolDef.InputSchema[paramName]
 		if !ok {
 			// Unknown parameter —warning, not error.
