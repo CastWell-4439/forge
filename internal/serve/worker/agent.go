@@ -100,6 +100,11 @@ func registerAgent(r *worker.Registry) {
 		envFraction(envContextCompactTarget),
 	))
 
+	// F3: lessons from the control plane, when the operator turns the channel
+	// on. Default off — a cross-plane feed is opt-in — and a missing index
+	// degrades to "no lessons", never to a failed registration.
+	opts = applyLessonsFeed(opts)
+
 	// Tool output is untrusted input to the model: a fetched page can say
 	// "ignore your instructions", and the observation is delivered as a
 	// user-role message. Screening is therefore ON by default — an agent that
