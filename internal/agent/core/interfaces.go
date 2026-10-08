@@ -262,9 +262,30 @@ type Document struct {
 }
 
 // MemoryEntry represents a long-term memory record.
+//
+// The first four fields are the original record. The rest are the governance
+// metadata (see evidence.go): without them, recall cannot tell a human-confirmed
+// claim from a self-distilled one, cannot tell which of two entries speaks
+// about the same subject, and cannot tell which is the older observation.
+//
+// Every added field is optional. An entry written before they existed reads as
+// "unknown source, default confidence, observed when written", which is exactly
+// the trust it deserves — the point is to stop treating unknown as certain, not
+// to retroactively promote or demote anything.
 type MemoryEntry struct {
 	ID        string    `json:"id"`
 	Content   string    `json:"content"`
 	Category  string    `json:"category"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Source records who produced this memory, with a kind prefix
+	// (run:/lesson:/human:). Empty means a producer that did not say.
+	Source MemorySource `json:"source,omitempty"`
+	// Confidence is the producer's trust in the claim, 0..1. Zero means unset
+	// and reads as DefaultConfidence — so the scale's bottom is written
+	// explicitly (0.01) by a producer that means "worthless".
+	Confidence float64 `json:"confidence,omitempty"`
+	// ObservedAt is when the claim was true, which is not the same as when it
+	// was written. Zero falls back to CreatedAt.
+	ObservedAt time.Time `json:"observed_at,omitempty"`
 }
