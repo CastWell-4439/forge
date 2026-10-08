@@ -125,6 +125,19 @@ type Assertion struct {
 	Source string
 	// Span is the matched text as it appeared, for display.
 	Span string
+	// Subject is what the value is ABOUT, when the text says so: the software a
+	// version belongs to, or the service a hostname names.
+	//
+	// It exists because a bare version number means nothing. "v2.1" could belong
+	// to any tool in the stack, so checking it against the evidence would
+	// compare unrelated things and report noise. With the subject attached,
+	// verification can ask the only answerable question: does the evidence show
+	// a DIFFERENT version OF THE SAME THING.
+	//
+	// Empty means the text did not name a subject. A subjectless assertion is
+	// still extracted (a review can show it), but it is not checkable, and
+	// verification skips it rather than guessing.
+	Subject string
 }
 
 // ExtractionSource names where an assertion came from.
@@ -173,6 +186,16 @@ func ExtractAssertionsStatic(text string) []Assertion {
 		seen[key] = true
 		out = append(out, Assertion{Kind: kind, Value: value, Source: ExtractionRule, Span: span})
 	}
+	addWithSubject := func(kind, value, span, subject string) {
+		key := kind + "\x00" + subject + "\x00" + value
+		if value == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, Assertion{
+			Kind: kind, Value: value, Source: ExtractionRule, Span: span, Subject: subject,
+		})
+	}
 
 	// Languages: whole-word matches against the closed list.
 	for _, lang := range staticLanguageNames {
@@ -190,20 +213,30 @@ func ExtractAssertionsStatic(text string) []Assertion {
 		}
 	}
 
-	// Versions: a leading v or a bare x.y[.z] against a version-ish word.
-	for _, field := range strings.Fields(text) {
+	// Versions: a leading v or a dotted number, WITH the word before it as the
+	// subject when that word names something.
+	//
+	// The subject is what makes a version checkable. "go 1.26" can be compared
+	// against evidence about go; a bare "1.26" cannot be compared against
+	// anything without guessing what it belongs to.
+	fields := strings.Fields(text)
+	for i, field := range fields {
 		cleaned := strings.Trim(field, ".,;:!?\"'()`")
-		if isVersionToken(cleaned) {
-			add("version", strings.ToLower(cleaned), cleaned)
+		if !isVersionToken(cleaned) {
+			continue
 		}
+		subject := versionSubject(fields, i)
+		addWithSubject("version", strings.ToLower(cleaned), cleaned, subject)
 	}
 
-	// Services: a host:port or a known service word.
-	for _, field := range strings.Fields(text) {
+	// Services: a host:port or a dotted hostname, with the name before it as
+	// the subject when the text supplies one.
+	for i, field := range fields {
 		cleaned := strings.Trim(field, ".,;:!?\"'()`")
-		if isServiceToken(cleaned) {
-			add("service", strings.ToLower(cleaned), cleaned)
+		if !isServiceToken(cleaned) {
+			continue
 		}
+		addWithSubject("service", strings.ToLower(cleaned), cleaned, serviceSubject(fields, i))
 	}
 
 	return out
@@ -400,6 +433,92 @@ type AssertionExtractor interface {
 	// ExtractionModel. An error means the pass produced nothing usable; the
 	// caller falls back to the static pass alone and does not fail the review.
 	ExtractAssertions(ctx context.Context, text string) ([]Assertion, error)
+}
+
+// softwareNames is the vocabulary a version's subject is drawn from.
+//
+// A closed list for the same reason the language list is closed: "the word
+// before the number" is usually not a software name ("is 1.26", "about 2.0"),
+// and accepting any word would attach versions to articles and prepositions.
+// The list holds the tools this kind of memory actually names; anything else
+// leaves the assertion subjectless, which makes it unverifiable rather than
+// wrongly verifiable.
+var softwareNames = []string{
+	"go", "golang", "python", "node", "nodejs", "npm", "pnpm", "yarn", "java", "jdk", "jre",
+	"rust", "cargo", "ruby", "php", "dotnet", "kotlin", "swift", "scala", "perl",
+	"postgres", "postgresql", "pg", "mysql", "mariadb", "sqlite", "redis", "mongo", "mongodb",
+	"kafka", "nats", "rabbitmq", "etcd", "consul", "zookeeper",
+	"docker", "kubernetes", "k8s", "helm", "terraform", "ansible", "vagrant",
+	"nginx", "apache", "caddy", "envoy", "traefik",
+	"react", "vue", "angular", "svelte", "next", "nuxt", "vite", "webpack", "esbuild",
+	"django", "flask", "fastapi", "rails", "spring", "gin", "echo", "fiber",
+	"protobuf", "buf", "grpc", "graphql", "openapi",
+}
+
+// versionSubject finds the software a version number belongs to.
+//
+// It looks at the words immediately before the version, skipping connectives
+// ("version", "v", "at", "is"), and accepts the first word that is a known
+// software name. Scanning a couple of words rather than exactly one is what
+// makes "go version 1.26" and "go 1.26" both work; stopping at the first
+// non-name word is what keeps "the retry limit is 3" from claiming a subject.
+func versionSubject(fields []string, idx int) string {
+	for back := 1; back <= 3 && idx-back >= 0; back++ {
+		word := normalizeSubjectWord(fields[idx-back])
+		if word == "" || isConnective(word) {
+			continue
+		}
+		if isSoftwareName(word) {
+			return word
+		}
+		// The first non-connective word that is not a software name ends the
+		// search: the version does not belong to something three words away.
+		return ""
+	}
+	return ""
+}
+
+// serviceSubject finds the name a hostname is introduced by.
+//
+// It is the same shape as versionSubject and exists for the same reason: a
+// hostname alone is checkable by the path-style rule (was it reachable), but
+// naming the service makes the report readable and lets a reviewer match it to
+// their deployment vocabulary.
+func serviceSubject(fields []string, idx int) string {
+	for back := 1; back <= 2 && idx-back >= 0; back++ {
+		word := normalizeSubjectWord(fields[idx-back])
+		if word == "" || isConnective(word) {
+			continue
+		}
+		return word
+	}
+	return ""
+}
+
+// normalizeSubjectWord lowercases a word and strips punctuation.
+func normalizeSubjectWord(raw string) string {
+	return strings.ToLower(strings.Trim(raw, ".,;:!?\"'()`[]{}"))
+}
+
+// isConnective reports whether a word merely links a name to its value.
+func isConnective(word string) bool {
+	switch word {
+	case "version", "ver", "v", "at", "is", "on", "in", "the", "a", "an", "to", "for",
+		"runs", "running", "using", "uses", "use", "with", "of", "and", "or", "=", ":":
+		return true
+	default:
+		return false
+	}
+}
+
+// isSoftwareName reports whether a word is in the closed software vocabulary.
+func isSoftwareName(word string) bool {
+	for _, name := range softwareNames {
+		if name == word {
+			return true
+		}
+	}
+	return false
 }
 
 // SortedCandidates orders proposals for review: strongest first, then by id so

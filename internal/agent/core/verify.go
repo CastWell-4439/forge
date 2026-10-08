@@ -61,6 +61,15 @@ type VerificationConfig struct {
 	// MaxCalls caps how many tool calls are examined, newest first. Verification
 	// asks about the CURRENT world, so old evidence is worse than no evidence.
 	MaxCalls int
+	// MinVersionEvidence is how many times the evidence must show a different
+	// version of the claimed software before it counts. Text evidence is weaker
+	// than a file extension, so it takes more of it.
+	MinVersionEvidence int
+	// MinServiceAttempts is how many failed attempts at the claimed service are
+	// needed. It is separate from the language threshold because a single
+	// connection failure is as likely to be a transient network problem as a
+	// wrong memory.
+	MinServiceAttempts int
 	// Now is the reference time, injected for deterministic tests.
 	Now time.Time
 }
@@ -68,8 +77,10 @@ type VerificationConfig struct {
 // DefaultVerificationConfig returns the standard thresholds.
 func DefaultVerificationConfig() VerificationConfig {
 	return VerificationConfig{
-		MinEvidence: 5,
-		MaxCalls:    500,
+		MinEvidence:        5,
+		MaxCalls:           500,
+		MinVersionEvidence: 2,
+		MinServiceAttempts: 2,
 	}
 }
 
@@ -80,6 +91,12 @@ func (c VerificationConfig) normalize() VerificationConfig {
 	}
 	if c.MaxCalls <= 0 {
 		c.MaxCalls = d.MaxCalls
+	}
+	if c.MinVersionEvidence <= 0 {
+		c.MinVersionEvidence = d.MinVersionEvidence
+	}
+	if c.MinServiceAttempts <= 0 {
+		c.MinServiceAttempts = d.MinServiceAttempts
 	}
 	if c.Now.IsZero() {
 		c.Now = time.Now()
@@ -170,6 +187,18 @@ type evidenceIndex struct {
 	pathRuns map[string]string
 	// pathError is one error message per path, to show what went wrong.
 	pathError map[string]string
+	// versionsBySubject maps a software name to the versions seen beside it in
+	// tool output. Pairing is what makes a version checkable: a bare number
+	// could belong to anything.
+	versionsBySubject map[string]map[string]int
+	// versionRuns records a run id per subject:version pair.
+	versionRuns map[string]string
+	// serviceAttempts and serviceSuccesses count how each host fared.
+	serviceAttempts  map[string]int
+	serviceSuccesses map[string]int
+	// serviceRuns records a run id per service, and serviceError one message.
+	serviceRuns  map[string]string
+	serviceError map[string]string
 }
 
 // indexEvidence builds the lookup tables in one pass over the calls.
@@ -183,18 +212,54 @@ type evidenceIndex struct {
 // is the useful version of this lesson.
 func indexEvidence(calls []EvidenceToolCall) evidenceIndex {
 	idx := evidenceIndex{
-		languageCounts: map[string]int{},
-		languageRuns:   map[string]string{},
-		pathAttempts:   map[string]int{},
-		pathSuccesses:  map[string]int{},
-		pathRuns:       map[string]string{},
-		pathError:      map[string]string{},
+		languageCounts:    map[string]int{},
+		languageRuns:      map[string]string{},
+		pathAttempts:      map[string]int{},
+		pathSuccesses:     map[string]int{},
+		pathRuns:          map[string]string{},
+		pathError:         map[string]string{},
+		versionsBySubject: map[string]map[string]int{},
+		versionRuns:       map[string]string{},
+		serviceAttempts:   map[string]int{},
+		serviceSuccesses:  map[string]int{},
+		serviceRuns:       map[string]string{},
+		serviceError:      map[string]string{},
 	}
 
 	languageAt := map[string]time.Time{}
 	pathAt := map[string]time.Time{}
+	versionAt := map[string]time.Time{}
+	serviceAt := map[string]time.Time{}
 
 	for _, call := range calls {
+		// Version and service evidence comes from the call's flattened text,
+		// because a version or a hostname can appear anywhere in a worker's
+		// payload and there is no field to read it from.
+		for _, pair := range versionPairs(call.Text) {
+			if idx.versionsBySubject[pair.Subject] == nil {
+				idx.versionsBySubject[pair.Subject] = map[string]int{}
+			}
+			idx.versionsBySubject[pair.Subject][pair.Version]++
+			key := pair.Subject + ":" + pair.Version
+			if prev, seen := versionAt[key]; !seen || call.At.After(prev) {
+				versionAt[key] = call.At
+				idx.versionRuns[key] = call.RunID
+			}
+		}
+
+		for _, svc := range serviceTokens(call.Text) {
+			idx.serviceAttempts[svc]++
+			if !call.Failed {
+				idx.serviceSuccesses[svc]++
+			} else if _, seen := idx.serviceError[svc]; !seen {
+				idx.serviceError[svc] = call.Error
+			}
+			if prev, seen := serviceAt[svc]; !seen || call.At.After(prev) {
+				serviceAt[svc] = call.At
+				idx.serviceRuns[svc] = call.RunID
+			}
+		}
+
 		for _, path := range call.Paths {
 			lowered := strings.ToLower(path)
 
@@ -227,6 +292,57 @@ func indexEvidence(calls []EvidenceToolCall) evidenceIndex {
 	return idx
 }
 
+// versionPair is one software-version pairing found in evidence text.
+type versionPair struct {
+	Subject string
+	Version string
+}
+
+// versionPairs finds "software version" pairs in free text.
+//
+// The scan mirrors the extractor's: a version token whose preceding word is a
+// known software name. Running the SAME rule on both sides is what makes the
+// comparison meaningful — if the extractor attached a subject by one rule and
+// the evidence indexer used another, the two would disagree about what a
+// version belongs to, and every comparison would be between unrelated things.
+func versionPairs(text string) []versionPair {
+	fields := strings.Fields(text)
+	var out []versionPair
+	for i, field := range fields {
+		cleaned := strings.Trim(field, ".,;:!?\"'()`[]{}")
+		if !isVersionToken(cleaned) {
+			continue
+		}
+		if subject := versionSubject(fields, i); subject != "" {
+			out = append(out, versionPair{Subject: subject, Version: strings.ToLower(cleaned)})
+		}
+	}
+	return out
+}
+
+// serviceTokens finds host-shaped tokens in free text.
+//
+// A token is a service if it has a port, a scheme, or a dotted hostname shape.
+// The rule is the extractor's, for the same reason versionPairs uses the
+// extractor's.
+func serviceTokens(text string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, field := range strings.Fields(text) {
+		cleaned := strings.Trim(field, ".,;:!?\"'()`[]{}")
+		if !isServiceToken(cleaned) {
+			continue
+		}
+		lowered := strings.ToLower(cleaned)
+		if seen[lowered] {
+			continue
+		}
+		seen[lowered] = true
+		out = append(out, lowered)
+	}
+	return out
+}
+
 // checkAssertion decides whether one claim disagrees with the evidence.
 //
 // It returns no conflict when the evidence is silent or agrees. Both outcomes
@@ -238,11 +354,123 @@ func checkAssertion(entryID string, assertion Assertion, idx evidenceIndex, cfg 
 		return checkLanguage(entryID, assertion, idx, cfg)
 	case "path":
 		return checkPath(entryID, assertion, idx, cfg)
+	case "version":
+		return checkVersion(entryID, assertion, idx, cfg)
+	case "service":
+		return checkService(entryID, assertion, idx, cfg)
 	default:
-		// Services and versions are checked by the next pass; until then a
-		// claim of an unhandled kind is not a disagreement, it is unanswered.
+		// A claim kind with no rule is unanswered, not a disagreement.
 		return Conflict{}, false
 	}
+}
+
+// checkVersion reports when the evidence shows a DIFFERENT version of the same
+// software.
+//
+// Both halves matter. Comparing version numbers without a subject would flag
+// "v2.1" against any version anywhere in the logs, which is noise; requiring
+// the subject to appear next to a different version asks the only answerable
+// question. An assertion with no subject is skipped rather than guessed at —
+// the extractor refused to invent one, and verification must not undo that.
+func checkVersion(entryID string, assertion Assertion, idx evidenceIndex, cfg VerificationConfig) (Conflict, bool) {
+	subject := assertion.Subject
+	if subject == "" {
+		return Conflict{}, false
+	}
+	claimed := assertion.Value
+
+	observed := idx.versionsBySubject[subject]
+	if len(observed) == 0 {
+		return Conflict{}, false
+	}
+
+	best, bestCount := "", 0
+	for version, count := range observed {
+		if version == claimed {
+			// The claimed version IS present: the memory agrees with the
+			// evidence, whatever else also appears.
+			return Conflict{}, false
+		}
+		if count > bestCount || (count == bestCount && version < best) {
+			best, bestCount = version, count
+		}
+	}
+	if bestCount < cfg.MinVersionEvidence {
+		return Conflict{}, false
+	}
+
+	return Conflict{
+		EntryID:    entryID,
+		Kind:       "version",
+		Claimed:    subject + " " + claimed,
+		Observed:   subject + " " + best,
+		Evidence:   "run " + idx.versionRuns[subject+":"+best] + ", " + itoa(bestCount) + " occurrence(s) in tool output",
+		Count:      bestCount,
+		Confidence: versionConfidence(bestCount, cfg.MinVersionEvidence),
+	}, true
+}
+
+// versionConfidence stays below the language ceiling: a version seen in free
+// text is weaker evidence than a file extension, because the text may describe
+// something other than the project's own toolchain.
+func versionConfidence(count, minEvidence int) float64 {
+	conf := 0.5 + 0.05*float64(count-minEvidence)
+	if conf > 0.7 {
+		conf = 0.7
+	}
+	if conf < 0.5 {
+		conf = 0.5
+	}
+	return conf
+}
+
+// checkService reports when the evidence tried the claimed service and always
+// failed.
+//
+// The shape mirrors the path rule, and for the same reason: "the evidence never
+// mentions this service" would flag almost every service claim, because a
+// project connects to many things and its runs touch few of them. An attempt
+// that failed is different — something reached for the service the memory
+// names, and the world refused.
+//
+// What it deliberately does NOT do is compare service NAMES. A project using
+// several services is ordinary, so "the evidence shows a different host" is not
+// a disagreement; only unreachability is.
+func checkService(entryID string, assertion Assertion, idx evidenceIndex, cfg VerificationConfig) (Conflict, bool) {
+	claimed := strings.ToLower(assertion.Value)
+
+	attempts, ok := idx.serviceAttempts[claimed]
+	if !ok || attempts == 0 {
+		return Conflict{}, false
+	}
+	if idx.serviceSuccesses[claimed] > 0 {
+		// It answered at least once, so the service exists.
+		return Conflict{}, false
+	}
+	if attempts < cfg.MinServiceAttempts {
+		// A single failure is as likely to be a transient network problem as a
+		// wrong memory, so the threshold is separate from the language one.
+		return Conflict{}, false
+	}
+
+	observed := "unreachable"
+	if msg := idx.serviceError[claimed]; msg != "" {
+		observed = "always failed: " + truncate(msg, 80)
+	}
+	conf := 0.5 + 0.05*float64(attempts-cfg.MinServiceAttempts)
+	if conf > 0.7 {
+		conf = 0.7
+	}
+
+	return Conflict{
+		EntryID:    entryID,
+		Kind:       "service",
+		Claimed:    assertion.Value,
+		Observed:   observed,
+		Evidence:   "run " + idx.serviceRuns[claimed] + ", " + itoa(attempts) + " failed attempt(s), 0 successes",
+		Count:      attempts,
+		Confidence: conf,
+	}, true
 }
 
 // checkLanguage reports when the project's files disagree with the claimed
