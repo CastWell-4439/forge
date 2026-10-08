@@ -80,6 +80,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "policy: %v\n", err)
 			os.Exit(1)
 		}
+	case "memory":
+		if err := runMemory(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "memory: %v\n", err)
+			os.Exit(1)
+		}
 	case "lessons":
 		if err := runLessons(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "lessons: %v\n", err)
