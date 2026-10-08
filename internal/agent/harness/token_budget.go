@@ -59,6 +59,11 @@ func (cm *ContextManager) ObserveUsage(estimated, observed int) {
 		return
 	}
 	cm.calibrationRatio = cm.calibrationRatio*(1-calibrationSmoothing) + ratio*calibrationSmoothing
+	// The same observation goes to the shared store, so the next run starts
+	// from it instead of re-learning. Both are updated: this run keeps using
+	// its own value (so its behaviour does not change mid-run because another
+	// run observed something), while the store accumulates for the next one.
+	cm.publishToStore(estimated, observed)
 }
 
 // Calibration reports the learned ratio and how many samples back it.
@@ -90,11 +95,19 @@ func (cm *ContextManager) calibrated(raw int) int {
 	return int(adjusted)
 }
 
-// estimateTokens is the calibrated form of EstimateTokens for this manager.
+// estimateTokens is the form of EstimateTokens the manager's decisions use:
+// anchored to the provider's last real count when one is available, then
+// calibrated.
+//
 // Callers inside the manager use it; EstimateTokens itself stays a pure
-// function (no hidden state) so it remains testable and predictable.
+// function (no hidden state) so it remains testable and predictable — the
+// anchor lives here, in the manager, and is visible through HasAnchor.
 func (cm *ContextManager) estimateTokens(messages []core.Message) int {
-	return cm.calibrated(EstimateTokens(messages))
+	if cm == nil {
+		return EstimateTokens(messages)
+	}
+	base, delta := cm.anchoredEstimate(messages)
+	return cm.calibrated(base + delta)
 }
 
 // SetOutputReserve tells the manager how many tokens to hold back for the

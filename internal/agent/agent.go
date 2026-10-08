@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/harness"
@@ -53,6 +54,14 @@ type Agent struct {
 	// ToolSlim is the S2 slimming policy: which head/tail split applies to which
 	// tool (zero value = the historical profile).
 	ToolSlim core.ToolSlimConfig
+	// calibration remembers the token-estimate ratio per model ACROSS runs. The
+	// ratio describes the provider's tokenizer, not the conversation, so
+	// re-learning it every run meant a short run never learned it at all. It is
+	// created on first use when nil; it is per-Agent (not package-level) because
+	// two agents may point at different endpoints.
+	calibration *harness.CalibrationStore
+	// calibrationOnce guards lazy creation of the store.
+	calibrationOnce sync.Once
 	// Authority is the ceiling runs may act under (L0..L4). Empty means
 	// core.DefaultAuthority. A deployment-level decision, read at assembly.
 	Authority core.Authority
@@ -240,6 +249,25 @@ func WithToolSlim(cfg core.ToolSlimConfig) Option {
 	return func(a *Agent) { a.ToolSlim = cfg.Normalize() }
 }
 
+// WithCalibrationStore attaches a shared calibration store.
+//
+// Passing the same store to several agents makes them learn from each other,
+// which is right when they share an endpoint and wrong when they do not — the
+// ratio is keyed by model, so different models stay separate either way.
+func WithCalibrationStore(store *harness.CalibrationStore) Option {
+	return func(a *Agent) { a.calibration = store }
+}
+
+// calibrationStore returns the store, creating one on first use.
+func (a *Agent) calibrationStore() *harness.CalibrationStore {
+	a.calibrationOnce.Do(func() {
+		if a.calibration == nil {
+			a.calibration = harness.NewCalibrationStore()
+		}
+	})
+	return a.calibration
+}
+
 // WithSubagent configures delegation (N5).
 //
 // The zero value disables it: a deployment that does not ask for subagents gets
@@ -375,6 +403,11 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	router := harness.NewToolRouter(registry)
 	loopCfg := a.baseLoopConfig()
 	loop := harness.NewAgentLoop(a.LLM, router, loopCfg)
+
+	// 3b. Seed the token estimate from what previous runs learned. The ratio
+	// belongs to the provider+model, so a short run inherits it instead of
+	// starting from the default guess it would never have time to correct.
+	loop.SetCalibration(a.calibrationStore())
 
 	// 4. Inject optional modules.
 	a.applyLoopDeps(loop)

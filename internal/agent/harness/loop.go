@@ -314,6 +314,24 @@ func (l *AgentLoop) SetLessonSource(s core.LessonSource) { l.lessons = s }
 // SetVerifier enables D5 self-verification loop.
 func (l *AgentLoop) SetVerifier(v core.Verifier) { l.verifier = v }
 
+// SetCalibration attaches the cross-run calibration store and seeds the
+// estimator from it.
+//
+// Seeding happens here rather than lazily on first estimate so the very first
+// budget decision of a run already benefits from previous runs — a run short
+// enough to make only two model calls never reaches the sample count on its
+// own, which is precisely the case the store exists for.
+//
+// A nil store is accepted and means "per-run calibration only", the behaviour
+// before the store existed.
+func (l *AgentLoop) SetCalibration(store *CalibrationStore) {
+	if l == nil || l.ctxMgr == nil {
+		return
+	}
+	l.ctxMgr.SetCalibrationStore(store, modelOf(l.llm))
+	l.ctxMgr.seedFromStore()
+}
+
 // StepRecord captures one iteration of the ReAct loop for observability.
 type StepRecord struct {
 	Step    int
@@ -470,6 +488,14 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			if cp.Completed && mode != runContinue {
 				return &RunResult{Answer: cp.Answer, Reason: "completed"}, nil
 			}
+
+			// The conversation is being rebuilt from persisted state, so it has
+			// no relationship to whatever this manager last saw: any anchor
+			// would describe a list that is not this one. Dropping it costs one
+			// full-list estimate and removes a drift that would otherwise be
+			// invisible — the base would stay exact while the boundary it counts
+			// from is wrong.
+			l.ctxMgr.resetAnchor()
 
 			messages = cp.Messages
 			startStep = cp.StepIndex + 1
@@ -687,17 +713,24 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 			return nil, jerr
 		}
 
-		// --- Token estimate calibration (N3) ---
+		// --- Token estimate calibration and anchoring (N3) ---
 		// The provider just told us how many tokens the prompt really was, and
-		// we know what we estimated for the same list. Feeding the ratio back
-		// turns the fixed heuristic into a measured one for THIS deployment —
-		// the alternative (a tokenizer) would have to guess the model, while
-		// this uses the number the model itself reported.
+		// we know what we estimated for the same list. Two things are learned:
+		//
+		//   the anchor  the exact count becomes the BASE for the next estimate,
+		//               so only the messages added since are guessed at
+		//   the ratio   the same pair feeds the calibration, which corrects the
+		//               heuristic for this deployment
+		//
+		// The anchor is set from the list that was SENT (messages), not the list
+		// about to be sent: the count describes what went out, and the next
+		// estimate adds whatever comes after it.
 		//
 		// It sits here, beside the audit, because both consume the same field:
-		// one records it, the other learns from it.
+		// one records it, the others learn from it.
 		if chatResult.Usage.PromptTokens > 0 {
 			l.ctxMgr.ObserveUsage(l.ctxMgr.estimateTokens(messages), chatResult.Usage.PromptTokens)
+			l.ctxMgr.observeAnchor(messages, chatResult.Usage.PromptTokens)
 		}
 
 		// --- Budget accounting (M6, optional) ---
