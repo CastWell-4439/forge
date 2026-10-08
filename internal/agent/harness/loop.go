@@ -563,6 +563,13 @@ func (l *AgentLoop) run(ctx context.Context, sessionID string, userInput string,
 	// bounded (top 3) and cheap. Resumed runs already carry their history — and
 	// a CONTINUATION is a new round of work, so it recalls like a fresh run
 	// does: the child is being asked something new, not re-entering old work.
+	//
+	// The run id is stamped into the context so the recall path can record WHICH
+	// run saw WHICH entry. That observation is the only evidence the control
+	// plane's lifecycle decisions rest on, and it is deliberately not a
+	// judgement: see core.ObservedRunFrom for why an unlabelled recall records
+	// nothing rather than filing evidence under a fabricated run.
+	ctx = core.WithObservedRun(ctx, sessionID)
 	if mode != runResume && l.memory != nil && userInput != "" {
 		l.recallInto(ctx, &messages, userInput)
 	}

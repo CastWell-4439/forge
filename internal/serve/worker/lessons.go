@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	agentcore "github.com/castwell/forge/internal/agent"
 	"github.com/castwell/forge/internal/agent/core"
@@ -71,9 +72,17 @@ func lessonsEnabled() bool {
 // forgexLessons adapts the control plane's lesson index to core.LessonSource.
 type forgexLessons struct {
 	index *storage.SQLiteIndex
+	// observer records what was recalled, and nothing else. It is the agent
+	// plane's ONLY write into the control plane's index — see
+	// recordObservation for why the write is deliberately this narrow.
+	observer *recallObserver
 }
 
 // Recall implements core.LessonSource by querying the cross-run lessons table.
+//
+// It also records that these lessons were offered. That record is not a
+// judgement: a recall says the entry was surfaced, not whether it helped. The
+// distinction is carried on the observation itself (UsageKnown).
 func (f *forgexLessons) Recall(ctx context.Context, query string, topK int) ([]core.RecallItem, error) {
 	lessons, err := f.index.SearchLessons(ctx, query, topK)
 	if err != nil {
@@ -83,7 +92,65 @@ func (f *forgexLessons) Recall(ctx context.Context, query string, topK int) ([]c
 	for _, lesson := range lessons {
 		items = append(items, recallItemFromLesson(lesson))
 	}
+	if f.observer != nil {
+		f.observer.recall(ctx, items)
+	}
 	return items, nil
+}
+
+// recallObserver appends recall observations to the control plane's index.
+//
+// It exists so the agent plane can supply EVIDENCE for the control plane's
+// lifecycle decisions without ever making one. A run never archives, never
+// deletes, and never edits a memory: it says "these were offered to me", which
+// is a fact, and the aggregate across runs is the control plane's business.
+//
+// Failure is never fatal. Observation is bookkeeping for a later offline
+// decision; a run that cannot write bookkeeping should still do its work.
+type recallObserver struct {
+	index *storage.SQLiteIndex
+	kind  storage.ObservationKind
+}
+
+// recall records that the given entries were offered to the run in ctx.
+//
+// UsageKnown is FALSE here, and that is the point. This run has no way to tell
+// whether the model used what it was shown — it did not ask, and the model did
+// not say. Recording Used=false with UsageKnown=true instead would be a claim
+// the run cannot support, and the control plane would read it as "offered and
+// declined" for every memory the agent ever saw, archiving the whole store.
+//
+// When a run CAN tell (today: nothing yet; tomorrow: an explicit citation),
+// the observation carries UsageKnown=true and only then informs a decision.
+func (o *recallObserver) recall(ctx context.Context, items []core.RecallItem) {
+	if o == nil || o.index == nil || len(items) == 0 {
+		return
+	}
+	// No run id means no run to attribute the evidence to. A recall from a
+	// test, a CLI query or a probe is not evidence about anything.
+	runID := core.ObservedRunFrom(ctx)
+	if runID == "" {
+		return
+	}
+	for _, item := range items {
+		if item.ID == "" {
+			continue
+		}
+		err := o.index.RecordObservation(ctx, storage.MemoryObservation{
+			RunID:      runID,
+			EntryID:    item.ID,
+			Kind:       o.kind,
+			Used:       false,
+			UsageKnown: false,
+			At:         time.Now().UTC(),
+		})
+		if err != nil {
+			// One line, not one per entry: a failing index would otherwise
+			// produce as many log lines as there were recalled items.
+			log.Printf("INFO: could not record memory observation (index unwritable?): %v", err)
+			return
+		}
+	}
 }
 
 // Close releases the index handle. The source owns the connection it opened,
@@ -137,7 +204,15 @@ func buildLessonSource() core.LessonSource {
 	}
 	warnIfNothingWillIndex(path)
 	log.Printf("INFO: lessons feedback enabled (index=%s)", path)
-	return &forgexLessons{index: index}
+	return &forgexLessons{
+		index: index,
+		// Observations are recorded under the run id the agent passes to
+		// Recall's caller; the observer is filled in per run by the loop. Until
+		// then it holds the index and stays disabled, so a recall made outside
+		// a run (a test, a CLI query) records nothing rather than filing
+		// evidence under a fabricated run id.
+		observer: &recallObserver{index: index, kind: storage.ObservationKindLesson},
+	}
 }
 
 // warnIfNothingWillIndex names the two switches that feed this index when they
