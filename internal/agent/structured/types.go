@@ -15,6 +15,21 @@ type AgentResponse struct {
 	// Answer is set when the agent has a final response for the user.
 	// Mutually exclusive with Action.
 	Answer string `json:"answer,omitempty" desc:"Final answer to the user (omit if invoking a tool)"`
+
+	// UsedMemory lists the ids of recalled memories this step actually relied
+	// on, e.g. ["mem_17", "lesson_3"].
+	//
+	// It is optional and the prompt says so. The alternative — inferring use
+	// from the reasoning text — would be a guess dressed as evidence, and this
+	// field exists precisely because the lifecycle decisions need evidence
+	// rather than inference.
+	//
+	// An empty list means "did not say", NOT "used nothing". The caller must
+	// record that as an unknown usage signal (core.MemoryObservation.UsageKnown
+	// = false), because treating silence as disuse would archive every memory
+	// the agent has ever seen. See core/lifecycle.go for what that distinction
+	// protects.
+	UsedMemory []string `json:"used_memory,omitempty" desc:"Ids of recalled memories you actually relied on this step (optional; only list what you used)"`
 }
 
 // ToolCallRequest describes a tool the agent wants to invoke.

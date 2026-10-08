@@ -351,6 +351,25 @@ func ObservedRunFrom(ctx context.Context) string {
 	return ""
 }
 
+// ObservationSink accepts usage observations from a run.
+//
+// The harness cannot write them itself: the store is the control plane's index,
+// and reaching into it would point the dependency the wrong way (the same
+// reason the lesson channel is an interface rather than a package import). The
+// serve layer implements this and injects it.
+//
+// Note what the interface can express and what it cannot: RecordUsage takes
+// VERIFIED citations, so a caller has no way to declare "this was offered and
+// declined". That combination is not currently establishable, and leaving it
+// out of the interface is how the type system keeps the lifecycle from acting
+// on a signal nobody can produce.
+type ObservationSink interface {
+	// RecordUsage records that a run relied on the given memory ids.
+	// Implementations must be safe for concurrent use: N5 delegation can run
+	// child loops that share their parent's sink.
+	RecordUsage(ctx context.Context, runID string, entryIDs []string) error
+}
+
 // SortedDecisions orders decisions for stable reporting: archives first (they
 // are the ones a reviewer acts on), then by entry id so repeated runs agree.
 func SortedDecisions(decisions []ArchiveDecision) []ArchiveDecision {

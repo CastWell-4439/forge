@@ -69,6 +69,20 @@ func lessonsEnabled() bool {
 	}
 }
 
+// indexDBPath resolves the control plane's index, which both channels use.
+//
+// One function rather than two copies: the lessons feed and the usage
+// observations live in the same database, and a deployment that pointed them at
+// different files would silently split its own evidence.
+func indexDBPath() string {
+	path := strings.TrimSpace(os.Getenv(envIndexDB))
+	if path == "" {
+		root := envOrDefault(envRuntimeRoot, defaultRuntimeRoot)
+		path = filepath.Join(root, defaultIndexFileName)
+	}
+	return path
+}
+
 // forgexLessons adapts the control plane's lesson index to core.LessonSource.
 type forgexLessons struct {
 	index *storage.SQLiteIndex
@@ -188,11 +202,7 @@ func buildLessonSource() core.LessonSource {
 		return nil
 	}
 
-	path := strings.TrimSpace(os.Getenv(envIndexDB))
-	if path == "" {
-		root := envOrDefault(envRuntimeRoot, defaultRuntimeRoot)
-		path = filepath.Join(root, defaultIndexFileName)
-	}
+	path := indexDBPath()
 
 	// A missing file is the normal first-run state, not a failure: the index
 	// is created empty and simply has no lessons to recall yet.
@@ -257,4 +267,18 @@ func applyLessonsFeed(opts []agentcore.Option) []agentcore.Option {
 		return opts
 	}
 	return append(opts, agentcore.WithLessonSource(source))
+}
+
+// applyUsageSink installs the citation sink when the index is available.
+//
+// It is separate from applyLessonsFeed on purpose: the two channels share a
+// database but not a switch. A deployment may want lessons recalled without
+// recording usage (or the reverse), and coupling them would make one
+// installation step silently decide both.
+func applyUsageSink(opts []agentcore.Option) []agentcore.Option {
+	sink := buildUsageSink()
+	if sink == nil {
+		return opts
+	}
+	return append(opts, agentcore.WithUsageSink(sink))
 }
