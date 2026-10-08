@@ -143,6 +143,11 @@ func registerAgent(r *worker.Registry) {
 	// degrades to "no lessons", never to a failed registration.
 	opts = applyLessonsFeed(opts)
 
+	// The citation contract's sink: where a run records which recalled memories
+	// it verifiably used. Separate from the lesson feed — same database,
+	// different switch — and harmless when absent.
+	opts = applyUsageSink(opts)
+
 	// Tool output is untrusted input to the model: a fetched page can say
 	// "ignore your instructions", and the observation is delivered as a
 	// user-role message. Screening is therefore ON by default — an agent that

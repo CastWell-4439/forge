@@ -54,6 +54,9 @@ type Agent struct {
 	// ToolSlim is the S2 slimming policy: which head/tail split applies to which
 	// tool (zero value = the historical profile).
 	ToolSlim core.ToolSlimConfig
+	// UsageSink receives the memories a run verifiably used. Nil disables the
+	// citation contract, which is the behaviour before it existed.
+	UsageSink core.ObservationSink
 	// calibration remembers the token-estimate ratio per model ACROSS runs. The
 	// ratio describes the provider's tokenizer, not the conversation, so
 	// re-learning it every run meant a short run never learned it at all. It is
@@ -249,6 +252,15 @@ func WithToolSlim(cfg core.ToolSlimConfig) Option {
 	return func(a *Agent) { a.ToolSlim = cfg.Normalize() }
 }
 
+// WithUsageSink attaches the sink that receives verified memory citations.
+//
+// The harness collects them (see harness/citation.go); this only carries the
+// sink to the loop. Without one, citations are resolved and discarded, which
+// costs nothing and decides nothing.
+func WithUsageSink(sink core.ObservationSink) Option {
+	return func(a *Agent) { a.UsageSink = sink }
+}
+
 // WithCalibrationStore attaches a shared calibration store.
 //
 // Passing the same store to several agents makes them learn from each other,
@@ -408,6 +420,9 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	// belongs to the provider+model, so a short run inherits it instead of
 	// starting from the default guess it would never have time to correct.
 	loop.SetCalibration(a.calibrationStore())
+	// The citation contract's sink. Set here rather than inside the loop
+	// because the loop must not know the control plane's index exists.
+	loop.SetUsageSink(a.UsageSink)
 
 	// 4. Inject optional modules.
 	a.applyLoopDeps(loop)
