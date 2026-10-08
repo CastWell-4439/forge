@@ -240,6 +240,18 @@ func isWordByte(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b == '+'
 }
 
+// PathExtensionKnown reports whether an extension names a source or config
+// file, so callers outside this package can apply the same rule.
+//
+// Exported because the evidence projector (which lives in the other plane) has
+// to decide whether a value inside a tool call's free-form payload is a path,
+// and it must decide it the same way the assertion extractor does. Two
+// implementations of "is this a path" would drift, and the drift would show up
+// as a verification pass finding evidence the extractor never produces.
+func PathExtensionKnown(ext string) (string, bool) {
+	return pathExtension("x." + strings.TrimPrefix(strings.ToLower(ext), "."))
+}
+
 // pathExtension reports whether a token looks like a file path, returning its
 // extension.
 //
