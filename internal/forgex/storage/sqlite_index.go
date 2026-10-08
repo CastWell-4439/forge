@@ -129,6 +129,39 @@ func (idx *SQLiteIndex) Init(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_lessons_created_at ON lessons(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_lessons_category ON lessons(category);`,
+		// Memory observations: the agent plane APPENDS here what it recalled and
+		// what it actually used. It is deliberately a separate table from the
+		// memory store itself — the agent records evidence, the control plane
+		// decides what that evidence means. Letting the agent edit memory, or
+		// letting a single run's view drive pruning, would give untrusted and
+		// partial information the power to destroy other runs' knowledge.
+		//
+		// Append-only on purpose: the aggregate over many runs is the signal,
+		// and a table that can be updated in place invites "correcting" history.
+		`CREATE TABLE IF NOT EXISTS memory_observations (
+			run_id TEXT NOT NULL,
+			entry_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			used INTEGER NOT NULL DEFAULT 0,
+			usage_known INTEGER NOT NULL DEFAULT 0,
+			observed_at TEXT NOT NULL,
+			PRIMARY KEY (run_id, entry_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_mem_obs_entry ON memory_observations(entry_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_mem_obs_run ON memory_observations(run_id);`,
+		// Archive state lives HERE, in the control plane's index, not in the
+		// memory store. Archiving is a decision about whether an entry still
+		// competes for recall; keeping it out of the memory records means the
+		// agent plane's store is never written by anything but the agent, and an
+		// archive can be undone by deleting a row.
+		`CREATE TABLE IF NOT EXISTS memory_archive (
+			entry_id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			archived_at TEXT NOT NULL,
+			reason TEXT,
+			recovered_at TEXT
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_mem_archive_kind ON memory_archive(kind);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := idx.db.ExecContext(ctx, stmt); err != nil {
