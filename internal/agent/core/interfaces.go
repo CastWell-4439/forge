@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -288,4 +289,21 @@ type MemoryEntry struct {
 	// ObservedAt is when the claim was true, which is not the same as when it
 	// was written. Zero falls back to CreatedAt.
 	ObservedAt time.Time `json:"observed_at,omitempty"`
+	// Layer says what kind of thing this is: a claim about the world (fact) or
+	// one run's experience (episodic). Empty reads as episodic — an unlabelled
+	// memory is treated as an observation rather than promoted to a claim.
+	Layer MemoryLayer `json:"layer,omitempty"`
+}
+
+// SourceRunIDOrEmpty reports the run a memory came from, or "".
+//
+// A convenience for review reasons: an entry whose source is not a run (a
+// lesson, a human note) has no run id to print, and an empty string is clearer
+// in a report than the word "unknown" repeated on every line.
+func (m MemoryEntry) SourceRunIDOrEmpty() string {
+	src := string(m.Source)
+	if strings.HasPrefix(src, MemorySourceRun) {
+		return strings.TrimPrefix(src, MemorySourceRun)
+	}
+	return ""
 }
