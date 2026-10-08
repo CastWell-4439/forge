@@ -117,23 +117,31 @@ func TestFormatExtensionsAreNotLanguageEvidence(t *testing.T) {
 
 // A path the memory names that was tried and never worked is a strong signal:
 // something used the path, and the world said no.
+//
+// The evidence line names the NEWEST run that witnessed the failure, so the two
+// calls carry distinct timestamps. Leaving them identical made the test depend
+// on map iteration order, which passed locally and failed on CI — the label is
+// now decided by the data.
 func TestPathConflictReported(t *testing.T) {
 	claims := map[string][]Assertion{
 		"mem-1": {{Kind: "path", Value: "configs/app.yaml"}},
 	}
-	calls := []EvidenceToolCall{
-		call("run-1", "file.read", []string{"configs/app.yaml"}, true, "no such file or directory"),
-		call("run-2", "file.read", []string{"configs/app.yaml"}, true, "no such file or directory"),
-	}
+	older := time.Now().Add(-time.Hour)
+	newer := time.Now()
 
-	result := VerifyClaims(claims, calls, DefaultVerificationConfig())
+	first := call("run-1", "file.read", []string{"configs/app.yaml"}, true, "no such file or directory")
+	first.At = older
+	second := call("run-2", "file.read", []string{"configs/app.yaml"}, true, "no such file or directory")
+	second.At = newer
+
+	result := VerifyClaims(claims, []EvidenceToolCall{first, second}, DefaultVerificationConfig())
 
 	require.Len(t, result.Conflicts, 1)
 	c := result.Conflicts[0]
 	assert.Equal(t, "path", c.Kind)
 	assert.Contains(t, c.Observed, "always failed")
 	assert.Contains(t, c.Observed, "no such file", "the failure reason is shown")
-	assert.Contains(t, c.Evidence, "run-1")
+	assert.Contains(t, c.Evidence, "run-2", "the newest witness is named")
 	assert.Equal(t, 2, c.Count)
 }
 

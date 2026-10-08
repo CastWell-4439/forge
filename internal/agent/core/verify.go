@@ -173,6 +173,14 @@ type evidenceIndex struct {
 }
 
 // indexEvidence builds the lookup tables in one pass over the calls.
+//
+// Every "which run witnessed this" record keeps the NEWEST witness. That
+// matters because the evidence line in a report is what a reviewer follows to
+// check the finding, and a stale run id sends them to the wrong place. An
+// earlier version recorded the first call it saw, which was correct only as a
+// side effect of the caller's ordering — the sort that happened to put the
+// newest first. A test that passed locally on that accident failed on CI, which
+// is the useful version of this lesson.
 func indexEvidence(calls []EvidenceToolCall) evidenceIndex {
 	idx := evidenceIndex{
 		languageCounts: map[string]int{},
@@ -183,6 +191,9 @@ func indexEvidence(calls []EvidenceToolCall) evidenceIndex {
 		pathError:      map[string]string{},
 	}
 
+	languageAt := map[string]time.Time{}
+	pathAt := map[string]time.Time{}
+
 	for _, call := range calls {
 		for _, path := range call.Paths {
 			lowered := strings.ToLower(path)
@@ -191,7 +202,8 @@ func indexEvidence(calls []EvidenceToolCall) evidenceIndex {
 			if ext, ok := pathExtension(lowered); ok {
 				if lang, known := languageForExtension(ext); known {
 					idx.languageCounts[lang]++
-					if _, seen := idx.languageRuns[lang]; !seen {
+					if prev, seen := languageAt[lang]; !seen || call.At.After(prev) {
+						languageAt[lang] = call.At
 						idx.languageRuns[lang] = call.RunID
 					}
 				}
@@ -202,9 +214,12 @@ func indexEvidence(calls []EvidenceToolCall) evidenceIndex {
 			if !call.Failed {
 				idx.pathSuccesses[lowered]++
 			} else if _, seen := idx.pathError[lowered]; !seen {
+				// The error message is for display; the newest attempt's wording
+				// is the most likely to match what a reviewer would see now.
 				idx.pathError[lowered] = call.Error
 			}
-			if _, seen := idx.pathRuns[lowered]; !seen {
+			if prev, seen := pathAt[lowered]; !seen || call.At.After(prev) {
+				pathAt[lowered] = call.At
 				idx.pathRuns[lowered] = call.RunID
 			}
 		}
