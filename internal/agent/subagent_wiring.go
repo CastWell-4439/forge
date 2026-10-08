@@ -80,6 +80,13 @@ func (a *Agent) childFactory(
 		child := harness.NewAgentLoop(a.LLM, router, loopCfg)
 		a.applyLoopDeps(child)
 
+		// The child talks to the same provider and model as its parent, so the
+		// calibration ratio applies to it too — and sharing the store means a
+		// child's observations also improve the parent's next run. A child with
+		// its own store would re-learn the same ratio from scratch, which is the
+		// waste the store was introduced to remove.
+		child.SetCalibration(a.calibrationStore())
+
 		return child, func() {}, nil
 	}
 }

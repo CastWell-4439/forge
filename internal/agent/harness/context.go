@@ -85,6 +85,17 @@ type ContextManager struct {
 	// yet" and the default heuristic stands.
 	calibrationRatio   float64
 	calibrationSamples int
+	// calibrationStore and calibrationModel are the cross-run calibration: the
+	// ratio belongs to the provider+model, not to one conversation, so it is
+	// kept outside this manager (see calibration_store.go). Both may be unset,
+	// in which case calibration stays per-run as before.
+	calibrationStore *CalibrationStore
+	calibrationModel string
+	// anchor is the provider's exact count for the request this conversation
+	// was last sent as. When valid, an estimate counts only what was added
+	// since, so the error stays confined to the new messages instead of being
+	// spread over the whole history (see token_anchor.go).
+	anchor tokenAnchor
 }
 
 // SetToolSlim installs the S2 slimming policy.
@@ -114,12 +125,31 @@ func NewContextManager(maxTokens int, llm core.LLMClient) *ContextManager {
 }
 
 // EstimateTokens estimates the token count of a message list.
-// This is a rough heuristic — production systems would use a tokenizer.
+//
+// It is a rough heuristic — a tokenizer would be more precise, but this client
+// talks to arbitrary OpenAI-compatible endpoints, so the estimate is calibrated
+// against the provider's own reported count instead (see token_budget.go).
+//
+// Native function-calling history counts too. An assistant message may carry
+// tool_calls whose arguments are a JSON object, and the provider bills those
+// tokens: ignoring them made the native path systematically UNDER-estimate,
+// which is the dangerous direction — the estimate says a request fits and the
+// provider disagrees.
 func EstimateTokens(messages []core.Message) int {
 	total := 0
 	for _, m := range messages {
 		// Each message has overhead (~4 tokens for role/formatting).
 		total += 4 + len(m.Content)/charsPerToken
+		for _, call := range m.ToolCalls {
+			// Name plus the argument object. The arguments are what the model
+			// emitted and what the provider re-reads on the next turn, so they
+			// are counted as text — a large argument object is a large cost.
+			args := 0
+			for k, v := range call.Arguments {
+				args += len(k) + len(fmt.Sprintf("%v", v)) + 4
+			}
+			total += 4 + (len(call.Name)+args)/charsPerToken
+		}
 	}
 	return total
 }
@@ -140,7 +170,28 @@ func EstimateTokens(messages []core.Message) int {
 //     logged) and keep everything else.
 //
 // Returns the (possibly unchanged) message list.
-func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.Message) ([]core.Message, error) {
+func (cm *ContextManager) CompactIfNeeded(ctx context.Context, messages []core.Message) (out []core.Message, err error) {
+	// The anchor is dropped when this call returns a SHORTER list, because a
+	// shorter list means content was removed rather than added: the provider's
+	// count for the old list describes messages that are no longer there, and
+	// keeping it would make every later estimate too high.
+	//
+	// A shorter list is the reliable signal. S2 slimming also edits the list but
+	// keeps its length, and that case is safe to leave anchored: the anchored
+	// count then over-estimates the (now shorter) content, which errs toward
+	// compacting earlier rather than overflowing later.
+	//
+	// The check reads the NAMED RESULT, not the parameter: the parameter is the
+	// input list and never changes, so comparing against it would compare
+	// something to itself and never reset. Reading the result covers all five
+	// return paths by construction — a reset that must be remembered at each one
+	// is a reset that will eventually be forgotten at one.
+	defer func() {
+		if len(out) < len(messages) {
+			cm.resetAnchor()
+		}
+	}()
+
 	// Layer 1: slim heavy tool output before any decision about summarising.
 	slimmed := cm.slimToolObservations(messages)
 	// The budget compared against is the INPUT budget (N3): the window minus
@@ -410,6 +461,13 @@ func truncateAtRuneBoundary(s string, limit int) string {
 
 // summarize asks the LLM to compress a series of messages into a brief summary.
 func (cm *ContextManager) summarize(ctx context.Context, messages []core.Message) (string, error) {
+	// A manager without a client cannot summarise. Returning the error rather
+	// than dereferencing nil matters because the caller has a defined fallback
+	// (drop the old turns and log it) — a panic here would take down the run,
+	// and the run is exactly the thing compaction exists to keep alive.
+	if cm.llm == nil {
+		return "", fmt.Errorf("no LLM client configured for context summarisation")
+	}
 	// Build a text representation of the messages to summarize.
 	var text string
 	for _, m := range messages {

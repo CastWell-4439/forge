@@ -46,6 +46,18 @@ func DefaultLLMConfig() LLMConfig {
 	}
 }
 
+// ModelName reports the model this client talks to.
+//
+// It exists so the cross-run calibration can key its ratio by model: how many
+// characters a token covers is a property of the tokenizer, and two models
+// behind one endpoint do not share it. Implements harness.ModelNamer.
+func (c *LLMClient) ModelName() string {
+	if c == nil {
+		return ""
+	}
+	return c.config.Model
+}
+
 // LLMClient implements core.LLMClient by calling an OpenAI-compatible API.
 // Includes exponential backoff retry for 429/5xx errors.
 type LLMClient struct {
