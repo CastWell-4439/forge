@@ -37,6 +37,7 @@ Usage:
   forgex memory recover --id ID
   forgex memory prune   [--archive-before DURATION] [--kind memory|lesson] [--execute]
   forgex memory review  [--ttl DURATION] [--min-runs N] [--json]   (proposals only)
+  forgex memory verify  [--claims FILE] [--min-evidence N] [--json] (disagreements only)
 
 Flags:
   --root PATH          ForgeX root directory (default .forgex)
@@ -71,6 +72,12 @@ func runMemory(args []string) error {
 			return nil
 		}
 		return runMemoryReview(args[1:])
+	case "verify":
+		if len(args) < 2 {
+			fmt.Fprint(os.Stdout, memoryVerifyUsage)
+			return nil
+		}
+		return runMemoryVerify(args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(os.Stdout, memoryUsage+"\n")
 		return nil
