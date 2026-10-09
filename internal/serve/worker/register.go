@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/agent/harness"
 	"github.com/castwell/forge/internal/agent/rag"
@@ -65,7 +67,7 @@ func registerBuiltinHandlers(r *worker.Registry) {
 	// No external dependency.
 	r.Register("shell", adaptWorkflowWorker("shell", shell.NewWorker(shell.DefaultConfig())))
 	r.Register("claude_code", adaptWorkflowWorker("claude_code", claudecode.NewWorker(claudecode.DefaultConfig())))
-	r.Register("hitl", adaptWorkflowWorker("hitl", hitlworker.NewWorker(hitl.NewManager(hitl.ManagerConfig{Timeout: 24 * time.Hour}), nil)))
+	registerHITL(r)
 
 	registerGit(r)
 
@@ -87,6 +89,44 @@ func registerBuiltinHandlers(r *worker.Registry) {
 			panic(fmt.Sprintf("worker %q is declared by workflows but was not registered", required))
 		}
 	}
+}
+
+// registerHITL wires the human-in-the-loop worker.
+//
+// The store is what makes a filed request answerable by the coordinator: the two
+// run in separate processes, and the table is the only thing they share. Without
+// PostgreSQL the request lives only in this process's memory, which still works
+// for a single-node deployment and is reported rather than hidden.
+//
+// The callback stays nil on purpose: it exists to notify an external system
+// (chat, ticket queue) and no provider has been chosen. A callback that silently
+// does nothing would be worse than an absent one, because the deployment would
+// look as though notifications were being sent.
+func registerHITL(r *worker.Registry) {
+	manager := hitl.NewManager(hitl.ManagerConfig{Timeout: 24 * time.Hour})
+
+	if cfg := database.ConfigFromEnv(); cfg != nil && cfg.Postgres != nil {
+		dsn := cfg.Postgres.DSN()
+		pool, err := pgxpool.New(context.Background(), dsn)
+		if err != nil {
+			// Not fatal: the worker still runs, and requests still work within
+			// this process. What is lost is the coordinator's ability to see
+			// them, and the log says so.
+			log.Printf("WARN: hitl: could not open PostgreSQL for request persistence: %v; "+
+				"requests will not be visible to the coordinator", err)
+		} else {
+			manager = hitl.NewManager(hitl.ManagerConfig{
+				Timeout: 24 * time.Hour,
+				Store:   hitl.NewPGStore(pool),
+			})
+			log.Printf("INFO: hitl: requests are persisted and shared with the coordinator")
+		}
+	} else {
+		log.Printf("INFO: hitl: no PostgreSQL, so requests are in-memory only " +
+			"(single-process use; the coordinator cannot answer them)")
+	}
+
+	r.Register("hitl", adaptWorkflowWorker("hitl", hitlworker.NewWorker(manager, nil)))
 }
 
 // registerGit wires the git worker from a projects/*.yaml file.

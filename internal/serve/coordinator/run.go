@@ -163,6 +163,18 @@ func Run(appCtx context.Context) error {
 	// without a secret gets no entry point rather than an open one.
 	registerWorkflowEntryPoints(mux, coord)
 
+	// --- Human-in-the-loop ---
+	// The endpoints an operator answers approvals at, plus the sweep that times
+	// out requests nobody answered. The coordinator supplies the store and the
+	// release path; the requests themselves are filed by the worker's hitl
+	// handler in its own process (see hitl.go).
+	hitlSweep := setupHITL(coord, store, mux)
+
+	// The sweep runs on its own goroutine rather than inside the timeout
+	// manager: they watch different things (task deadlines versus human
+	// requests) and either may be in play without the other.
+	go hitlSweep(appCtx)
+
 	httpAddr := httpAddr()
 	httpLn, err := net.Listen("tcp", httpAddr)
 	if err != nil {
