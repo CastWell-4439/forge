@@ -64,6 +64,10 @@ const (
 	// is neither: the task has not failed and has not been retried.
 	EventTaskPaused  EventType = "TASK_PAUSED"
 	EventTaskResumed EventType = "TASK_RESUMED"
+	// EventTaskSkipped records a task that never ran because its own condition
+	// evaluated to false. The audit trail has to be able to answer "why did
+	// this task not run" with something better than its absence.
+	EventTaskSkipped EventType = "TASK_SKIPPED"
 )
 
 // WorkflowDefinition stores a versioned workflow DAG definition.
@@ -142,6 +146,21 @@ type Storage interface {
 	ListTasksByWorkflow(ctx context.Context, workflowID string) ([]*Task, error)
 	ClaimTask(ctx context.Context, workerID string, handlers []string) (*Task, error)
 	UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error
+
+	// AssignTaskWorker records which worker is executing a task.
+	//
+	// It exists because the dispatch path is a PUSH: the coordinator picks a
+	// worker and calls it, rather than the worker claiming a task. Without this
+	// write, task_instances.worker_id stayed empty for every normally
+	// dispatched task, and the dead-worker path — which finds work to requeue
+	// by matching task.WorkerID against the worker that died — could never
+	// match anything. A task whose worker died would therefore stay RUNNING
+	// forever with nothing to reset it.
+	//
+	// A dedicated accessor rather than SaveTask: the PostgreSQL SaveTask is an
+	// INSERT, so using it to change one field would insert a duplicate row.
+	// A missing task is not an error.
+	AssignTaskWorker(ctx context.Context, taskID string, workerID string) error
 
 	// ReleaseTask clears a task's worker assignment so the scheduler no longer
 	// treats it as owned. Used when a task is parked (paused awaiting human
