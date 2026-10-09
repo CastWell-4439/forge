@@ -180,12 +180,13 @@ func (s *PGStorage) UpdateWorkflowStatus(ctx context.Context, workflowID string,
 func (s *PGStorage) SaveTask(ctx context.Context, task *Task) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO task_instances (id, workflow_id, task_name, handler, status, worker_id, input, output,
-			error_msg, attempt, max_attempts, scheduled_at, started_at, finished_at, timeout_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			error_msg, attempt, max_attempts, scheduled_at, started_at, finished_at, timeout_at, created_at,
+			loop_iteration)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`, task.ID, task.WorkflowID, task.TaskName, task.Handler, task.Status, task.WorkerID,
 		nullableJSON(task.Input), nullableJSON(task.Output), task.ErrorMsg,
 		task.Attempt, task.MaxAttempts, task.ScheduledAt, task.StartedAt, task.FinishedAt,
-		task.TimeoutAt, task.CreatedAt)
+		task.TimeoutAt, task.CreatedAt, task.LoopIteration)
 	if err != nil {
 		return fmt.Errorf("save task %s: %w", task.ID, err)
 	}
@@ -197,12 +198,14 @@ func (s *PGStorage) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	task := &Task{}
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, workflow_id, task_name, handler, status, worker_id, input, output,
-			error_msg, attempt, max_attempts, scheduled_at, started_at, finished_at, timeout_at, created_at
+			error_msg, attempt, max_attempts, scheduled_at, started_at, finished_at, timeout_at, created_at,
+			loop_iteration
 		FROM task_instances WHERE id = $1
 	`, taskID).Scan(
 		&task.ID, &task.WorkflowID, &task.TaskName, &task.Handler, &task.Status, &task.WorkerID,
 		&task.Input, &task.Output, &task.ErrorMsg, &task.Attempt, &task.MaxAttempts,
 		&task.ScheduledAt, &task.StartedAt, &task.FinishedAt, &task.TimeoutAt, &task.CreatedAt,
+		&task.LoopIteration,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -217,7 +220,8 @@ func (s *PGStorage) GetTask(ctx context.Context, taskID string) (*Task, error) {
 func (s *PGStorage) ListTasksByWorkflow(ctx context.Context, workflowID string) ([]*Task, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workflow_id, task_name, handler, status, worker_id, input, output,
-			error_msg, attempt, max_attempts, scheduled_at, started_at, finished_at, timeout_at, created_at
+			error_msg, attempt, max_attempts, scheduled_at, started_at, finished_at, timeout_at, created_at,
+			loop_iteration
 		FROM task_instances WHERE workflow_id = $1 ORDER BY created_at
 	`, workflowID)
 	if err != nil {
@@ -232,6 +236,7 @@ func (s *PGStorage) ListTasksByWorkflow(ctx context.Context, workflowID string) 
 			&task.ID, &task.WorkflowID, &task.TaskName, &task.Handler, &task.Status, &task.WorkerID,
 			&task.Input, &task.Output, &task.ErrorMsg, &task.Attempt, &task.MaxAttempts,
 			&task.ScheduledAt, &task.StartedAt, &task.FinishedAt, &task.TimeoutAt, &task.CreatedAt,
+			&task.LoopIteration,
 		); err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
 		}
@@ -317,6 +322,31 @@ func (s *PGStorage) ReleaseTask(ctx context.Context, taskID string) error {
 		WHERE id = $1
 	`, taskID); err != nil {
 		return fmt.Errorf("release task %s: %w", taskID, err)
+	}
+	return nil
+}
+
+// RewindTaskForGoto returns a task to the queue for a loop iteration (see the
+// interface): PENDING, loop counter advanced, output and ownership cleared.
+//
+// PENDING rather than READY: whether the task can run now depends on its
+// dependencies, which the caller's advance pass decides from state. Marking it
+// READY here would bypass that check — and for a goto that only rewinds
+// ancestors, those dependencies include tasks this same rewind just reset.
+func (s *PGStorage) RewindTaskForGoto(ctx context.Context, taskID string) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1,
+		    loop_iteration = loop_iteration + 1,
+		    output = NULL,
+		    worker_id = NULL,
+		    scheduled_at = NULL,
+		    started_at = NULL,
+		    finished_at = NULL,
+		    error_msg = ''
+		WHERE id = $2
+	`, TaskStatusPending, taskID); err != nil {
+		return fmt.Errorf("rewind task %s for goto: %w", taskID, err)
 	}
 	return nil
 }
