@@ -26,7 +26,7 @@ const defaultSkillsDir = "configs/forgex/skills"
 func runSkills(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprint(os.Stdout, skillsLifecycleUsage+"\n")
-		return fmt.Errorf("skills subcommand required (available: list, show, distill, publish, verify, export, deprecate, restore, review, stale)")
+		return fmt.Errorf("skills subcommand required (available: list, show, distill, publish, verify, check, export, deprecate, restore, review, stale)")
 	}
 	switch args[0] {
 	case "list":
@@ -41,6 +41,8 @@ func runSkills(args []string) error {
 		return skillsVerify(args[1:])
 	case "export":
 		return skillsExport(args[1:])
+	case "check":
+		return skillsCheck(args[1:])
 	case "deprecate", "restore", "review", "stale":
 		return runSkillsLifecycle(args[0], args[1:])
 	default:
@@ -282,11 +284,156 @@ func skillsVerify(args []string) error {
 		}
 		fmt.Printf("  [%s] case=%-30s suite=%s expected=%s\n", mark, cid, result.Status, verdict.Summary())
 	}
+
+	// Record the outcome before reporting it. The check is the expensive part,
+	// and letting the answer evaporate on the way out is what made "has this
+	// regressed" unanswerable without re-running everything.
+	if _, err := skillpack.NewStore(*dir).RecordVerification(*id, failures, time.Now().UTC()); err != nil {
+		// A failure to write the note is not a failed check: reporting it as one
+		// would misattribute a storage problem to the skill.
+		fmt.Fprintf(os.Stderr, "note: could not record the result: %v\n", err)
+	}
+
 	if len(failures) > 0 {
 		return fmt.Errorf("skill %s: %d/%d bound cases failed: %s",
 			*id, len(failures), len(pack.Spec.Eval.Cases), strings.Join(failures, ", "))
 	}
 	fmt.Printf("skill %s verified against %d bound case(s)\n", *id, len(pack.Spec.Eval.Cases))
+	return nil
+}
+
+// skillsCheck runs the bound cases for every skill and records what it finds.
+//
+// This is the batch form of `skills verify`: same execution, applied to the set
+// rather than to one named skill, with the outcomes kept. It exists because the
+// question worth asking on a schedule is "has anything regressed", and that
+// question has no answer if it must be asked one skill at a time.
+//
+// The cost is real and is reported rather than hidden: each bound case is a
+// full scenario execution, so the runtime is proportional to the total number
+// of cases, not to the number of skills.
+func skillsCheck(args []string) error {
+	fs := flag.NewFlagSet("skills check", flag.ContinueOnError)
+	dir := fs.String("skills-dir", defaultSkillsDir, "published skills directory")
+	casesPath := fs.String("cases", "configs/forgex/cases.yaml", "case registry YAML path")
+	root := fs.String("root", ".forgex", "root directory for run artifacts")
+	rules := fs.String("rules", "configs/forgex/eval_rules.yaml", "eval rules YAML path")
+	taxonomy := fs.String("taxonomy", demo.DefaultTaxonomyPath, "failure taxonomy YAML path")
+	policy := fs.String("policy", demo.DefaultPolicyPath, "stop policy YAML path")
+	contracts := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
+	toolPolicy := fs.String("tool-policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
+	authority := fs.String("authority", demo.DefaultAuthorityLevel, "authority level override")
+	includeDeprecated := fs.Bool("all", false, "also check deprecated skills")
+	maxSkills := fs.Int("max", 0, "check at most N skills (0 = all)")
+	record := fs.Bool("record", true, "record each outcome onto the skill")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	reg, err := cases.Load(*casesPath)
+	if err != nil {
+		return err
+	}
+
+	// The runner is the same execution `skills verify` performs, expressed once
+	// so the two paths cannot drift apart.
+	runner := func(pack skillpack.Pack) ([]string, error) {
+		exists := func(cid string) bool { _, err := reg.Find(cid); return err == nil }
+		if issues := pack.Check(exists); len(issues) > 0 {
+			return nil, fmt.Errorf("no longer passes its own gates: %s", strings.Join(issues, "; "))
+		}
+		var failures []string
+		for _, cid := range pack.Spec.Eval.Cases {
+			spec, err := reg.Find(cid)
+			if err != nil {
+				return nil, err
+			}
+			runID, err := demo.RunScenario(context.Background(), demo.ScenarioConfig{
+				Root:           *root,
+				TaxonomyPath:   *taxonomy,
+				PolicyPath:     *policy,
+				PacketPath:     spec.TaskPacket,
+				ContractsPath:  *contracts,
+				ToolPolicyPath: *toolPolicy,
+				AuthorityLevel: *authority,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("case %s: %w", cid, err)
+			}
+			runDir := filepath.Join(*root, "runs", runID)
+			result, err := evaluateRunDir(runDir, *rules, spec.Suite)
+			if err != nil {
+				return nil, fmt.Errorf("case %s: %w", cid, err)
+			}
+			verdict, err := replayCase(runDir, spec)
+			if err != nil {
+				return nil, fmt.Errorf("case %s: %w", cid, err)
+			}
+			if result.Status != "passed" || !verdict.Passed {
+				failures = append(failures, cid)
+			}
+			fmt.Printf("    case=%-30s suite=%s expected=%s\n", cid, result.Status, verdict.Summary())
+		}
+		return failures, nil
+	}
+
+	started := time.Now()
+	results, err := skillpack.CheckSkills(skillpack.NewStore(*dir), runner, skillpack.CheckConfig{
+		IncludeDeprecated: *includeDeprecated,
+		Max:               *maxSkills,
+		Record:            *record,
+		Now:               started,
+	})
+	if err != nil {
+		return err
+	}
+
+	summary := skillpack.Summarize(results)
+	if *asJSON {
+		type row struct {
+			ID          string   `json:"id"`
+			FailedCases []string `json:"failed_cases,omitempty"`
+			Skipped     string   `json:"skipped,omitempty"`
+			Error       string   `json:"error,omitempty"`
+			Recorded    bool     `json:"recorded"`
+		}
+		rows := make([]row, 0, len(results))
+		for _, r := range results {
+			row := row{ID: r.Pack.Metadata.ID, FailedCases: r.FailedCases, Skipped: r.Skipped, Recorded: r.Recorded}
+			if r.Err != nil {
+				row.Error = r.Err.Error()
+			}
+			rows = append(rows, row)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]any{"summary": summary, "results": rows})
+	}
+
+	fmt.Printf("\nchecked %d skill(s) in %s\n", summary.Checked, started.Sub(started).Round(time.Second))
+	fmt.Printf("  passed %d, failed %d, errored %d, skipped %d\n",
+		summary.Passed, summary.Failed, summary.Errored, summary.Skipped)
+	if *record && summary.Recorded > 0 {
+		fmt.Printf("  recorded %d outcome(s) onto the skills\n", summary.Recorded)
+	}
+
+	for _, r := range results {
+		if r.Err != nil {
+			fmt.Printf("  ERROR  %-40s %v\n", r.Pack.Metadata.ID, r.Err)
+			continue
+		}
+		if r.Skipped != "" {
+			fmt.Printf("  SKIP   %-40s %s\n", r.Pack.Metadata.ID, r.Skipped)
+		}
+	}
+	if summary.Failed > 0 {
+		fmt.Printf("\n%d skill(s) no longer pass their bound cases: %s\n",
+			summary.Failed, strings.Join(skillpack.FailedIDs(results), ", "))
+		fmt.Println("\nThis is a report: nothing changed status. A regression may mean the")
+		fmt.Println("skill is wrong, a case went stale, or the environment moved.")
+		fmt.Println("Retire it with: forgex skills deprecate --skill ID --reason TEXT")
+	}
 	return nil
 }
 

@@ -95,7 +95,43 @@ type Metadata struct {
 	// leave them to guess whether the world changed or the skill was wrong.
 	DeprecatedAt      time.Time `yaml:"deprecated_at,omitempty" json:"deprecated_at,omitempty"`
 	DeprecationReason string    `yaml:"deprecation_reason,omitempty" json:"deprecation_reason,omitempty"`
+
+	// LastVerifiedAt and LastVerifyStatus record the outcome of running this
+	// skill's own bound cases.
+	//
+	// The eval binding has always claimed that "this skill regressed" is a
+	// checkable statement, and the checker existed — `skills verify` runs the
+	// cases and reads the verdict. What was missing is that the answer went
+	// nowhere: it was printed and forgotten, so the question could only be
+	// answered by running everything again, and nobody could tell a skill
+	// verified yesterday from one verified never.
+	//
+	// The record lives here rather than in a separate store because it is a
+	// property OF the skill, and because a reader of the pack — a person, a
+	// report, an operator — should see it without a second lookup.
+	LastVerifiedAt time.Time `yaml:"last_verified_at,omitempty" json:"last_verified_at,omitempty"`
+	// LastVerifyStatus is VerifyPassed, VerifyFailed, or "" when never run.
+	LastVerifyStatus string `yaml:"last_verify_status,omitempty" json:"last_verify_status,omitempty"`
+	// LastVerifyFailedCases names the cases that failed, so "it broke" comes
+	// with "here is where". A status alone would leave the next reader to
+	// re-run everything to find out which part moved.
+	LastVerifyFailedCases []string `yaml:"last_verify_failed_cases,omitempty" json:"last_verify_failed_cases,omitempty"`
 }
+
+// Verification outcomes recorded on a skill.
+const (
+	// VerifyPassed means every bound case still matched its expected outcome.
+	VerifyPassed = "passed"
+	// VerifyFailed means at least one bound case no longer did.
+	VerifyFailed = "failed"
+)
+
+// NeedsAttention reports whether this skill's last verification failed.
+//
+// An unverified skill answers "no": never having been checked is not the same
+// as having been checked and failing, and treating the two alike would put
+// every new skill into a regression report on the day it was published.
+func (m Metadata) NeedsAttention() bool { return m.LastVerifyStatus == VerifyFailed }
 
 // IsDeprecated reports whether this skill has been retired.
 func (m Metadata) IsDeprecated() bool { return m.Status == StatusDeprecated }

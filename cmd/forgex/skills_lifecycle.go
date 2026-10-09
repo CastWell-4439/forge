@@ -33,6 +33,12 @@ Usage:
   forgex skills restore   --skill ID [--skills-dir DIR]
   forgex skills review    --skill ID [--skills-dir DIR]
   forgex skills stale     [--stale-after DURATION] [--skills-dir DIR]
+  forgex skills check     [--all] [--max N] [--record=false] [--json]
+
+  check runs the bound cases of EVERY skill (the batch form of verify) and
+  records each outcome onto the skill, so "has anything regressed" has an
+  answer without re-running the store. Each case is a full scenario execution,
+  so the cost is proportional to the total number of bound cases.
 
 Flags:
   --skill ID            the skill to act on
@@ -188,14 +194,45 @@ func skillsStale(args []string) error {
 		fmt.Printf("no skills are due for review (window %s)\n", window)
 		return nil
 	}
+
+	// A regression is more urgent than a lapsed review, so those come first and
+	// say so. A skill whose cases still fail needs attention regardless of when
+	// anyone last looked at it.
+	failing, err := store.ListNeedingAttention()
+	if err != nil {
+		return err
+	}
+	failingIDs := map[string]bool{}
+	for _, p := range failing {
+		failingIDs[p.Metadata.ID] = true
+	}
+
 	fmt.Printf("%d skill(s) reviewed more than %s ago:\n", len(stale), window)
 	for _, p := range stale {
 		days := int(now.Sub(p.Metadata.ReviewedAt).Hours() / 24)
-		fmt.Printf("  %-40s v%-8s last reviewed %d day(s) ago\n",
-			p.Metadata.ID, p.Metadata.Version, days)
+		mark := ""
+		if failingIDs[p.Metadata.ID] {
+			mark = "  [REGRESSED]"
+		}
+		fmt.Printf("  %-40s v%-8s last reviewed %d day(s) ago%s\n",
+			p.Metadata.ID, p.Metadata.Version, days, mark)
+	}
+	if len(failing) > 0 {
+		fmt.Printf("\n%d of them last failed their bound cases: %s\n",
+			len(failing), strings.Join(failingIDs2IDs(failing), ", "))
+		fmt.Println("Check them with: forgex skills check")
 	}
 	fmt.Println("\nThis is a report: nothing has changed status.")
 	fmt.Println("Confirm one with: forgex skills review --skill ID")
 	fmt.Println("Retire one with:  forgex skills deprecate --skill ID --reason TEXT")
 	return nil
+}
+
+// failingIDs2IDs renders a pack list as ids, for a report line.
+func failingIDs2IDs(packs []skillpack.Pack) []string {
+	out := make([]string, 0, len(packs))
+	for _, p := range packs {
+		out = append(out, p.Metadata.ID)
+	}
+	return out
 }
