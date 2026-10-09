@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -127,30 +128,91 @@ func (m *Manager) Create(ctx context.Context, req *Request) error {
 }
 
 // Respond records a human's response to a HITL request.
+//
+// It looks in memory first and then in the store. Memory alone was not enough
+// for the shape this system actually runs in: the worker files a request and the
+// coordinator serves the respond endpoint, so the coordinator's map is empty and
+// every answer would have been rejected as "not found" — the request would wait
+// out its full timeout with a human having already decided.
 func (m *Manager) Respond(ctx context.Context, requestID string, resp *Response) error {
 	m.mu.Lock()
 	req, exists := m.pending[requestID]
-	if !exists {
+	if exists {
+		if req.Status != StatusPending {
+			m.mu.Unlock()
+			return fmt.Errorf("hitl: request %q is %s, cannot respond", requestID, req.Status)
+		}
+		req.Status = StatusResponded
+		req.Response = resp
+		delete(m.pending, requestID)
 		m.mu.Unlock()
-		return fmt.Errorf("hitl: request %q not found or already resolved", requestID)
-	}
-	if req.Status != StatusPending {
-		m.mu.Unlock()
-		return fmt.Errorf("hitl: request %q is %s, cannot respond", requestID, req.Status)
-	}
 
-	req.Status = StatusResponded
-	req.Response = resp
-	delete(m.pending, requestID)
+		if m.store != nil {
+			if err := m.store.Update(ctx, req); err != nil {
+				return fmt.Errorf("hitl: update request: %w", err)
+			}
+		}
+		return nil
+	}
 	m.mu.Unlock()
 
+	// Not ours: it may belong to another process sharing the store.
+	if m.store == nil {
+		return fmt.Errorf("hitl: request %q not found or already resolved", requestID)
+	}
+	stored, err := m.store.Get(ctx, requestID)
+	if err != nil || stored == nil {
+		// A store that reports "not found" either way — Go's error, or a nil
+		// result with no error — means the same thing to a caller.
+		return fmt.Errorf("hitl: request %q not found or already resolved", requestID)
+	}
+	if stored.Status != StatusPending {
+		return fmt.Errorf("hitl: request %q is %s, cannot respond", requestID, stored.Status)
+	}
+
+	stored.Status = StatusResponded
+	stored.Response = resp
+	if err := m.store.Update(ctx, stored); err != nil {
+		return fmt.Errorf("hitl: update request: %w", err)
+	}
+	return nil
+}
+
+// ListPending returns every unanswered request, oldest first.
+//
+// Memory and store are merged because neither is complete on its own: this
+// process's map holds what it filed, and the store holds what anyone filed. A
+// request present in both is reported once.
+func (m *Manager) ListPending(ctx context.Context) ([]*Request, error) {
+	m.mu.RLock()
+	merged := make(map[string]*Request, len(m.pending))
+	var out []*Request
+	for id, req := range m.pending {
+		out = append(out, req)
+		merged[id] = req
+	}
+	m.mu.RUnlock()
+
 	if m.store != nil {
-		if err := m.store.Update(ctx, req); err != nil {
-			return fmt.Errorf("hitl: update request: %w", err)
+		stored, err := m.store.ListPending(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("hitl: list pending: %w", err)
+		}
+		for _, req := range stored {
+			if _, dup := merged[req.ID]; dup {
+				continue
+			}
+			out = append(out, req)
+			merged[req.ID] = req
 		}
 	}
 
-	return nil
+	// Oldest first: a queue of approvals is worked through in the order it
+	// arrived, and the one that has waited longest is the most likely blocker.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // Get retrieves a request by ID (from memory or store).
