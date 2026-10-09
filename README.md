@@ -544,9 +544,6 @@ triggers:
 config:
   timeout: 30m
   max_retries: 2
-  hitl:
-    auto_pause_on:
-      - "plan.confidence < 0.7"
 
 inputs:
   work_item_id: "{{.event.work_item_id}}"
@@ -586,7 +583,12 @@ stages:
         params: { analysis: "{{.analysis}}" }
         output: plan
 
-  # 人工闸门：条件命中时才插入审批
+  # 人工闸门：审批任务。条件是任务级 `condition` 字段（CEL 表达式）。
+  #
+  # 注意两处现状：
+  #   - 全局的 `hitl.auto_pause_on` 从未接线，已删除（避免留成陷阱）。
+  #   - 任务级 `condition` 目前只被解析进 DAG，求值尚未接线，
+  #     因此这里的条件暂时不会真正跳过该任务。
   - name: approve
     tasks:
       - worker: hitl
