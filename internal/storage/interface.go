@@ -147,20 +147,40 @@ type Storage interface {
 	ClaimTask(ctx context.Context, workerID string, handlers []string) (*Task, error)
 	UpdateTaskStatus(ctx context.Context, taskID string, status TaskStatus) error
 
-	// AssignTaskWorker records which worker is executing a task.
+	// MarkTaskRunning records that a task has begun executing under a worker:
+	// status RUNNING, owner workerID, and the attempt counter advanced.
 	//
-	// It exists because the dispatch path is a PUSH: the coordinator picks a
-	// worker and calls it, rather than the worker claiming a task. Without this
-	// write, task_instances.worker_id stayed empty for every normally
-	// dispatched task, and the dead-worker path — which finds work to requeue
-	// by matching task.WorkerID against the worker that died — could never
-	// match anything. A task whose worker died would therefore stay RUNNING
-	// forever with nothing to reset it.
+	// These three belong in one write because they are one fact — "this attempt
+	// started". Splitting them means a crash between the writes leaves a task
+	// that is running under an owner nobody recorded, or one whose attempt
+	// count disagrees with how many times it has actually run.
+	//
+	// Attempt counts attempts STARTED, which is the reading retry.go's
+	// ShouldRetry assumes (Attempt < MaxAttempts = "tries remain"). That makes
+	// max_attempts the total number of runs, not one more than it.
+	//
+	// The owner is what the dead-worker path matches on when it looks for work
+	// to requeue; without it a task whose worker died stayed RUNNING forever.
 	//
 	// A dedicated accessor rather than SaveTask: the PostgreSQL SaveTask is an
-	// INSERT, so using it to change one field would insert a duplicate row.
+	// INSERT, so using it to change fields would insert a duplicate row.
 	// A missing task is not an error.
-	AssignTaskWorker(ctx context.Context, taskID string, workerID string) error
+	MarkTaskRunning(ctx context.Context, taskID string, workerID string) error
+
+	// ScheduleTaskRetry returns a failed task to READY with notBefore as the
+	// earliest time it may run again.
+	//
+	// The delay rides on ScheduledAt rather than a new "waiting" status: READY
+	// already means "eligible", and a new state would mean teaching every
+	// reader of TaskStatus about it. The scheduler treats a READY task whose
+	// ScheduledAt is still in the future as not yet eligible — which is the
+	// only reading that makes a retry delay mean anything.
+	//
+	// The attempt counter is NOT advanced here: it counts starts, and this call
+	// precedes a start rather than being one.
+	//
+	// A missing task is not an error.
+	ScheduleTaskRetry(ctx context.Context, taskID string, notBefore time.Time) error
 
 	// ReleaseTask clears a task's worker assignment so the scheduler no longer
 	// treats it as owned. Used when a task is parked (paused awaiting human

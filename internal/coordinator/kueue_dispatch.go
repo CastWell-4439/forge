@@ -33,22 +33,16 @@ func (c *Coordinator) dispatchKueueTask(ctx context.Context, task *storage.Task,
 	jobName := c.kueue.JobName(task.WorkflowID, task.ID)
 	namespace := c.kueue.Namespace()
 
-	// Mark running before recording the sentinel: a task that is RUNNING with
-	// a worker id and no job is recoverable by inspection, while a job nobody
-	// tracks is not.
-	if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusRunning); err != nil {
-		log.Printf("ERROR: update kueue task %s to running: %v", task.ID, err)
-		return
-	}
-
-	// The sentinel plus the deadline are what make this task reconcilable and
-	// timeout-able. Both are written through the narrow accessors rather than
+	// Mark running, record the sentinel and advance the attempt counter in one
+	// write. The sentinel plus the deadline are what make this task reconcilable
+	// and timeout-able, and they go through the narrow accessors rather than
 	// SaveTask: on PostgreSQL SaveTask is a plain INSERT, so using it to amend
 	// an existing row fails on the primary key and silently leaves the task
-	// with neither its owner nor its deadline — which is exactly the state
-	// that makes a GPU task unreconcilable.
-	if err := c.store.AssignTaskWorker(ctx, task.ID, kueueWorkerID(namespace, jobName)); err != nil {
+	// with neither its owner nor its deadline — exactly the state that makes a
+	// GPU task unreconcilable.
+	if err := c.store.MarkTaskRunning(ctx, task.ID, kueueWorkerID(namespace, jobName)); err != nil {
 		log.Printf("ERROR: record kueue identity for task %s: %v", task.ID, err)
+		return
 	}
 	if deadline := kueueDeadline(taskDef, time.Now().UTC()); deadline != nil {
 		if err := c.store.RebaseTaskDeadline(ctx, task.ID, deadline); err != nil {

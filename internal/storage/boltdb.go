@@ -360,8 +360,9 @@ func isTerminalTaskStatus(s TaskStatus) bool {
 	return s == TaskStatusCompleted || s == TaskStatusFailed || s == TaskStatusSkipped
 }
 
-// AssignTaskWorker records which worker is executing a task (see the interface).
-func (s *BoltStorage) AssignTaskWorker(_ context.Context, taskID string, workerID string) error {
+// MarkTaskRunning records that a task has begun executing under a worker (see
+// the interface): RUNNING, its owner, and the attempt counter advanced.
+func (s *BoltStorage) MarkTaskRunning(_ context.Context, taskID string, workerID string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketTasks)
 		raw := b.Get([]byte(taskID))
@@ -372,10 +373,39 @@ func (s *BoltStorage) AssignTaskWorker(_ context.Context, taskID string, workerI
 		if err := json.Unmarshal(raw, &task); err != nil {
 			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
 		}
-		if task.WorkerID == workerID {
+		now := time.Now().UTC()
+		task.Status = TaskStatusRunning
+		task.WorkerID = workerID
+		task.Attempt++
+		task.StartedAt = &now
+		task.FinishedAt = nil
+		updated, err := json.Marshal(&task)
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", taskID, err)
+		}
+		return b.Put([]byte(taskID), updated)
+	})
+}
+
+// ScheduleTaskRetry returns a failed task to READY with notBefore as the
+// earliest run time (see the interface).
+func (s *BoltStorage) ScheduleTaskRetry(_ context.Context, taskID string, notBefore time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTasks)
+		raw := b.Get([]byte(taskID))
+		if raw == nil {
 			return nil
 		}
-		task.WorkerID = workerID
+		var task Task
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
+		}
+		task.Status = TaskStatusReady
+		task.ScheduledAt = &notBefore
+		task.WorkerID = ""
+		task.StartedAt = nil
+		task.FinishedAt = nil
+		task.ErrorMsg = ""
 		updated, err := json.Marshal(&task)
 		if err != nil {
 			return fmt.Errorf("marshal task %s: %w", taskID, err)

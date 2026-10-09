@@ -321,16 +321,37 @@ func (s *PGStorage) ReleaseTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// AssignTaskWorker records which worker is executing a task (see the interface).
-//
-// A dedicated UPDATE rather than SaveTask, which is an INSERT on this backend:
-// using it to change one column would add a duplicate row instead of amending
-// the existing one.
-func (s *PGStorage) AssignTaskWorker(ctx context.Context, taskID string, workerID string) error {
+// MarkTaskRunning records that a task has begun executing under a worker (see
+// the interface): RUNNING, its owner, and the attempt counter advanced.
+func (s *PGStorage) MarkTaskRunning(ctx context.Context, taskID string, workerID string) error {
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE task_instances SET worker_id = $1 WHERE id = $2
-	`, workerID, taskID); err != nil {
-		return fmt.Errorf("assign worker %s to task %s: %w", workerID, taskID, err)
+		UPDATE task_instances
+		SET status = $1,
+		    worker_id = $2,
+		    attempt = attempt + 1,
+		    started_at = NOW(),
+		    finished_at = NULL
+		WHERE id = $3
+	`, TaskStatusRunning, workerID, taskID); err != nil {
+		return fmt.Errorf("mark task %s running: %w", taskID, err)
+	}
+	return nil
+}
+
+// ScheduleTaskRetry returns a failed task to READY with notBefore as the
+// earliest run time (see the interface).
+func (s *PGStorage) ScheduleTaskRetry(ctx context.Context, taskID string, notBefore time.Time) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1,
+		    scheduled_at = $2,
+		    worker_id = NULL,
+		    started_at = NULL,
+		    finished_at = NULL,
+		    error_msg = ''
+		WHERE id = $3
+	`, TaskStatusReady, notBefore, taskID); err != nil {
+		return fmt.Errorf("schedule retry for task %s: %w", taskID, err)
 	}
 	return nil
 }

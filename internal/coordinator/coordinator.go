@@ -434,12 +434,25 @@ func (c *Coordinator) unlockSuccessors(ctx context.Context, workflowID string, f
 }
 
 // OnTaskFailed is called when a worker reports task failure.
-// If the failed task's on_failure policy is COMPENSATE, it triggers Saga compensation.
-// Otherwise, it marks the workflow as failed.
+//
+// A task with attempts left is rescheduled rather than failed: the retry policy
+// declares how many attempts it gets and how long to wait between them, and
+// those declarations were parsed into the DAG long before anything acted on
+// them. Only once the budget is spent does the failure reach the workflow.
+//
+// If the failed task's on_failure policy is COMPENSATE, it triggers Saga
+// compensation. Otherwise, it marks the workflow as failed.
 func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg string) error {
 	task, err := c.store.GetTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("get task %s: %w", taskID, err)
+	}
+
+	// Retry first: a task that still has attempts left has not failed in the
+	// sense the workflow cares about, and failing it here would make
+	// max_attempts meaningless.
+	if c.tryReschedule(ctx, task, errMsg) {
+		return nil
 	}
 
 	if err := c.store.FailTask(ctx, taskID, errMsg); err != nil {
@@ -469,6 +482,74 @@ func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg st
 	return nil
 }
 
+// tryReschedule returns a failed task to the queue when its retry budget allows
+// it, reporting whether it did.
+//
+// The decision uses EvaluateRetry, which already knows the policy: attempts
+// left, the backoff shape, and the full-jitter delay. Nothing new is invented
+// here — the piece that was missing was a caller.
+//
+// A zero MaxAttempts means one attempt (the default the DAG loader applies), so
+// a task nobody configured retries zero times and behaves exactly as before.
+func (c *Coordinator) tryReschedule(ctx context.Context, task *storage.Task, errMsg string) bool {
+	if task.MaxAttempts <= 1 {
+		return false
+	}
+
+	// Attempt counts starts, and MarkTaskRunning advanced it when this run
+	// began — so the stored value already includes the attempt that just
+	// failed. That makes max_attempts the total number of runs rather than one
+	// more than it.
+	decision := EvaluateRetry(&RetryableTask{
+		ID:          task.ID,
+		TaskName:    task.TaskName,
+		WorkflowID:  task.WorkflowID,
+		Handler:     task.Handler,
+		Attempt:     task.Attempt,
+		MaxAttempts: task.MaxAttempts,
+		RetryPolicy: c.taskDef(task).Retry,
+	})
+	if !decision.ShouldRetry {
+		// Out of attempts. Say so once here, where we still have the error and
+		// the counts in hand, rather than leaving an operator to reconstruct it.
+		LogDeadLetter(&RetryableTask{
+			ID:          task.ID,
+			TaskName:    task.TaskName,
+			WorkflowID:  task.WorkflowID,
+			Handler:     task.Handler,
+			Attempt:     task.Attempt,
+			MaxAttempts: task.MaxAttempts,
+		}, errMsg)
+		return false
+	}
+
+	notBefore := time.Now().Add(decision.Delay)
+	if err := c.store.ScheduleTaskRetry(ctx, task.ID, notBefore); err != nil {
+		// Could not requeue: fall through to the ordinary failure path rather
+		// than leaving the task stuck in a state nothing will advance.
+		log.Printf("ERROR: schedule retry for task %s: %v", task.ID, err)
+		return false
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"error":        errMsg,
+		"attempt":      task.Attempt,
+		"max_attempts": task.MaxAttempts,
+		"retry_after":  notBefore.UTC().Format(time.RFC3339Nano),
+	})
+	c.saveEvent(ctx, task.WorkflowID, task.ID, storage.EventTaskRetrying, payload)
+	log.Printf("INFO: task %s retry %d/%d scheduled in %s",
+		task.ID, task.Attempt, task.MaxAttempts, decision.Delay)
+
+	// Wake the scheduler when the delay elapses. Without this the task would be
+	// READY but only picked up the next time some other event triggered a scan,
+	// which for a quiet workflow means never.
+	time.AfterFunc(decision.Delay, func() {
+		c.scheduleReadyTasks(context.Background(), task.WorkflowID)
+	})
+	return true
+}
+
 // scheduleReadyTasks finds READY tasks for a workflow and dispatches them to workers.
 func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string) {
 	tasks, err := c.store.ListTasksByWorkflow(ctx, workflowID)
@@ -476,8 +557,16 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 		return
 	}
 
+	now := time.Now()
 	for _, task := range tasks {
 		if task.Status != storage.TaskStatusReady {
+			continue
+		}
+
+		// A retry waits out its backoff before it is eligible again. READY plus
+		// a future ScheduledAt is how that wait is expressed, so a task that
+		// is READY but not yet due is skipped rather than dispatched early.
+		if task.ScheduledAt != nil && task.ScheduledAt.After(now) {
 			continue
 		}
 
@@ -791,18 +880,11 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		}()
 	}
 
-	// Update task to RUNNING
-	if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusRunning); err != nil {
-		log.Printf("ERROR: update task %s to running: %v", task.ID, err)
+	// Update task to RUNNING, record its owner, and advance the attempt
+	// counter — one write, because they are one fact: this attempt started.
+	if err := c.store.MarkTaskRunning(ctx, task.ID, worker.ID); err != nil {
+		log.Printf("ERROR: mark task %s running: %v", task.ID, err)
 		return
-	}
-	// Record the owner. This is what the dead-worker path matches on when it
-	// looks for work to requeue; without it, a task whose worker died stayed
-	// RUNNING forever because nothing could be found to reset.
-	if err := c.store.AssignTaskWorker(ctx, task.ID, worker.ID); err != nil {
-		// Not fatal: the task still runs. Losing the owner only costs us the
-		// ability to recover it if this worker dies, which is worth a warning.
-		log.Printf("WARN: record worker %s on task %s: %v", worker.ID, task.ID, err)
 	}
 	c.saveEvent(ctx, task.WorkflowID, task.ID, storage.EventTaskStarted, nil)
 
