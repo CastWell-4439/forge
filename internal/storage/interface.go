@@ -182,6 +182,24 @@ type Storage interface {
 	// A missing task is not an error.
 	ScheduleTaskRetry(ctx context.Context, taskID string, notBefore time.Time) error
 
+	// MarkTaskScheduled moves a task from READY to SCHEDULED, reporting whether
+	// this caller was the one that made the transition.
+	//
+	// It is a compare-and-set rather than a plain status write, and that is the
+	// whole point: dispatch begins by reading which tasks are READY, and two
+	// schedulers can read the same task before either writes. An unconditional
+	// update lets both dispatch it — observed live as the same task reaching a
+	// worker twice. Only one caller wins the READY→SCHEDULED transition, so
+	// false means "someone else took it" and the caller must not dispatch.
+	//
+	// Returning a bool rather than an error keeps that distinction: losing the
+	// race is normal, not a failure. A missing task also reports false, since
+	// there is nothing to dispatch either way.
+	//
+	// A mutex would not serve here: the coordinator runs as several processes in
+	// distributed mode, and only the store is shared.
+	MarkTaskScheduled(ctx context.Context, taskID string) (bool, error)
+
 	// ReleaseTask clears a task's worker assignment so the scheduler no longer
 	// treats it as owned. Used when a task is parked (paused awaiting human
 	// approval) or returned to READY: the worker must not keep holding a

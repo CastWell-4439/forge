@@ -86,13 +86,17 @@ tasks:
 		return statuses["a"] == storage.TaskStatusCompleted
 	}, 20*time.Second, 25*time.Millisecond, "the third attempt must succeed")
 
+	// The task reaching COMPLETED and the workflow reaching COMPLETED are two
+	// writes; waiting only for the first leaves a window where the second has
+	// not landed yet.
+	require.Eventually(t, func() bool {
+		wf, err := coord.store.GetWorkflow(context.Background(), resp.GetWorkflowId())
+		return err == nil && wf.Status == storage.WorkflowStatusCompleted
+	}, 20*time.Second, 25*time.Millisecond, "the workflow must complete once its only task has")
+
 	// max_attempts is the total number of runs: 3 attempts means the first two
 	// may fail and the third succeeds.
 	assert.Equal(t, 3, worker.callCount(), "two failures then one success")
-
-	wf, err := coord.store.GetWorkflow(context.Background(), resp.GetWorkflowId())
-	require.NoError(t, err)
-	assert.Equal(t, storage.WorkflowStatusCompleted, wf.Status)
 
 	tasks, err := coord.store.ListTasksByWorkflow(context.Background(), resp.GetWorkflowId())
 	require.NoError(t, err)

@@ -130,7 +130,8 @@ tasks:
 		return taskStatuses(t, coord.store, resp.GetWorkflowId())["a"] == storage.TaskStatusCompleted
 	}, 10*time.Second, 50*time.Millisecond)
 
-	assert.Equal(t, 1, worker.count())
+	require.Eventually(t, func() bool { return worker.count() == 1 },
+		20*time.Second, 25*time.Millisecond)
 }
 
 // No condition means "always run" — every workflow written before conditions
@@ -147,7 +148,8 @@ func TestAbsentConditionRunsTheTask(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return taskStatuses(t, coord.store, resp.GetWorkflowId())["a"] == storage.TaskStatusCompleted
 	}, 10*time.Second, 50*time.Millisecond)
-	assert.Equal(t, 1, worker.count())
+	require.Eventually(t, func() bool { return worker.count() == 1 },
+		20*time.Second, 25*time.Millisecond)
 }
 
 // A condition can read a predecessor's declared output, which is the whole
@@ -214,7 +216,8 @@ tasks:
 		return statuses["approve"] == storage.TaskStatusCompleted
 	}, 10*time.Second, 50*time.Millisecond)
 
-	assert.Equal(t, 2, worker.count(), "both tasks must run")
+	require.Eventually(t, func() bool { return worker.count() == 2 },
+		20*time.Second, 25*time.Millisecond, "both tasks must run")
 }
 
 // A skipped task satisfies its dependents, so the workflow finishes instead of

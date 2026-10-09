@@ -321,6 +321,25 @@ func (s *PGStorage) ReleaseTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// MarkTaskScheduled performs the READY to SCHEDULED transition as a
+// compare-and-set (see the interface). The WHERE clause is what makes it atomic:
+// the database decides the winner, not the caller's earlier read.
+//
+// It deliberately does not touch scheduled_at: that column carries the retry
+// backoff ("do not run before this instant"), and overwriting it here would
+// erase the wait a retry is serving. The transition is the whole job.
+func (s *PGStorage) MarkTaskScheduled(ctx context.Context, taskID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1
+		WHERE id = $2 AND status = $3
+	`, TaskStatusScheduled, taskID, TaskStatusReady)
+	if err != nil {
+		return false, fmt.Errorf("mark task %s scheduled: %w", taskID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // MarkTaskRunning records that a task has begun executing under a worker (see
 // the interface): RUNNING, its owner, and the attempt counter advanced.
 func (s *PGStorage) MarkTaskRunning(ctx context.Context, taskID string, workerID string) error {

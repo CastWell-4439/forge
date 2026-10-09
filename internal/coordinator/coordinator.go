@@ -86,6 +86,21 @@ type Coordinator struct {
 	dagCache   map[string]*DAG
 	dagCacheMu sync.RWMutex
 
+	// advanceMu serialises the read-modify-write that moves a workflow forward.
+	//
+	// Advancing reads every task's status, decides which ones become READY or
+	// SKIPPED, and writes the results. Two tasks can finish at the same instant
+	// (they are separate goroutines, and a workflow's roots are dispatched
+	// together), so without this two advances interleave: both read the same
+	// pre-transition picture and both act on it. Observed live — a task was
+	// dispatched twice, and a skip decided by one branch was undone by the
+	// other's stale read.
+	//
+	// One lock for all workflows rather than a per-workflow map: the critical
+	// section is a handful of database reads and writes, and correctness here
+	// is worth more than the contention.
+	advanceMu sync.Mutex
+
 	// cel evaluates task conditions. Lazily built on first use because
 	// compiling the environment is the expensive part, and the evaluator
 	// caches programs so one instance serves every task.
@@ -354,8 +369,13 @@ func (c *Coordinator) CancelWorkflow(ctx context.Context, req *forgev1.CancelWor
 }
 
 // OnTaskCompleted is called when a worker reports task completion.
-// It updates the task, checks if successor tasks are now ready, and
-// completes the workflow if all tasks are done.
+//
+// The task's on_result rules decide what happens next. Three of the four
+// actions are handled here — continue, abort and skip — because none of them
+// needs to move a task backwards. goto is rejected loudly rather than ignored:
+// re-running part of a DAG has no defined treatment for the work already done
+// in the nodes it jumps over, and pretending otherwise would silently produce
+// a wrong result instead of an unhandled one.
 func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output json.RawMessage) error {
 	task, err := c.store.GetTask(ctx, taskID)
 	if err != nil {
@@ -367,70 +387,211 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 	}
 	c.saveEvent(ctx, task.WorkflowID, taskID, storage.EventTaskCompleted, output)
 
-	return c.unlockSuccessors(ctx, task.WorkflowID, task)
+	route := c.taskDef(task).OnResult.Resolve("success")
+	switch route.Action {
+	case RouteActionAbort:
+		// A successful task that aborts the run is a deliberate early exit, not
+		// a failure of this task: the message says which task asked for it.
+		payload, _ := json.Marshal(map[string]string{
+			"error":  fmt.Sprintf("task %s routed to abort", task.TaskName),
+			"reason": "on_result.abort",
+		})
+		if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusFailed); err != nil {
+			return fmt.Errorf("abort workflow %s: %w", task.WorkflowID, err)
+		}
+		c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowFailed, payload)
+		c.evictDAGCache(task.WorkflowID)
+		return nil
+
+	case RouteActionSkip:
+		// "Skip the downstream": this task is done, its successors are not run.
+		// advanceWorkflow reads that from the completed task's route, so the
+		// branch stops whether or not other tasks finish at the same moment.
+		return c.advanceWorkflow(ctx, task.WorkflowID, task.ID)
+
+	case RouteActionGoto:
+		return fmt.Errorf("task %s: on_result.goto is not supported yet", task.TaskName)
+	}
+
+	return c.advanceWorkflow(ctx, task.WorkflowID, task.ID)
 }
 
-// unlockSuccessors marks a finished task's dependents READY, completes the
-// workflow when nothing is left, and schedules whatever became runnable.
+// advanceWorkflow moves a workflow forward from whatever its tasks currently
+// say, and reports whether it is finished.
 //
-// It is shared by the completed and skipped paths because a skipped task
-// satisfies its dependents exactly as a completed one does — that is what
-// "skip" means for a DAG. Two copies of this rule would eventually disagree
-// about that.
-func (c *Coordinator) unlockSuccessors(ctx context.Context, workflowID string, finished *storage.Task) error {
+// Everything here is derived from persisted task rows plus the DAG, never from
+// "which completion handler ran first". That matters because two tasks can
+// finish concurrently: an earlier version marked a task's successors READY as a
+// side effect of that task finishing, so a `skip` decided by one branch could
+// be undone by an unrelated task finishing at the same moment — whether the
+// skip survived depended on goroutine scheduling. Recomputing eligibility from
+// state instead of mutating it incrementally makes the outcome order-independent.
+//
+// The rule for a PENDING task is:
+//
+//	blocked   — some ancestor is COMPLETED with an on_result route of skip, so
+//	            the author asked for this branch to stop. Settle it SKIPPED.
+//	ready     — every dependency is settled (COMPLETED or SKIPPED) and nothing
+//	            blocked it. Mark it READY.
+//	otherwise — leave it alone.
+//
+// A task skipped by its own CONDITION is settled too, but it does not block:
+// "this task does not apply" and "do not run my downstream" are different
+// statements, and only on_result says the second.
+func (c *Coordinator) advanceWorkflow(ctx context.Context, workflowID, justFinishedID string) error {
+	// Serialise the read-decide-write below (see advanceMu).
+	c.advanceMu.Lock()
+	defer c.advanceMu.Unlock()
+
+	dag := c.cachedDAG(workflowID)
+	if dag == nil {
+		// Without the definitions nothing can be decided; the workflow keeps
+		// whatever state it has rather than being advanced on a guess.
+		return fmt.Errorf("advance workflow %s: DAG is not cached", workflowID)
+	}
+
 	tasks, err := c.store.ListTasksByWorkflow(ctx, workflowID)
 	if err != nil {
 		return fmt.Errorf("list tasks for workflow %s: %w", workflowID, err)
 	}
 
-	completedTasks := make(map[string]bool)
-	allDone := true
+	settled := make(map[string]bool, len(tasks))     // COMPLETED or SKIPPED
+	blockedBy := make(map[string]string, len(tasks)) // task -> ancestor that skipped this branch
+	byName := make(map[string]*storage.Task, len(tasks))
+
 	for _, t := range tasks {
-		if t.ID == finished.ID {
-			// This is the task we just finished — treat as done regardless of
-			// what the DB returned (avoid read-after-write race).
-			completedTasks[t.TaskName] = true
-			continue
-		}
+		byName[t.TaskName] = t
 		if t.Status == storage.TaskStatusCompleted || t.Status == storage.TaskStatusSkipped {
-			completedTasks[t.TaskName] = true
-		} else {
-			allDone = false
+			settled[t.TaskName] = true
+		}
+		if t.ID == justFinishedID {
+			// The just-finished task may not be readable as settled yet
+			// (read-after-write). Its handler wrote a terminal state before
+			// calling us, so treating it as settled is what the caller means.
+			settled[t.TaskName] = true
 		}
 	}
 
-	// If all tasks completed, mark workflow as completed
-	if allDone {
-		if err := c.store.UpdateWorkflowStatus(ctx, workflowID, storage.WorkflowStatusCompleted); err != nil {
-			return fmt.Errorf("complete workflow %s: %w", workflowID, err)
-		}
-		c.saveEvent(ctx, workflowID, "", storage.EventWorkflowCompleted, nil)
-		c.evictDAGCache(workflowID)
-		return nil
-	}
-
-	// Find successor tasks that are now ready
-	for _, t := range tasks {
-		if t.Status != storage.TaskStatusPending {
+	// Which branch-stopping tasks actually ran to completion? Only those block
+	// their downstream. A task that declared a skip route but is still pending
+	// has decided nothing yet.
+	for name, t := range byName {
+		if t.Status != storage.TaskStatusCompleted {
 			continue
 		}
-		ready := true
-		for _, dep := range t.DependsOn {
-			if !completedTasks[dep] {
-				ready = false
-				break
+		def := dag.Tasks[name]
+		if def == nil || def.OnResult.Resolve("success").Action != RouteActionSkip {
+			continue
+		}
+		for _, downstream := range reachableFrom(dag, name) {
+			if _, already := blockedBy[downstream]; !already {
+				blockedBy[downstream] = name
 			}
 		}
-		if ready {
+	}
+
+	progressed := true
+	for progressed {
+		progressed = false
+
+		for _, t := range tasks {
+			if settled[t.TaskName] {
+				continue
+			}
+
+			// A task blocked by a branch-stop is settled as skipped. It is
+			// only settled once it has not started: work already dispatched is
+			// not ours to retract.
+			if blocker, blocked := blockedBy[t.TaskName]; blocked {
+				if t.Status == storage.TaskStatusPending || t.Status == storage.TaskStatusReady {
+					if err := c.settleSkipped(ctx, workflowID, t, fmt.Sprintf("upstream task %s routed to skip", blocker)); err != nil {
+						return err
+					}
+					settled[t.TaskName] = true
+					progressed = true
+				}
+				continue
+			}
+
+			if t.Status != storage.TaskStatusPending {
+				continue
+			}
+			ready := true
+			for _, dep := range t.DependsOn {
+				if !settled[dep] {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
 			if err := c.store.UpdateTaskStatus(ctx, t.ID, storage.TaskStatusReady); err != nil {
 				return fmt.Errorf("mark task %s ready: %w", t.ID, err)
 			}
+			t.Status = storage.TaskStatusReady
+			progressed = true
 		}
 	}
 
-	// Schedule newly ready tasks
-	go c.scheduleReadyTasks(context.Background(), workflowID)
+	// Nothing left to run means the workflow is done. A task still holding a
+	// non-terminal status keeps it open.
+	for _, t := range tasks {
+		if settled[t.TaskName] {
+			continue
+		}
+		if t.Status != storage.TaskStatusCompleted && t.Status != storage.TaskStatusSkipped {
+			go c.scheduleReadyTasks(context.Background(), workflowID)
+			return nil
+		}
+	}
+
+	if err := c.store.UpdateWorkflowStatus(ctx, workflowID, storage.WorkflowStatusCompleted); err != nil {
+		return fmt.Errorf("complete workflow %s: %w", workflowID, err)
+	}
+	c.saveEvent(ctx, workflowID, "", storage.EventWorkflowCompleted, nil)
+	c.evictDAGCache(workflowID)
 	return nil
+}
+
+// settleSkipped marks one task SKIPPED and records why.
+func (c *Coordinator) settleSkipped(ctx context.Context, workflowID string, t *storage.Task, reason string) error {
+	if err := c.store.UpdateTaskStatus(ctx, t.ID, storage.TaskStatusSkipped); err != nil {
+		return fmt.Errorf("skip task %s: %w", t.ID, err)
+	}
+	payload, _ := json.Marshal(map[string]string{"reason": reason})
+	c.saveEvent(ctx, workflowID, t.ID, storage.EventTaskSkipped, payload)
+	return nil
+}
+
+// reachableFrom returns every task name that transitively depends on root,
+// excluding root itself.
+//
+// The DAG map key is the task name: TaskDef.Name is yaml:"-" and stays empty
+// after parsing, so reading it here would collect nothing and quietly turn a
+// skip into a continue.
+func reachableFrom(dag *DAG, root string) []string {
+	var out []string
+	seen := map[string]bool{}
+	queue := []string{root}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		for taskName, def := range dag.Tasks {
+			if taskName == root || seen[taskName] {
+				continue
+			}
+			for _, dep := range def.DependsOn {
+				if dep == name {
+					seen[taskName] = true
+					out = append(out, taskName)
+					queue = append(queue, taskName)
+					break
+				}
+			}
+		}
+	}
+	return out
 }
 
 // OnTaskFailed is called when a worker reports task failure.
@@ -595,8 +756,16 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 			continue
 		}
 
-		// Mark task as scheduled
-		if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusScheduled); err != nil {
+		// Claim the transition before dispatching. Several scanners can run at
+		// once (submit, every workflow advance, a retry timer), so two of them
+		// can see this task as READY; only the one that wins READY→SCHEDULED
+		// may dispatch it. Without this the task reached a worker twice.
+		won, err := c.store.MarkTaskScheduled(ctx, task.ID)
+		if err != nil {
+			log.Printf("ERROR: claim task %s for scheduling: %v", task.ID, err)
+			continue
+		}
+		if !won {
 			continue
 		}
 
@@ -694,13 +863,12 @@ func (c *Coordinator) celEvaluator() (*CELEvaluator, error) {
 	return c.cel, c.celErr
 }
 
-// markTaskSkipped records that a task's condition excluded it, then unlocks its
-// successors through the ordinary completion path.
+// markTaskSkipped records that a task's condition excluded it, then advances the
+// workflow past it.
 //
-// Reusing OnTaskCompleted's unlocking is the point: a skipped task is a
-// satisfied dependency, which is exactly how that function already treats
-// TaskStatusSkipped. Writing a parallel "unlock the successors" path here would
-// be a second implementation of the same rule, and the two would drift.
+// A condition-skipped task is a satisfied dependency: "this task does not apply
+// here" is not the same statement as "do not run my downstream" (which is what
+// on_result: skip says). So it settles as SKIPPED and blocks nothing.
 func (c *Coordinator) markTaskSkipped(ctx context.Context, workflowID string, task *storage.Task) {
 	if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusSkipped); err != nil {
 		log.Printf("ERROR: mark task %s skipped: %v", task.ID, err)
@@ -713,10 +881,8 @@ func (c *Coordinator) markTaskSkipped(ctx context.Context, workflowID string, ta
 	})
 	c.saveEvent(ctx, workflowID, task.ID, storage.EventTaskSkipped, payload)
 
-	// Unlock successors. The task is marked skipped already, so the completion
-	// path sees it as done.
-	if err := c.unlockSuccessors(ctx, workflowID, task); err != nil {
-		log.Printf("ERROR: unlock successors of skipped task %s: %v", task.ID, err)
+	if err := c.advanceWorkflow(ctx, workflowID, task.ID); err != nil {
+		log.Printf("ERROR: advance workflow past skipped task %s: %v", task.ID, err)
 	}
 }
 
