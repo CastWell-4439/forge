@@ -34,6 +34,9 @@ type TaskState struct {
 	Attempts   int
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+	// LoopIterations counts revisits caused by on_result goto routes, mirroring
+	// the column of the same meaning on the task row.
+	LoopIterations int
 }
 
 // Store wraps the low-level storage.Storage event methods with
@@ -215,6 +218,24 @@ func applyEvent(state *WorkflowState, event *storage.Event) error {
 	case storage.EventTaskCompensating:
 		taskState := state.getOrCreateTask(event.TaskID)
 		taskState.Status = storage.TaskStatusCompensating
+
+	case storage.EventTaskGoto:
+		// The task that jumped has completed. The rewind is NOT applied here:
+		// this event names its target by DAG name, and the state map is keyed by
+		// task ID, so there is nothing to resolve the name against. Each rewound
+		// task emits its own TASK_REWOUND event carrying its real ID, and that is
+		// what returns it to the queue. Recording the same fact twice from two
+		// keys would be a chance for them to disagree.
+		finished := state.getOrCreateTask(event.TaskID)
+		finished.Status = storage.TaskStatusCompleted
+
+	case storage.EventTaskRewound:
+		// One event per rewound task, keyed by its own ID, so a loop's full
+		// rewind set is reconstructible from the log alone.
+		taskState := state.getOrCreateTask(event.TaskID)
+		taskState.Status = storage.TaskStatusPending
+		taskState.Output = nil
+		taskState.LoopIterations++
 
 	default:
 		// Unknown event type — skip silently for forward compatibility.

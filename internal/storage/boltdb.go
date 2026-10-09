@@ -360,6 +360,35 @@ func isTerminalTaskStatus(s TaskStatus) bool {
 	return s == TaskStatusCompleted || s == TaskStatusFailed || s == TaskStatusSkipped
 }
 
+// RewindTaskForGoto returns a task to the queue for a loop iteration (see the
+// interface): PENDING, loop counter advanced, output and ownership cleared.
+func (s *BoltStorage) RewindTaskForGoto(_ context.Context, taskID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTasks)
+		raw := b.Get([]byte(taskID))
+		if raw == nil {
+			return nil
+		}
+		var task Task
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return fmt.Errorf("unmarshal task %s: %w", taskID, err)
+		}
+		task.Status = TaskStatusPending
+		task.LoopIteration++
+		task.Output = nil
+		task.WorkerID = ""
+		task.ScheduledAt = nil
+		task.StartedAt = nil
+		task.FinishedAt = nil
+		task.ErrorMsg = ""
+		updated, err := json.Marshal(&task)
+		if err != nil {
+			return fmt.Errorf("marshal task %s: %w", taskID, err)
+		}
+		return b.Put([]byte(taskID), updated)
+	})
+}
+
 // MarkTaskScheduled performs the READY to SCHEDULED transition as a
 // compare-and-set (see the interface). BoltDB serialises writes, so the check
 // and the write inside one transaction are atomic by construction.

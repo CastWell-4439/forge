@@ -163,10 +163,15 @@ tasks:
 	assert.Equal(t, 2, worker.count(), "both tasks run normally")
 }
 
-// goto is refused rather than ignored. Silently continuing would run the DAG as
-// if the author had asked for "continue", which is a wrong answer delivered
-// confidently.
-func TestOnResultGotoIsRefusedNotIgnored(t *testing.T) {
+// A goto to a task that is not an ancestor cannot be honoured, and the refusal
+// fails the run rather than being dropped. Failing matters: the jumping task is
+// already COMPLETED, so without an explicit verdict nothing would advance past
+// it and the run would sit unfinished with only a log line to explain why.
+//
+// The goto itself is covered in depth in goto_loop_test.go; this keeps the
+// routing table's own view of it, where "b" is a descendant so the refusal is
+// the only thing in flight.
+func TestOnResultGotoToNonAncestorFailsTheRun(t *testing.T) {
 	coord, _ := routeTestSetup(t)
 
 	dagYAML := `
@@ -183,15 +188,12 @@ tasks:
 	resp, err := coord.SubmitWorkflow(context.Background(), &forgev1.SubmitWorkflowRequest{DagYaml: dagYAML})
 	require.NoError(t, err)
 
-	// The task completes, then the handler reports the unsupported route.
 	require.Eventually(t, func() bool {
-		statuses := taskStatuses(t, coord.store, resp.GetWorkflowId())
-		return statuses["a"] == storage.TaskStatusCompleted
-	}, 20*time.Second, 25*time.Millisecond)
+		wf, err := coord.store.GetWorkflow(context.Background(), resp.GetWorkflowId())
+		return err == nil && wf.Status == storage.WorkflowStatusFailed
+	}, 20*time.Second, 25*time.Millisecond,
+		"an unhonourable route must fail the run instead of stalling it")
 
-	// The refusal surfaces as the workflow not silently succeeding with the
-	// wrong semantics: b never becomes READY through the goto, and the error is
-	// returned to whoever called the completion handler.
 	tasks, err := coord.store.ListTasksByWorkflow(context.Background(), resp.GetWorkflowId())
 	require.NoError(t, err)
 	for _, task := range tasks {

@@ -410,10 +410,190 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 		return c.advanceWorkflow(ctx, task.WorkflowID, task.ID)
 
 	case RouteActionGoto:
-		return fmt.Errorf("task %s: on_result.goto is not supported yet", task.TaskName)
+		return c.gotoRoute(ctx, task, route.Target)
 	}
 
 	return c.advanceWorkflow(ctx, task.WorkflowID, task.ID)
+}
+
+// gotoRoute jumps back to an earlier task, restarting the segment between it and
+// here.
+//
+// Only a jump to an ANCESTOR is accepted. Rewinding needs a definite answer to
+// "which tasks are being re-run", and that answer exists only when the target can
+// reach the current task through dependencies: the re-run set is the target plus
+// everything downstream of it. A forward or sideways jump has no such set, so it
+// is refused — and a refusal fails the workflow rather than being dropped.
+//
+// Failing is the important half. Returning an error alone left the workflow
+// stalled: the task is COMPLETED, nothing advanced past it, and the run sat
+// unfinished with only a log line to explain it. A route the coordinator cannot
+// honour is a defect in the workflow definition, and the run must say so.
+//
+// The loop budget lives on the target task (`loop.max_iterations`), because
+// "this task may be revisited N times" is a property of the task being revisited.
+func (c *Coordinator) gotoRoute(ctx context.Context, task *storage.Task, target string) error {
+	dag := c.cachedDAG(task.WorkflowID)
+	if dag == nil {
+		return c.failForRoute(ctx, task, fmt.Sprintf("goto target %q cannot be resolved: the workflow DAG is not cached", target))
+	}
+	targetDef, ok := dag.Tasks[target]
+	if !ok {
+		return c.failForRoute(ctx, task, fmt.Sprintf("goto target %q does not exist in the workflow", target))
+	}
+
+	// The target must be able to reach this task; otherwise the jump is not a
+	// loop and there is nothing to rewind.
+	if target != task.TaskName && !reachableSet(dag, target)[task.TaskName] {
+		return c.failForRoute(ctx, task,
+			fmt.Sprintf("goto target %q is not an ancestor of %q, so there is nothing to re-run", target, task.TaskName))
+	}
+
+	targetTask, err := c.taskByName(ctx, task.WorkflowID, target)
+	if err != nil {
+		return err
+	}
+
+	// The loop budget: only meaningful when the author declared one. A task with
+	// no loop block is not being looped, so it still gets the default cap rather
+	// than running unbounded.
+	maxIter := DefaultMaxIterations
+	breakOn := ""
+	if targetDef.Loop != nil {
+		if targetDef.Loop.MaxIterations > 0 {
+			maxIter = targetDef.Loop.MaxIterations
+		}
+		if maxIter > AbsoluteMaxIterations {
+			maxIter = AbsoluteMaxIterations
+		}
+		breakOn = targetDef.Loop.BreakOn
+	}
+
+	if breakOn != "" {
+		evaluator, err := c.celEvaluator()
+		if err != nil {
+			return err
+		}
+		results, err := c.completedOutputs(ctx, task.WorkflowID, "")
+		if err != nil {
+			return err
+		}
+		shouldBreak, err := evaluator.Eval(breakOn, map[string]any{
+			"results":     results,
+			"iteration":   int64(targetTask.LoopIteration),
+			"workflow_id": task.WorkflowID,
+		})
+		if err != nil {
+			return fmt.Errorf("task %s: evaluate loop break_on: %w", task.TaskName, err)
+		}
+		if shouldBreak {
+			// The loop is done; this completion stands as an ordinary one.
+			return c.advanceWorkflow(ctx, task.WorkflowID, task.ID)
+		}
+	}
+
+	if targetTask.LoopIteration >= maxIter {
+		return c.failForRoute(ctx, task, fmt.Sprintf(
+			"goto %q exceeded max_iterations (%d)", target, maxIter))
+	}
+
+	// The rewind set: the target plus everything it blocks. Computed from the
+	// DAG, so it is the same set however many tasks finished alongside this one.
+	inSegment := map[string]bool{target: true}
+	for name := range reachableSet(dag, target) {
+		inSegment[name] = true
+	}
+
+	tasks, err := c.store.ListTasksByWorkflow(ctx, task.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("list tasks for workflow %s: %w", task.WorkflowID, err)
+	}
+
+	for _, t := range tasks {
+		if !inSegment[t.TaskName] {
+			continue
+		}
+		// A task still executing is not ours to retract: its worker is already
+		// running it, and rewinding underneath would give one task two owners.
+		// It finishes and is reconsidered by the advance pass.
+		if t.Status == storage.TaskStatusRunning || t.Status == storage.TaskStatusScheduled {
+			continue
+		}
+		if err := c.store.RewindTaskForGoto(ctx, t.ID); err != nil {
+			return fmt.Errorf("rewind task %s for goto: %w", t.ID, err)
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"target":    target,
+			"from":      task.TaskName,
+			"iteration": targetTask.LoopIteration + 1,
+		})
+		c.saveEvent(ctx, task.WorkflowID, t.ID, storage.EventTaskRewound, payload)
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"from":      task.TaskName,
+		"target":    target,
+		"iteration": targetTask.LoopIteration + 1,
+	})
+	c.saveEvent(ctx, task.WorkflowID, task.ID, storage.EventTaskGoto, payload)
+	log.Printf("INFO: task %s goto %q (iteration %d/%d)",
+		task.TaskName, target, targetTask.LoopIteration+1, maxIter)
+
+	return c.advanceWorkflow(ctx, task.WorkflowID, task.ID)
+}
+
+// failForRoute fails a workflow because a route the coordinator cannot honour
+// was declared.
+//
+// It exists so that every unhonourable route has one outcome. Returning an error
+// alone was not enough: the task is already COMPLETED, so nothing would advance
+// past it and the run would sit unfinished with only a log line to explain why.
+// A route that cannot be honoured is a defect in the workflow definition, and the
+// run has to say so — both to the caller and in its own record.
+func (c *Coordinator) failForRoute(ctx context.Context, task *storage.Task, reason string) error {
+	// Take the same lock advanceWorkflow holds. A route failure and a task
+	// completion are two writers racing for the workflow's final verdict, and
+	// without this they interleave: the completion reads the workflow before
+	// FAILED lands, decides everything is settled, and writes COMPLETED over it
+	// — observed live as WORKFLOW_FAILED followed by WORKFLOW_COMPLETED in the
+	// event log.
+	c.advanceMu.Lock()
+	defer c.advanceMu.Unlock()
+
+	// If the workflow already ended, leave its verdict alone.
+	if wf, err := c.store.GetWorkflow(ctx, task.WorkflowID); err == nil && wf != nil {
+		switch wf.Status {
+		case storage.WorkflowStatusFailed, storage.WorkflowStatusCancelled, storage.WorkflowStatusCompleted:
+			return nil
+		}
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"error":  reason,
+		"task":   task.TaskName,
+		"reason": "on_result route cannot be honoured",
+	})
+	if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusFailed); err != nil {
+		return fmt.Errorf("fail workflow %s: %w", task.WorkflowID, err)
+	}
+	c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowFailed, payload)
+	c.evictDAGCache(task.WorkflowID)
+	log.Printf("ERROR: task %s: %s (workflow %s failed)", task.TaskName, reason, task.WorkflowID)
+	return nil
+}
+
+// taskByName finds one task row by its DAG name.
+func (c *Coordinator) taskByName(ctx context.Context, workflowID, name string) (*storage.Task, error) {
+	tasks, err := c.store.ListTasksByWorkflow(ctx, workflowID)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks for workflow %s: %w", workflowID, err)
+	}
+	for _, t := range tasks {
+		if t.TaskName == name {
+			return t, nil
+		}
+	}
+	return nil, fmt.Errorf("no task named %q in workflow %s", name, workflowID)
 }
 
 // advanceWorkflow moves a workflow forward from whatever its tasks currently
@@ -442,6 +622,18 @@ func (c *Coordinator) advanceWorkflow(ctx context.Context, workflowID, justFinis
 	// Serialise the read-decide-write below (see advanceMu).
 	c.advanceMu.Lock()
 	defer c.advanceMu.Unlock()
+
+	// A workflow that already reached a terminal state is finished business.
+	// Without this check a later task's completion would overwrite it: a run
+	// failed by an unhonourable route, or cancelled by an operator, could be
+	// flipped back to COMPLETED by whichever task happened to finish next.
+	// The tasks of a failed workflow are still drained, but the verdict stands.
+	if wf, err := c.store.GetWorkflow(ctx, workflowID); err == nil && wf != nil {
+		switch wf.Status {
+		case storage.WorkflowStatusFailed, storage.WorkflowStatusCancelled, storage.WorkflowStatusCompleted:
+			return nil
+		}
+	}
 
 	dag := c.cachedDAG(workflowID)
 	if dag == nil {
@@ -572,6 +764,15 @@ func (c *Coordinator) settleSkipped(ctx context.Context, workflowID string, t *s
 // skip into a continue.
 func reachableFrom(dag *DAG, root string) []string {
 	var out []string
+	for name := range reachableSet(dag, root) {
+		out = append(out, name)
+	}
+	return out
+}
+
+// reachableSet is reachableFrom as a set, for callers that ask membership
+// questions rather than iterating.
+func reachableSet(dag *DAG, root string) map[string]bool {
 	seen := map[string]bool{}
 	queue := []string{root}
 	for len(queue) > 0 {
@@ -584,14 +785,13 @@ func reachableFrom(dag *DAG, root string) []string {
 			for _, dep := range def.DependsOn {
 				if dep == name {
 					seen[taskName] = true
-					out = append(out, taskName)
 					queue = append(queue, taskName)
 					break
 				}
 			}
 		}
 	}
-	return out
+	return seen
 }
 
 // OnTaskFailed is called when a worker reports task failure.

@@ -14,6 +14,13 @@ import (
 // requirePG connects to the CI-provided PostgreSQL and ensures the schema.
 // Locally, without FORGE_PG_DSN, every test in this file skips — the same
 // env gate the database worker's integration tests use.
+//
+// It applies the WHOLE migrations directory rather than one file. Reading just
+// 001_init.sql was enough while that was the only file, and then a later
+// migration added a column and this test failed in CI with "column does not
+// exist" — the schema it built was simply not the schema the code expects.
+// Running the directory is also how a deployment gets its schema, so the test
+// exercises the same path production does.
 func requirePG(t *testing.T) *PGStorage {
 	t.Helper()
 	dsn := os.Getenv("FORGE_PG_DSN")
@@ -27,13 +34,9 @@ func requirePG(t *testing.T) *PGStorage {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	sql, err := os.ReadFile(filepath.Join("..", "..", "deploy", "migrations", "001_init.sql"))
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	// Idempotent (IF NOT EXISTS throughout), so re-running per test is fine.
-	if err := store.RunMigrations(ctx, string(sql)); err != nil {
-		t.Fatalf("run migration: %v", err)
+	dir := filepath.Join("..", "..", "deploy", "migrations")
+	if err := MigrateUp(ctx, store, dir); err != nil {
+		t.Fatalf("run migrations from %s: %v", dir, err)
 	}
 	return store
 }

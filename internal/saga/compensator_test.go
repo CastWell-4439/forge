@@ -73,6 +73,9 @@ func (m *mockStorage) ScheduleTaskRetry(_ context.Context, _ string, _ time.Time
 func (m *mockStorage) MarkTaskScheduled(_ context.Context, _ string) (bool, error) {
 	return true, nil
 }
+func (m *mockStorage) RewindTaskForGoto(_ context.Context, _ string) error {
+	return nil
+}
 func (m *mockStorage) RebaseTaskDeadline(_ context.Context, _ string, _ *time.Time) error {
 	return nil
 }
