@@ -64,6 +64,9 @@ func (m *mockStorage) UpdateTaskStatus(_ context.Context, _ string, _ storage.Ta
 func (m *mockStorage) CompleteTask(_ context.Context, _ string, _ json.RawMessage) error { return nil }
 func (m *mockStorage) FailTask(_ context.Context, _ string, _ string) error              { return nil }
 func (m *mockStorage) ReleaseTask(_ context.Context, _ string) error                     { return nil }
+func (m *mockStorage) AssignTaskWorker(_ context.Context, _ string, _ string) error {
+	return nil
+}
 func (m *mockStorage) RebaseTaskDeadline(_ context.Context, _ string, _ *time.Time) error {
 	return nil
 }

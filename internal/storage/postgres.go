@@ -321,6 +321,20 @@ func (s *PGStorage) ReleaseTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// AssignTaskWorker records which worker is executing a task (see the interface).
+//
+// A dedicated UPDATE rather than SaveTask, which is an INSERT on this backend:
+// using it to change one column would add a duplicate row instead of amending
+// the existing one.
+func (s *PGStorage) AssignTaskWorker(ctx context.Context, taskID string, workerID string) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE task_instances SET worker_id = $1 WHERE id = $2
+	`, workerID, taskID); err != nil {
+		return fmt.Errorf("assign worker %s to task %s: %w", workerID, taskID, err)
+	}
+	return nil
+}
+
 // RebaseTaskDeadline rewrites timeout_at on a task (see the interface).
 func (s *PGStorage) RebaseTaskDeadline(ctx context.Context, taskID string, deadline *time.Time) error {
 	if _, err := s.pool.Exec(ctx, `

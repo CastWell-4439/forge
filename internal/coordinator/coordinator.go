@@ -85,6 +85,24 @@ type Coordinator struct {
 	// dagCache stores parsed DAG definitions by workflow ID (for Saga compensation lookup).
 	dagCache   map[string]*DAG
 	dagCacheMu sync.RWMutex
+
+	// cel evaluates task conditions. Lazily built on first use because
+	// compiling the environment is the expensive part, and the evaluator
+	// caches programs so one instance serves every task.
+	celOnce sync.Once
+	cel     *CELEvaluator
+	celErr  error
+}
+
+// cachedDAG returns the workflow's parsed DAG, or nil when it is not cached
+// (a restart, or a workflow that came in through another coordinator).
+//
+// Returning nil rather than an error is deliberate: callers that only want a
+// definition can skip their work, while callers that must have it check.
+func (c *Coordinator) cachedDAG(workflowID string) *DAG {
+	c.dagCacheMu.RLock()
+	defer c.dagCacheMu.RUnlock()
+	return c.dagCache[workflowID]
 }
 
 // NewCoordinator creates a new Coordinator with the given storage backend.
@@ -174,6 +192,29 @@ func (c *Coordinator) SubmitDAG(ctx context.Context, dag *DAG, input json.RawMes
 	return c.submitDAG(ctx, dag, input)
 }
 
+// taskDeadline computes when a task should be considered timed out, or nil when
+// nothing declares a deadline.
+//
+// The task's own timeout wins; the workflow's is the fallback. Both were parsed
+// into the DAG long before this, but nothing ever wrote the resulting instant
+// onto the task — so the timeout scanner had no row to find, and a task that
+// hung stayed RUNNING forever. Filling the field is what makes the existing
+// scanner (and the "fail on deadline" behaviour its comments describe) true.
+//
+// nil means "no deadline", which the scanner already understands: it skips
+// tasks whose TimeoutAt is nil rather than treating a zero time as "expired".
+func taskDeadline(taskTimeout, workflowTimeout time.Duration, createdAt time.Time) *time.Time {
+	d := taskTimeout
+	if d <= 0 {
+		d = workflowTimeout
+	}
+	if d <= 0 {
+		return nil
+	}
+	at := createdAt.Add(d)
+	return &at
+}
+
 // submitDAG persists a validated DAG as a workflow instance with its tasks
 // and starts execution. Callers have already checked leadership.
 func (c *Coordinator) submitDAG(ctx context.Context, dag *DAG, input json.RawMessage) (*forgev1.SubmitWorkflowResponse, error) {
@@ -228,6 +269,7 @@ func (c *Coordinator) submitDAG(ctx context.Context, dag *DAG, input json.RawMes
 			MaxAttempts: maxAttempts,
 			CreatedAt:   now,
 			DependsOn:   taskDef.DependsOn,
+			TimeoutAt:   taskDeadline(taskDef.Timeout, dag.Timeout, now),
 		}
 		if err := c.store.SaveTask(ctx, task); err != nil {
 			return nil, status.Errorf(codes.Internal, "save task %s: %v", name, err)
@@ -325,18 +367,28 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 	}
 	c.saveEvent(ctx, task.WorkflowID, taskID, storage.EventTaskCompleted, output)
 
-	// Check if successors are now ready
-	tasks, err := c.store.ListTasksByWorkflow(ctx, task.WorkflowID)
+	return c.unlockSuccessors(ctx, task.WorkflowID, task)
+}
+
+// unlockSuccessors marks a finished task's dependents READY, completes the
+// workflow when nothing is left, and schedules whatever became runnable.
+//
+// It is shared by the completed and skipped paths because a skipped task
+// satisfies its dependents exactly as a completed one does — that is what
+// "skip" means for a DAG. Two copies of this rule would eventually disagree
+// about that.
+func (c *Coordinator) unlockSuccessors(ctx context.Context, workflowID string, finished *storage.Task) error {
+	tasks, err := c.store.ListTasksByWorkflow(ctx, workflowID)
 	if err != nil {
-		return fmt.Errorf("list tasks for workflow %s: %w", task.WorkflowID, err)
+		return fmt.Errorf("list tasks for workflow %s: %w", workflowID, err)
 	}
 
 	completedTasks := make(map[string]bool)
 	allDone := true
 	for _, t := range tasks {
-		if t.ID == taskID {
-			// This is the task we just completed — treat as completed
-			// regardless of what the DB returned (avoid read-after-write race).
+		if t.ID == finished.ID {
+			// This is the task we just finished — treat as done regardless of
+			// what the DB returned (avoid read-after-write race).
 			completedTasks[t.TaskName] = true
 			continue
 		}
@@ -349,11 +401,11 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 
 	// If all tasks completed, mark workflow as completed
 	if allDone {
-		if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusCompleted); err != nil {
-			return fmt.Errorf("complete workflow %s: %w", task.WorkflowID, err)
+		if err := c.store.UpdateWorkflowStatus(ctx, workflowID, storage.WorkflowStatusCompleted); err != nil {
+			return fmt.Errorf("complete workflow %s: %w", workflowID, err)
 		}
-		c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowCompleted, nil)
-		c.evictDAGCache(task.WorkflowID)
+		c.saveEvent(ctx, workflowID, "", storage.EventWorkflowCompleted, nil)
+		c.evictDAGCache(workflowID)
 		return nil
 	}
 
@@ -377,7 +429,7 @@ func (c *Coordinator) OnTaskCompleted(ctx context.Context, taskID string, output
 	}
 
 	// Schedule newly ready tasks
-	go c.scheduleReadyTasks(context.Background(), task.WorkflowID)
+	go c.scheduleReadyTasks(context.Background(), workflowID)
 	return nil
 }
 
@@ -429,6 +481,26 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 			continue
 		}
 
+		// A task's own condition decides whether it runs at all. It is checked
+		// before findWorker: whether this task should run has nothing to do
+		// with whether a worker happens to be free, and a skipped task must not
+		// hold a capacity slot while we look for one.
+		skip, err := c.shouldSkip(ctx, workflowID, task)
+		if err != nil {
+			// A condition that cannot be evaluated is a configuration error,
+			// and failing closed is the only safe direction: treating it as
+			// "run anyway" would execute work the author asked to be guarded.
+			log.Printf("ERROR: evaluate condition for task %s: %v", task.ID, err)
+			if failErr := c.OnTaskFailed(ctx, task.ID, fmt.Sprintf("condition: %v", err)); failErr != nil {
+				log.Printf("ERROR: handle task %s condition failure: %v", task.ID, failErr)
+			}
+			continue
+		}
+		if skip {
+			c.markTaskSkipped(ctx, workflowID, task)
+			continue
+		}
+
 		worker := c.findWorker(task.Handler)
 		if worker == nil {
 			continue
@@ -444,6 +516,124 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 		// Dispatch to worker via gRPC
 		go c.dispatchTask(context.Background(), worker, task)
 	}
+}
+
+// shouldSkip evaluates a task's condition against what the run knows so far.
+//
+// An empty condition means "always run" — that is how every task that predates
+// this feature keeps behaving exactly as before.
+//
+// The context exposes the DAG's declared outputs: a task named `plan` that
+// declares `output: plan` becomes `results.plan`. That is the same naming the
+// template renderer uses for `{{.plan}}`, so a condition and the params of the
+// tasks around it read from one vocabulary rather than two.
+func (c *Coordinator) shouldSkip(ctx context.Context, workflowID string, task *storage.Task) (bool, error) {
+	def := c.taskDef(task)
+	if def.Condition == "" {
+		return false, nil
+	}
+
+	evaluator, err := c.celEvaluator()
+	if err != nil {
+		return false, err
+	}
+
+	results, err := c.completedOutputs(ctx, workflowID, task.ID)
+	if err != nil {
+		return false, err
+	}
+
+	ok, err := evaluator.Eval(def.Condition, map[string]any{
+		"results":     results,
+		"workflow_id": workflowID,
+	})
+	if err != nil {
+		return false, err
+	}
+	return !ok, nil
+}
+
+// completedOutputs gathers the workflow's declared outputs so far, keyed by the
+// name each task declared in `output`.
+//
+// Only COMPLETED tasks contribute, and only when they declared a name: a task
+// with no `output` has nothing to refer to, and a skipped one never produced a
+// value. Both cases are simply absent from the map, which is what an expression
+// reading them should see.
+func (c *Coordinator) completedOutputs(ctx context.Context, workflowID, excludeTaskID string) (map[string]any, error) {
+	tasks, err := c.store.ListTasksByWorkflow(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve output names through the DAG, since the name lives on the
+	// definition and not on the stored task row.
+	dag := c.cachedDAG(workflowID)
+
+	out := make(map[string]any, len(tasks))
+	for _, t := range tasks {
+		if t.ID == excludeTaskID || t.Status != storage.TaskStatusCompleted || len(t.Output) == 0 {
+			continue
+		}
+		if dag == nil {
+			continue
+		}
+		def, ok := dag.Tasks[t.TaskName]
+		if !ok || def.Output == "" {
+			continue
+		}
+		var value any
+		if err := json.Unmarshal(t.Output, &value); err != nil {
+			// Store the raw text rather than dropping the value: a condition
+			// comparing against it should see what the task actually produced.
+			value = string(t.Output)
+		}
+		out[def.Output] = value
+	}
+	return out, nil
+}
+
+// celEvaluator returns the process-wide CEL evaluator, creating it on first use.
+//
+// It is cached on the Coordinator because compiling expressions is the
+// expensive part and the evaluator caches programs: one instance means a
+// condition compiled on the first task is reused by every later one.
+func (c *Coordinator) celEvaluator() (*CELEvaluator, error) {
+	c.celOnce.Do(func() {
+		c.cel, c.celErr = NewCELEvaluator()
+	})
+	return c.cel, c.celErr
+}
+
+// markTaskSkipped records that a task's condition excluded it, then unlocks its
+// successors through the ordinary completion path.
+//
+// Reusing OnTaskCompleted's unlocking is the point: a skipped task is a
+// satisfied dependency, which is exactly how that function already treats
+// TaskStatusSkipped. Writing a parallel "unlock the successors" path here would
+// be a second implementation of the same rule, and the two would drift.
+func (c *Coordinator) markTaskSkipped(ctx context.Context, workflowID string, task *storage.Task) {
+	if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusSkipped); err != nil {
+		log.Printf("ERROR: mark task %s skipped: %v", task.ID, err)
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"reason":    "condition evaluated to false",
+		"condition": c.conditionOf(task),
+	})
+	c.saveEvent(ctx, workflowID, task.ID, storage.EventTaskSkipped, payload)
+
+	// Unlock successors. The task is marked skipped already, so the completion
+	// path sees it as done.
+	if err := c.unlockSuccessors(ctx, workflowID, task); err != nil {
+		log.Printf("ERROR: unlock successors of skipped task %s: %v", task.ID, err)
+	}
+}
+
+// conditionOf reports a task's declared condition, for the audit payload.
+func (c *Coordinator) conditionOf(task *storage.Task) string {
+	return c.taskDef(task).Condition
 }
 
 // findWorker selects a worker that supports the given handler.
@@ -605,6 +795,14 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 	if err := c.store.UpdateTaskStatus(ctx, task.ID, storage.TaskStatusRunning); err != nil {
 		log.Printf("ERROR: update task %s to running: %v", task.ID, err)
 		return
+	}
+	// Record the owner. This is what the dead-worker path matches on when it
+	// looks for work to requeue; without it, a task whose worker died stayed
+	// RUNNING forever because nothing could be found to reset.
+	if err := c.store.AssignTaskWorker(ctx, task.ID, worker.ID); err != nil {
+		// Not fatal: the task still runs. Losing the owner only costs us the
+		// ability to recover it if this worker dies, which is worth a warning.
+		log.Printf("WARN: record worker %s on task %s: %v", worker.ID, task.ID, err)
 	}
 	c.saveEvent(ctx, task.WorkflowID, task.ID, storage.EventTaskStarted, nil)
 
