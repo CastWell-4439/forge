@@ -1187,9 +1187,47 @@ func (c *Coordinator) renderInputForTask(ctx context.Context, task *storage.Task
 	if err != nil {
 		return nil, err
 	}
+
 	body, err := json.Marshal(rendered)
 	if err != nil {
 		return nil, fmt.Errorf("marshal rendered params: %w", err)
+	}
+
+	// Tell the task who it is — see withTaskIdentity for why.
+	return withTaskIdentity(task, body)
+}
+
+// withTaskIdentity adds the task's own identity to an already-built params blob.
+//
+// A handler that has to refer to its own task — the HITL worker files a request
+// that a reviewer answers against a task id — otherwise has no way to learn it:
+// the identity lives in the coordinator, not in the YAML the author wrote.
+//
+// Written after rendering, so a template cannot shadow it: this is a fact about
+// the dispatch, not a value the workflow supplies. A workflow that wants a
+// differently named copy can still declare one of its own.
+func withTaskIdentity(task *storage.Task, input json.RawMessage) (json.RawMessage, error) {
+	// Decode into a map that is already allocated and decode INTO it: a JSON
+	// "null" body would otherwise set the map to nil, and the assignment below
+	// would panic. An empty param blob is normal — a task with no params — so
+	// this is a case to handle, not to guard against.
+	params := map[string]any{}
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &params); err != nil {
+			return nil, fmt.Errorf("parse task input: %w", err)
+		}
+		if params == nil {
+			// Unmarshalling "null" clears the map we passed in.
+			params = map[string]any{}
+		}
+	}
+	params["task_id"] = task.ID
+	params["workflow_id"] = task.WorkflowID
+	params["task_name"] = task.TaskName
+
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal identified params: %w", err)
 	}
 	return body, nil
 }
@@ -1209,6 +1247,20 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 			return
 		}
 		input = rendered
+	} else {
+		// No renderer (tests, embedded use): still identify the task. Without
+		// this the identity would depend on whether a renderer happened to be
+		// installed, and a handler that needs its own task id would work in one
+		// deployment and not another.
+		identified, err := withTaskIdentity(task, input)
+		if err != nil {
+			log.Printf("ERROR: add task identity for %s: %v", task.ID, err)
+			if failErr := c.OnTaskFailed(ctx, task.ID, fmt.Sprintf("add task identity: %v", err)); failErr != nil {
+				log.Printf("ERROR: handle task %s identity failure: %v", task.ID, failErr)
+			}
+			return
+		}
+		input = identified
 	}
 
 	// GPU tasks run in Kubernetes under Kueue, not on a worker. They are
