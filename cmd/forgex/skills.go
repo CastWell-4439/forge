@@ -25,7 +25,8 @@ const defaultSkillsDir = "configs/forgex/skills"
 // verified case becomes a loadable, versioned, re-checkable asset.
 func runSkills(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("skills subcommand required (available: list, show, distill, publish, verify, export)")
+		fmt.Fprint(os.Stdout, skillsLifecycleUsage+"\n")
+		return fmt.Errorf("skills subcommand required (available: list, show, distill, publish, verify, export, deprecate, restore, review, stale)")
 	}
 	switch args[0] {
 	case "list":
@@ -40,6 +41,8 @@ func runSkills(args []string) error {
 		return skillsVerify(args[1:])
 	case "export":
 		return skillsExport(args[1:])
+	case "deprecate", "restore", "review", "stale":
+		return runSkillsLifecycle(args[0], args[1:])
 	default:
 		return fmt.Errorf("unknown skills subcommand: %s", args[0])
 	}
@@ -48,10 +51,24 @@ func runSkills(args []string) error {
 func skillsList(args []string) error {
 	fs := flag.NewFlagSet("skills list", flag.ContinueOnError)
 	dir := fs.String("skills-dir", defaultSkillsDir, "published skills directory")
+	// Deprecated skills are hidden by default: "what skills do we have" almost
+	// always means "what can an agent use", and listing retired ones would
+	// invite applying something the team decided against.
+	all := fs.Bool("all", false, "include deprecated skills")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	packs, err := skillpack.NewStore(*dir).List()
+
+	store := skillpack.NewStore(*dir)
+	var (
+		packs []skillpack.Pack
+		err   error
+	)
+	if *all {
+		packs, err = store.ListAll()
+	} else {
+		packs, err = store.List()
+	}
 	if err != nil {
 		return err
 	}
@@ -60,7 +77,12 @@ func skillsList(args []string) error {
 		return nil
 	}
 	for _, p := range packs {
-		fmt.Printf("  %-40s v%-8s %s\n", p.Metadata.ID, p.Metadata.Version, p.Spec.Trigger.Description)
+		status := ""
+		if p.Metadata.IsDeprecated() {
+			status = " [deprecated]"
+		}
+		fmt.Printf("  %-40s v%-8s %s%s\n",
+			p.Metadata.ID, p.Metadata.Version, p.Spec.Trigger.Description, status)
 	}
 	return nil
 }
