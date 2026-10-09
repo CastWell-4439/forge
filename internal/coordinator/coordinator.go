@@ -107,6 +107,138 @@ type Coordinator struct {
 	celOnce sync.Once
 	cel     *CELEvaluator
 	celErr  error
+
+	// metrics receives the counters the state machine produces. It is an
+	// interface so this package does not depend on the observability package:
+	// the assembly layer knows both and supplies the adapter.
+	//
+	// It exists because the assembly built a Metrics value, handed it to the
+	// /metrics handler, and never told the coordinator about it — so the
+	// endpoint published six series that could only ever read zero. A dashboard
+	// full of zeros is worse than no dashboard: it reads as an idle system.
+	metrics MetricsSink
+}
+
+// MetricsSink is what the coordinator needs to report what it did. It mirrors
+// the shape of the observability counters without importing them.
+//
+// Every method is called with the label values the metric was declared with, in
+// declaration order — the assembly adapter is the one place that knows both
+// sides of that contract.
+type MetricsSink interface {
+	// WorkflowFinished counts a workflow reaching a terminal state.
+	WorkflowFinished(status string)
+	// TaskFinished records how long a task took and how it ended.
+	TaskFinished(handler, status string, seconds float64)
+	// TaskRetried counts a task being rescheduled rather than failed.
+	TaskRetried(handler, reason string)
+	// ActiveWorkflows reports how many workflows are currently running.
+	ActiveWorkflows(n float64)
+	// QueueDepth reports how many tasks are waiting to be dispatched.
+	QueueDepth(n float64)
+}
+
+// SetMetrics installs the sink. A coordinator without one simply does not report
+// — the same behaviour as before this existed, and the reason the sink is
+// optional rather than required.
+func (c *Coordinator) SetMetrics(m MetricsSink) {
+	c.metrics = m
+}
+
+// reportFinished counts a workflow reaching a terminal state, if anyone is
+// listening.
+func (c *Coordinator) reportFinished(status storage.WorkflowStatus) {
+	if c.metrics != nil {
+		c.metrics.WorkflowFinished(string(status))
+	}
+}
+
+// reportTaskFinished records one task's duration and outcome.
+func (c *Coordinator) reportTaskFinished(task *storage.Task, status storage.TaskStatus) {
+	if c.metrics == nil || task == nil {
+		return
+	}
+	seconds := 0.0
+	if task.StartedAt != nil {
+		// A task that never started has no duration to report; zero would be a
+		// fabricated measurement, so the histogram simply gets no observation.
+		end := time.Now()
+		if task.FinishedAt != nil {
+			end = *task.FinishedAt
+		}
+		seconds = end.Sub(*task.StartedAt).Seconds()
+	} else {
+		return
+	}
+	c.metrics.TaskFinished(task.Handler, string(status), seconds)
+}
+
+// reportTaskRetried counts a retry, which is neither a success nor a failure.
+func (c *Coordinator) reportTaskRetried(task *storage.Task, reason string) {
+	if c.metrics == nil || task == nil {
+		return
+	}
+	c.metrics.TaskRetried(task.Handler, reason)
+}
+
+// reportQueueDepth publishes how many tasks are waiting.
+func (c *Coordinator) reportQueueDepth(n int) {
+	if c.metrics != nil {
+		c.metrics.QueueDepth(float64(n))
+	}
+}
+
+// reportTransition turns one recorded event into metrics.
+//
+// It reads the event rather than being called alongside each write because the
+// event log already is the canonical record of what happened: deriving metrics
+// from it means the two can never disagree, and no future transition can be
+// added without being reported.
+//
+// The task's own row is re-read for the duration, since the event carries the
+// outcome but not the timestamps.
+func (c *Coordinator) reportTransition(ctx context.Context, event *storage.Event) {
+	if c.metrics == nil || event == nil {
+		return
+	}
+
+	switch event.Type {
+	case storage.EventWorkflowCompleted:
+		c.reportFinished(storage.WorkflowStatusCompleted)
+	case storage.EventWorkflowFailed:
+		c.reportFinished(storage.WorkflowStatusFailed)
+		// There is no cancellation event: CancelWorkflow changes the workflow's
+		// status without recording one, so a cancelled run is invisible to this
+		// switch and to the metrics. Noted rather than papered over with a case
+		// that could never fire.
+
+	case storage.EventTaskCompleted:
+		c.reportTaskOutcome(ctx, event, storage.TaskStatusCompleted)
+	case storage.EventTaskFailed:
+		c.reportTaskOutcome(ctx, event, storage.TaskStatusFailed)
+	case storage.EventTaskSkipped:
+		c.reportTaskOutcome(ctx, event, storage.TaskStatusSkipped)
+	case storage.EventTaskRetrying:
+		if task, err := c.store.GetTask(ctx, event.TaskID); err == nil {
+			c.reportTaskRetried(task, "task failed and was rescheduled")
+		}
+	}
+}
+
+// reportTaskOutcome records duration and outcome for the task behind an event.
+//
+// A failed read is not reported rather than reported as zero: a fabricated
+// measurement is worse than a missing one, because a dashboard cannot tell the
+// difference and neither can anyone reading it later.
+func (c *Coordinator) reportTaskOutcome(ctx context.Context, event *storage.Event, status storage.TaskStatus) {
+	if event.TaskID == "" {
+		return
+	}
+	task, err := c.store.GetTask(ctx, event.TaskID)
+	if err != nil {
+		return
+	}
+	c.reportTaskFinished(task, status)
 }
 
 // cachedDAG returns the workflow's parsed DAG, or nil when it is not cached
@@ -919,6 +1051,7 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 	}
 
 	now := time.Now()
+	queued := 0
 	for _, task := range tasks {
 		if task.Status != storage.TaskStatusReady {
 			continue
@@ -928,8 +1061,14 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 		// a future ScheduledAt is how that wait is expressed, so a task that
 		// is READY but not yet due is skipped rather than dispatched early.
 		if task.ScheduledAt != nil && task.ScheduledAt.After(now) {
+			queued++
 			continue
 		}
+
+		// Counted before dispatch rather than after: these are the tasks that
+		// are waiting right now, which is what a queue-depth reading means. A
+		// task about to be handed to a worker is still queued at this instant.
+		queued++
 
 		// A task's own condition decides whether it runs at all. It is checked
 		// before findWorker: whether this task should run has nothing to do
@@ -974,6 +1113,8 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 		// Dispatch to worker via gRPC
 		go c.dispatchTask(context.Background(), worker, task)
 	}
+
+	c.reportQueueDepth(queued)
 }
 
 // shouldSkip evaluates a task's condition against what the run knows so far.
@@ -1397,6 +1538,11 @@ func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, 
 		log.Printf("ERROR: save event %s for workflow %s: %v", eventType, workflowID, err)
 		return
 	}
+	// Every state transition writes exactly one event, so this is the one place
+	// that sees all of them. Reporting per call site instead would mean a dozen
+	// places to keep in step, and the ones nobody remembered would show up as
+	// metrics that are simply always zero — which is what happened.
+	c.reportTransition(ctx, event)
 	if c.runtimeObserver != nil {
 		if err := c.runtimeObserver.ObserveEvent(ctx, event); err != nil {
 			log.Printf("WARN: forgex runtime observer event=%s workflow=%s task=%s: %v", eventType, workflowID, taskID, err)
@@ -1511,6 +1657,14 @@ func (c *Coordinator) GetOverview(ctx context.Context, _ *forgev1.GetOverviewReq
 				}
 			}
 		}
+	}
+
+	// The RPC already computes these for its response; publishing them here means
+	// the metric and the API answer the same question from the same numbers, rather
+	// than being two independent counts that can disagree.
+	if c.metrics != nil {
+		c.metrics.ActiveWorkflows(float64(active))
+		c.reportQueueDepth(int(queueDepth))
 	}
 
 	return &forgev1.GetOverviewResponse{

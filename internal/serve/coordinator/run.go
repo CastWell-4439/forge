@@ -142,6 +142,11 @@ func Run(appCtx context.Context) error {
 
 	// --- Observability ---
 	metrics := observability.NewMetrics()
+	// Hand the counters to the state machine. Without this the /metrics endpoint
+	// publishes six series that can only ever read zero: the coordinator
+	// produced no observations at all, which reads as an idle system rather than
+	// an uninstrumented one.
+	coord.SetMetrics(observability.NewCoordinatorMetrics(metrics))
 	// The tracer is installed process-wide: the gRPC server and every dial
 	// site read it through the interceptors, so wiring happens here once.
 	observability.TracerConfigEnv("forge-coordinator")
