@@ -55,6 +55,13 @@ type Metrics struct {
 	WorkerPoolSize  *Gauge     // 4. Workers by language and state
 	TaskRetries     *Counter   // 5. Task retry count
 	QueueDepth      *Gauge     // 6. Queue depth by priority
+
+	// TCPConnectLatency is kernel-observed TCP connection setup time, available
+	// only where eBPF is (see StartEBPFObserver). It is declared unconditionally
+	// so the series exists on every build; where eBPF is unavailable it simply
+	// receives no observations, which is honest — the system does not measure
+	// this there.
+	TCPConnectLatency *Histogram
 }
 
 // DefaultBuckets for task duration histogram (seconds).
@@ -69,6 +76,8 @@ func NewMetrics() *Metrics {
 		WorkerPoolSize:  newGauge("forge_worker_pool_size", "Workers in pool", []string{"language", "state"}),
 		TaskRetries:     newCounter("forge_task_retries_total", "Task retries", []string{"handler", "reason"}),
 		QueueDepth:      newGauge("forge_queue_depth", "Tasks waiting in queue", []string{"priority"}),
+		TCPConnectLatency: newHistogram("forge_tcp_connect_latency_seconds",
+			"TCP connection setup time observed in the kernel via eBPF", []string{"comm"}, DefaultBuckets),
 	}
 }
 
@@ -162,12 +171,18 @@ func labelsKey(vals []string) string {
 func (m *Metrics) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		// The series are listed explicitly rather than reflected over, so adding
+		// a metric is two edits — and forgetting the second one means a series
+		// that is recorded and never served. That is how the seventh metric was
+		// written, observed, and still absent from /metrics until this line was
+		// added.
 		writeCounter(w, m.WorkflowsTotal)
 		writeHistogram(w, m.TaskDuration)
 		writeGauge(w, m.ActiveWorkflows)
 		writeGauge(w, m.WorkerPoolSize)
 		writeCounter(w, m.TaskRetries)
 		writeGauge(w, m.QueueDepth)
+		writeHistogram(w, m.TCPConnectLatency)
 	})
 }
 

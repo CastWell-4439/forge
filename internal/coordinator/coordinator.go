@@ -107,6 +107,138 @@ type Coordinator struct {
 	celOnce sync.Once
 	cel     *CELEvaluator
 	celErr  error
+
+	// metrics receives the counters the state machine produces. It is an
+	// interface so this package does not depend on the observability package:
+	// the assembly layer knows both and supplies the adapter.
+	//
+	// It exists because the assembly built a Metrics value, handed it to the
+	// /metrics handler, and never told the coordinator about it — so the
+	// endpoint published six series that could only ever read zero. A dashboard
+	// full of zeros is worse than no dashboard: it reads as an idle system.
+	metrics MetricsSink
+}
+
+// MetricsSink is what the coordinator needs to report what it did. It mirrors
+// the shape of the observability counters without importing them.
+//
+// Every method is called with the label values the metric was declared with, in
+// declaration order — the assembly adapter is the one place that knows both
+// sides of that contract.
+type MetricsSink interface {
+	// WorkflowFinished counts a workflow reaching a terminal state.
+	WorkflowFinished(status string)
+	// TaskFinished records how long a task took and how it ended.
+	TaskFinished(handler, status string, seconds float64)
+	// TaskRetried counts a task being rescheduled rather than failed.
+	TaskRetried(handler, reason string)
+	// ActiveWorkflows reports how many workflows are currently running.
+	ActiveWorkflows(n float64)
+	// QueueDepth reports how many tasks are waiting to be dispatched.
+	QueueDepth(n float64)
+}
+
+// SetMetrics installs the sink. A coordinator without one simply does not report
+// — the same behaviour as before this existed, and the reason the sink is
+// optional rather than required.
+func (c *Coordinator) SetMetrics(m MetricsSink) {
+	c.metrics = m
+}
+
+// reportFinished counts a workflow reaching a terminal state, if anyone is
+// listening.
+func (c *Coordinator) reportFinished(status storage.WorkflowStatus) {
+	if c.metrics != nil {
+		c.metrics.WorkflowFinished(string(status))
+	}
+}
+
+// reportTaskFinished records one task's duration and outcome.
+func (c *Coordinator) reportTaskFinished(task *storage.Task, status storage.TaskStatus) {
+	if c.metrics == nil || task == nil {
+		return
+	}
+	seconds := 0.0
+	if task.StartedAt != nil {
+		// A task that never started has no duration to report; zero would be a
+		// fabricated measurement, so the histogram simply gets no observation.
+		end := time.Now()
+		if task.FinishedAt != nil {
+			end = *task.FinishedAt
+		}
+		seconds = end.Sub(*task.StartedAt).Seconds()
+	} else {
+		return
+	}
+	c.metrics.TaskFinished(task.Handler, string(status), seconds)
+}
+
+// reportTaskRetried counts a retry, which is neither a success nor a failure.
+func (c *Coordinator) reportTaskRetried(task *storage.Task, reason string) {
+	if c.metrics == nil || task == nil {
+		return
+	}
+	c.metrics.TaskRetried(task.Handler, reason)
+}
+
+// reportQueueDepth publishes how many tasks are waiting.
+func (c *Coordinator) reportQueueDepth(n int) {
+	if c.metrics != nil {
+		c.metrics.QueueDepth(float64(n))
+	}
+}
+
+// reportTransition turns one recorded event into metrics.
+//
+// It reads the event rather than being called alongside each write because the
+// event log already is the canonical record of what happened: deriving metrics
+// from it means the two can never disagree, and no future transition can be
+// added without being reported.
+//
+// The task's own row is re-read for the duration, since the event carries the
+// outcome but not the timestamps.
+func (c *Coordinator) reportTransition(ctx context.Context, event *storage.Event) {
+	if c.metrics == nil || event == nil {
+		return
+	}
+
+	switch event.Type {
+	case storage.EventWorkflowCompleted:
+		c.reportFinished(storage.WorkflowStatusCompleted)
+	case storage.EventWorkflowFailed:
+		c.reportFinished(storage.WorkflowStatusFailed)
+		// There is no cancellation event: CancelWorkflow changes the workflow's
+		// status without recording one, so a cancelled run is invisible to this
+		// switch and to the metrics. Noted rather than papered over with a case
+		// that could never fire.
+
+	case storage.EventTaskCompleted:
+		c.reportTaskOutcome(ctx, event, storage.TaskStatusCompleted)
+	case storage.EventTaskFailed:
+		c.reportTaskOutcome(ctx, event, storage.TaskStatusFailed)
+	case storage.EventTaskSkipped:
+		c.reportTaskOutcome(ctx, event, storage.TaskStatusSkipped)
+	case storage.EventTaskRetrying:
+		if task, err := c.store.GetTask(ctx, event.TaskID); err == nil {
+			c.reportTaskRetried(task, "task failed and was rescheduled")
+		}
+	}
+}
+
+// reportTaskOutcome records duration and outcome for the task behind an event.
+//
+// A failed read is not reported rather than reported as zero: a fabricated
+// measurement is worse than a missing one, because a dashboard cannot tell the
+// difference and neither can anyone reading it later.
+func (c *Coordinator) reportTaskOutcome(ctx context.Context, event *storage.Event, status storage.TaskStatus) {
+	if event.TaskID == "" {
+		return
+	}
+	task, err := c.store.GetTask(ctx, event.TaskID)
+	if err != nil {
+		return
+	}
+	c.reportTaskFinished(task, status)
 }
 
 // cachedDAG returns the workflow's parsed DAG, or nil when it is not cached
@@ -834,12 +966,90 @@ func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg st
 		return nil
 	}
 
+	// on_failure decides what a spent task means for the rest of the run. The
+	// field already existed with three values; only COMPENSATE was ever acted
+	// on, so the other two were documentation rather than behaviour and a
+	// workflow that wrote CONTINUE got a failed run.
+	switch c.taskDef(task).OnFailure {
+	case FailureActionContinue:
+		// The task is FAILED and stays that way — the failure is real and the
+		// audit trail says so. What CONTINUE buys is the rest of the DAG: its
+		// dependents are released rather than left waiting on a task that will
+		// never succeed.
+		//
+		// A failed task satisfies its dependents here, which is the opposite of
+		// the default. That is exactly what the author asked for by naming this
+		// action, and the alternative is a workflow that hangs forever on a
+		// branch its author declared optional.
+		log.Printf("INFO: task %s failed but on_failure=CONTINUE, so the workflow proceeds", task.TaskName)
+		return c.advanceWorkflowPastFailure(ctx, task)
+
+	case FailureActionFailWorkflow:
+		// Explicit, and identical to the default. Named here so the two paths
+		// are visible in one place rather than one being an absence.
+	}
+
 	// Default: mark workflow as failed
 	if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusFailed); err != nil {
 		return fmt.Errorf("fail workflow %s: %w", task.WorkflowID, err)
 	}
 	c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowFailed, payload)
 	c.evictDAGCache(task.WorkflowID)
+	return nil
+}
+
+// advanceWorkflowPastFailure releases a failed task's dependents.
+//
+// It marks the workflow RUNNING again (a failure with CONTINUE does not stop the
+// run) and then lets the ordinary advance decide what is eligible. The failed
+// task is "settled" for dependency purposes even though it did not succeed —
+// which is the one place this differs from a normal advance, so it is expressed
+// here rather than by teaching advanceWorkflow a second notion of settled.
+func (c *Coordinator) advanceWorkflowPastFailure(ctx context.Context, task *storage.Task) error {
+	if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusRunning); err != nil {
+		return fmt.Errorf("keep workflow %s running: %w", task.WorkflowID, err)
+	}
+	c.advanceMu.Lock()
+	defer c.advanceMu.Unlock()
+
+	dag := c.cachedDAG(task.WorkflowID)
+	if dag == nil {
+		return fmt.Errorf("advance past failed task %s: DAG is not cached", task.TaskName)
+	}
+
+	tasks, err := c.store.ListTasksByWorkflow(ctx, task.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("list tasks for workflow %s: %w", task.WorkflowID, err)
+	}
+
+	// A failed task counts as satisfied for its dependents, and so does a
+	// skipped one. Anything else still blocks.
+	satisfied := map[string]bool{task.TaskName: true}
+	for _, t := range tasks {
+		if t.Status == storage.TaskStatusCompleted || t.Status == storage.TaskStatusSkipped {
+			satisfied[t.TaskName] = true
+		}
+	}
+
+	for _, t := range tasks {
+		if t.Status != storage.TaskStatusPending {
+			continue
+		}
+		ready := true
+		for _, dep := range t.DependsOn {
+			if !satisfied[dep] {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			if err := c.store.UpdateTaskStatus(ctx, t.ID, storage.TaskStatusReady); err != nil {
+				return fmt.Errorf("mark task %s ready: %w", t.ID, err)
+			}
+		}
+	}
+
+	go c.scheduleReadyTasks(context.Background(), task.WorkflowID)
 	return nil
 }
 
@@ -919,6 +1129,7 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 	}
 
 	now := time.Now()
+	queued := 0
 	for _, task := range tasks {
 		if task.Status != storage.TaskStatusReady {
 			continue
@@ -928,8 +1139,14 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 		// a future ScheduledAt is how that wait is expressed, so a task that
 		// is READY but not yet due is skipped rather than dispatched early.
 		if task.ScheduledAt != nil && task.ScheduledAt.After(now) {
+			queued++
 			continue
 		}
+
+		// Counted before dispatch rather than after: these are the tasks that
+		// are waiting right now, which is what a queue-depth reading means. A
+		// task about to be handed to a worker is still queued at this instant.
+		queued++
 
 		// A task's own condition decides whether it runs at all. It is checked
 		// before findWorker: whether this task should run has nothing to do
@@ -974,6 +1191,8 @@ func (c *Coordinator) scheduleReadyTasks(ctx context.Context, workflowID string)
 		// Dispatch to worker via gRPC
 		go c.dispatchTask(context.Background(), worker, task)
 	}
+
+	c.reportQueueDepth(queued)
 }
 
 // shouldSkip evaluates a task's condition against what the run knows so far.
@@ -1187,9 +1406,65 @@ func (c *Coordinator) renderInputForTask(ctx context.Context, task *storage.Task
 	if err != nil {
 		return nil, err
 	}
+
 	body, err := json.Marshal(rendered)
 	if err != nil {
 		return nil, fmt.Errorf("marshal rendered params: %w", err)
+	}
+
+	// Tell the task who it is — see withTaskIdentity for why.
+	return withTaskIdentity(task, body)
+}
+
+// remainingTimeoutMs reports how long a task may still run, in milliseconds, or 0
+// when nothing declared a deadline.
+//
+// Zero means "no deadline" on the wire, which is what a task with no declared
+// timeout has always meant here. A deadline that has already passed is reported
+// as 0 too rather than as a negative number: the task is about to be failed by
+// the sweep, and a negative timeout is not a value the worker can act on.
+func remainingTimeoutMs(deadline *time.Time, now time.Time) int64 {
+	if deadline == nil {
+		return 0
+	}
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining.Milliseconds()
+}
+
+// withTaskIdentity adds the task's own identity to an already-built params blob.
+//
+// A handler that has to refer to its own task — the HITL worker files a request
+// that a reviewer answers against a task id — otherwise has no way to learn it:
+// the identity lives in the coordinator, not in the YAML the author wrote.
+//
+// Written after rendering, so a template cannot shadow it: this is a fact about
+// the dispatch, not a value the workflow supplies. A workflow that wants a
+// differently named copy can still declare one of its own.
+func withTaskIdentity(task *storage.Task, input json.RawMessage) (json.RawMessage, error) {
+	// Decode into a map that is already allocated and decode INTO it: a JSON
+	// "null" body would otherwise set the map to nil, and the assignment below
+	// would panic. An empty param blob is normal — a task with no params — so
+	// this is a case to handle, not to guard against.
+	params := map[string]any{}
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &params); err != nil {
+			return nil, fmt.Errorf("parse task input: %w", err)
+		}
+		if params == nil {
+			// Unmarshalling "null" clears the map we passed in.
+			params = map[string]any{}
+		}
+	}
+	params["task_id"] = task.ID
+	params["workflow_id"] = task.WorkflowID
+	params["task_name"] = task.TaskName
+
+	body, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal identified params: %w", err)
 	}
 	return body, nil
 }
@@ -1209,6 +1484,20 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 			return
 		}
 		input = rendered
+	} else {
+		// No renderer (tests, embedded use): still identify the task. Without
+		// this the identity would depend on whether a renderer happened to be
+		// installed, and a handler that needs its own task id would work in one
+		// deployment and not another.
+		identified, err := withTaskIdentity(task, input)
+		if err != nil {
+			log.Printf("ERROR: add task identity for %s: %v", task.ID, err)
+			if failErr := c.OnTaskFailed(ctx, task.ID, fmt.Sprintf("add task identity: %v", err)); failErr != nil {
+				log.Printf("ERROR: handle task %s identity failure: %v", task.ID, failErr)
+			}
+			return
+		}
+		input = identified
 	}
 
 	// GPU tasks run in Kubernetes under Kueue, not on a worker. They are
@@ -1261,6 +1550,14 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		TaskName:   task.TaskName,
 		Handler:    task.Handler,
 		Input:      input,
+		// How long the worker has, so it can bound its own work rather than
+		// being killed from outside with no chance to clean up. The field
+		// existed on the wire and was never set, so every worker had to guess.
+		//
+		// The remaining time is sent, not the original duration: a task that
+		// spent time queued has less left, and sending the full window would
+		// let it run past its deadline.
+		TimeoutMs: remainingTimeoutMs(task.TimeoutAt, callStartedAt),
 	})
 	callEndedAt := time.Now().UTC()
 	if err != nil {
@@ -1345,6 +1642,11 @@ func (c *Coordinator) saveEvent(ctx context.Context, workflowID, taskID string, 
 		log.Printf("ERROR: save event %s for workflow %s: %v", eventType, workflowID, err)
 		return
 	}
+	// Every state transition writes exactly one event, so this is the one place
+	// that sees all of them. Reporting per call site instead would mean a dozen
+	// places to keep in step, and the ones nobody remembered would show up as
+	// metrics that are simply always zero — which is what happened.
+	c.reportTransition(ctx, event)
 	if c.runtimeObserver != nil {
 		if err := c.runtimeObserver.ObserveEvent(ctx, event); err != nil {
 			log.Printf("WARN: forgex runtime observer event=%s workflow=%s task=%s: %v", eventType, workflowID, taskID, err)
@@ -1459,6 +1761,14 @@ func (c *Coordinator) GetOverview(ctx context.Context, _ *forgev1.GetOverviewReq
 				}
 			}
 		}
+	}
+
+	// The RPC already computes these for its response; publishing them here means
+	// the metric and the API answer the same question from the same numbers, rather
+	// than being two independent counts that can disagree.
+	if c.metrics != nil {
+		c.metrics.ActiveWorkflows(float64(active))
+		c.reportQueueDepth(int(queueDepth))
 	}
 
 	return &forgev1.GetOverviewResponse{

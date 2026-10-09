@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/castwell/forge/internal/hitl"
+	forgeworker "github.com/castwell/forge/internal/worker"
 )
 
 // Worker is the HITL workflow worker.
@@ -114,15 +115,17 @@ func (w *Worker) requestApproval(ctx context.Context, params map[string]any) (st
 		return "", fmt.Errorf("hitl worker: request_approval: %w", err)
 	}
 
-	// Return the request ID — the workflow will be paused until response.
-	result := map[string]any{
-		"status":     "pending",
-		"request_id": req.ID,
-		"options":    options,
-		"timeout":    timeout.String(),
+	// Stop the task rather than reporting success. The request is registered and
+	// nobody has answered it, so completing the task would let the workflow run
+	// on as if approval had been given. The Executor turns this into the
+	// response's "paused" field, which parks the task without holding a worker.
+	//
+	// The request ID travels in the message because that is what a reviewer
+	// needs in order to answer it.
+	return "", &forgeworker.AwaitingHumanError{
+		RequestID: req.ID,
+		Message:   fmt.Sprintf("awaiting approval: %s", req.ID),
 	}
-	out, _ := json.Marshal(result)
-	return string(out), nil
 }
 
 // requestInput asks for free-form user input and waits for response.
@@ -152,13 +155,12 @@ func (w *Worker) requestInput(ctx context.Context, params map[string]any) (strin
 		return "", fmt.Errorf("hitl worker: request_input: %w", err)
 	}
 
-	result := map[string]any{
-		"status":     "pending",
-		"request_id": req.ID,
-		"timeout":    timeout.String(),
+	// Same as approval: the request is queued and unanswered, so the task is
+	// stopped rather than completed.
+	return "", &forgeworker.AwaitingHumanError{
+		RequestID: req.ID,
+		Message:   fmt.Sprintf("awaiting input: %s", req.ID),
 	}
-	out, _ := json.Marshal(result)
-	return string(out), nil
 }
 
 // notifyAndWait sends a notification and waits for acknowledgment.
@@ -188,13 +190,11 @@ func (w *Worker) notifyAndWait(ctx context.Context, params map[string]any) (stri
 		return "", fmt.Errorf("hitl worker: notify_and_wait: %w", err)
 	}
 
-	result := map[string]any{
-		"status":     "pending",
-		"request_id": req.ID,
-		"timeout":    timeout.String(),
+	// "And wait" means it waits: the task stops here until someone acknowledges.
+	return "", &forgeworker.AwaitingHumanError{
+		RequestID: req.ID,
+		Message:   fmt.Sprintf("awaiting acknowledgement: %s", req.ID),
 	}
-	out, _ := json.Marshal(result)
-	return string(out), nil
 }
 
 // resolveTimeout extracts timeout from params or returns default.

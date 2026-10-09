@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
@@ -93,6 +94,23 @@ func (e *Executor) Execute(ctx context.Context, req *forgev1.TaskRequest) *forge
 	// Execute handler
 	result, err := handler(ctx, params)
 	if err != nil {
+		// A handler that queued a human request is not failing: it is stopped
+		// until someone answers. Reporting it as a failure would make "waiting on
+		// a person" indistinguishable from "broke", and the coordinator would run
+		// the failure path over a task that is merely waiting.
+		var awaiting *AwaitingHumanError
+		if errors.As(err, &awaiting) || errors.Is(err, ErrAwaitingHuman) {
+			reason := err.Error()
+			if awaiting != nil && awaiting.Message != "" {
+				reason = awaiting.Message
+			}
+			return &forgev1.TaskResponse{
+				TaskId:      req.GetTaskId(),
+				Success:     false,
+				Paused:      true,
+				PauseReason: reason,
+			}
+		}
 		return &forgev1.TaskResponse{
 			TaskId:   req.GetTaskId(),
 			Success:  false,

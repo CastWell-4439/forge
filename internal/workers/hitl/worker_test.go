@@ -3,10 +3,13 @@ package hitlworker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/castwell/forge/internal/hitl"
+	"github.com/castwell/forge/internal/worker"
 )
 
 func testManager() *hitl.Manager {
@@ -59,22 +62,30 @@ func TestNotify_MissingWorkflowID(t *testing.T) {
 	}
 }
 
+// A request_approval that nobody has answered must STOP the task, not complete
+// it. It used to return {"status":"pending"} as a success, which let the workflow
+// run on as though approval had been given while the request sat unanswered.
 func TestRequestApproval(t *testing.T) {
 	mgr := testManager()
 	w := NewWorker(mgr, func() string { return "req_002" })
 
-	result, err := w.Execute(context.Background(), "request_approval", map[string]any{
+	_, err := w.Execute(context.Background(), "request_approval", map[string]any{
 		"message":     "Deploy to production?",
 		"workflow_id": "wf_1",
 		"task_id":     "task_2",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("an unanswered approval must not report success")
 	}
-	var res map[string]any
-	json.Unmarshal([]byte(result), &res)
-	if res["status"] != "pending" {
-		t.Errorf("expected status=pending, got %v", res["status"])
+	if !errors.Is(err, worker.ErrAwaitingHuman) {
+		t.Fatalf("the task must be reported as awaiting a human, got: %v", err)
+	}
+	var awaiting *worker.AwaitingHumanError
+	if !errors.As(err, &awaiting) {
+		t.Fatalf("the error must carry the request id, got: %v", err)
+	}
+	if awaiting.RequestID != "req_002" {
+		t.Errorf("request id mismatch: %s", awaiting.RequestID)
 	}
 
 	// Verify request exists in manager
@@ -99,8 +110,8 @@ func TestRequestApproval_CustomOptions(t *testing.T) {
 		"workflow_id": "wf_1",
 		"options":     []any{"deploy", "rollback", "skip"},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.Is(err, worker.ErrAwaitingHuman) {
+		t.Fatalf("expected awaiting-human, got: %v", err)
 	}
 
 	req, _ := mgr.Get(context.Background(), "req_003")
@@ -113,22 +124,20 @@ func TestRequestInput(t *testing.T) {
 	mgr := testManager()
 	w := NewWorker(mgr, func() string { return "req_004" })
 
-	result, err := w.Execute(context.Background(), "request_input", map[string]any{
+	_, err := w.Execute(context.Background(), "request_input", map[string]any{
 		"message":         "Please provide the hotfix commit SHA:",
 		"workflow_id":     "wf_2",
 		"task_id":         "task_3",
 		"timeout_minutes": float64(30),
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.Is(err, worker.ErrAwaitingHuman) {
+		t.Fatalf("expected awaiting-human, got: %v", err)
 	}
-	var res map[string]any
-	json.Unmarshal([]byte(result), &res)
-	if res["status"] != "pending" {
-		t.Errorf("expected pending, got %v", res["status"])
-	}
-	if !strings.Contains(res["timeout"].(string), "30m") {
-		t.Errorf("expected 30m timeout, got %v", res["timeout"])
+	// The timeout still has to be honoured: it is what stops the request from
+	// waiting forever.
+	req, _ := mgr.Get(context.Background(), "req_004")
+	if got := time.Until(req.TimeoutAt); got < 29*time.Minute || got > 31*time.Minute {
+		t.Errorf("expected ~30m timeout, got %v", got)
 	}
 }
 
@@ -136,23 +145,21 @@ func TestNotifyAndWait(t *testing.T) {
 	mgr := testManager()
 	w := NewWorker(mgr, func() string { return "req_005" })
 
-	result, err := w.Execute(context.Background(), "notify_and_wait", map[string]any{
+	_, err := w.Execute(context.Background(), "notify_and_wait", map[string]any{
 		"message":     "Review ready. Acknowledge when done.",
 		"workflow_id": "wf_3",
 		"timeout":     "1h",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var res map[string]any
-	json.Unmarshal([]byte(result), &res)
-	if res["status"] != "pending" {
-		t.Errorf("expected pending, got %v", res["status"])
+	if !errors.Is(err, worker.ErrAwaitingHuman) {
+		t.Fatalf("expected awaiting-human, got: %v", err)
 	}
 
 	req, _ := mgr.Get(context.Background(), "req_005")
 	if req.Options[0] != "ack" {
 		t.Errorf("expected ack option, got %v", req.Options)
+	}
+	if got := time.Until(req.TimeoutAt); got < 59*time.Minute {
+		t.Errorf("expected ~1h timeout, got %v", got)
 	}
 }
 
@@ -170,13 +177,14 @@ func TestRequestApproval_Response(t *testing.T) {
 	mgr := testManager()
 	w := NewWorker(mgr, func() string { return "req_006" })
 
-	// Create approval request
+	// Create approval request. It reports awaiting-human, which is the expected
+	// outcome: the request is registered and unanswered.
 	_, err := w.Execute(context.Background(), "request_approval", map[string]any{
 		"message":     "Proceed?",
 		"workflow_id": "wf_4",
 	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
+	if !errors.Is(err, worker.ErrAwaitingHuman) {
+		t.Fatalf("create: expected awaiting-human, got %v", err)
 	}
 
 	// Verify request is pending before response
@@ -213,13 +221,16 @@ func TestDefaultTimeout(t *testing.T) {
 		"message":     "Enter value:",
 		"workflow_id": "wf_5",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.Is(err, worker.ErrAwaitingHuman) {
+		t.Fatalf("expected awaiting-human, got %v", err)
 	}
 
 	req, _ := mgr.Get(context.Background(), "req_007")
 	// Default timeout should be ~24h from now
 	if req.TimeoutAt.IsZero() {
 		t.Error("timeout should not be zero")
+	}
+	if got := time.Until(req.TimeoutAt); got < 23*time.Hour {
+		t.Errorf("expected ~24h default timeout, got %v", got)
 	}
 }

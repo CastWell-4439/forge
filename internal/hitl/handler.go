@@ -4,14 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
+
+// ResolveFunc acts on a decision about a request: it is how the answer reaches
+// the task that is waiting on it.
+//
+// It is a function rather than a coordinator reference because this package must
+// not depend on the coordinator — the HITL manager already runs inside the
+// worker, and importing the scheduler from there would make the dependency
+// circular in spirit even where Go allows it. The assembly layer knows both
+// sides and supplies the bridge.
+//
+// A decision that is not acted on leaves the task parked forever with a human
+// believing they answered it, so a non-nil ResolveFunc is what makes "responded"
+// mean anything.
+type ResolveFunc func(ctx context.Context, req *Request, resp *Response) error
 
 // Handler provides HTTP endpoints for HITL interactions.
 type Handler struct {
 	manager  *Manager
 	callback *OpenClawCallback
+	resolve  ResolveFunc
 }
 
 // NewHandler creates a HITL HTTP handler.
@@ -20,6 +36,12 @@ func NewHandler(manager *Manager, callback *OpenClawCallback) *Handler {
 		manager:  manager,
 		callback: callback,
 	}
+}
+
+// SetResolveFunc installs the hook that releases the task behind a request.
+// Without it the endpoint still records the decision, but nothing resumes.
+func (h *Handler) SetResolveFunc(fn ResolveFunc) {
+	h.resolve = fn
 }
 
 // RespondRequest is the JSON body for responding to a HITL request.
@@ -56,6 +78,14 @@ func (h *Handler) HandleRespond(w http.ResponseWriter, r *http.Request) {
 		Feedback: req.Feedback,
 	}
 
+	// Look the request up BEFORE recording the answer: once Respond marks it
+	// responded it leaves the pending set, and the task id needed to release the
+	// waiting task would have to be re-read from the store.
+	var request *Request
+	if h.manager != nil {
+		request, _ = h.manager.Get(r.Context(), req.RequestID)
+	}
+
 	if err := h.manager.Respond(r.Context(), req.RequestID, resp); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, err.Error(), http.StatusNotFound)
@@ -63,6 +93,17 @@ func (h *Handler) HandleRespond(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
+	}
+
+	// Release the task the request was blocking. This is the half that makes the
+	// endpoint worth having: without it the decision is recorded and the task
+	// stays parked, which is indistinguishable from nobody having answered.
+	var resolveErr error
+	if h.resolve != nil && request != nil {
+		resolveErr = h.resolve(r.Context(), request, resp)
+		if resolveErr != nil {
+			log.Printf("ERROR: hitl: apply decision for request %s: %v", req.RequestID, resolveErr)
+		}
 	}
 
 	// Send confirmation back to user via OpenClaw
@@ -81,27 +122,47 @@ func (h *Handler) HandleRespond(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	// A decision that could not be applied is reported as such. Answering "ok"
+	// while the waiting task stays parked would tell the reviewer their approval
+	// took effect when it did not.
+	body := map[string]any{
 		"status":     "ok",
 		"request_id": req.RequestID,
 		"decision":   req.Decision,
-	})
+	}
+	if resolveErr != nil {
+		body["status"] = "recorded_not_applied"
+		body["warning"] = resolveErr.Error()
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(body)
+		return
+	}
+	if h.resolve == nil {
+		// No hook installed: the decision is durable, but nothing was resumed.
+		body["warning"] = "no resolver configured; the decision was recorded but no task was resumed"
+		body["status"] = "recorded_not_applied"
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(body)
 }
 
 // HandleList handles GET /api/hitl/pending — lists pending HITL requests.
+//
+// It lists through the manager, which merges its own memory with the store.
+// Listing only memory was wrong for the shape this runs in: the worker files the
+// requests and the coordinator serves this endpoint, so an operator would have
+// seen an empty queue while approvals were actually waiting.
 func (h *Handler) HandleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	h.manager.mu.RLock()
-	reqs := make([]*Request, 0, len(h.manager.pending))
-	for _, req := range h.manager.pending {
-		reqs = append(reqs, req)
+	reqs, err := h.manager.ListPending(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	h.manager.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
