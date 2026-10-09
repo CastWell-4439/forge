@@ -12,6 +12,7 @@ import (
 	agentcore "github.com/castwell/forge/internal/agent/core"
 	agentharness "github.com/castwell/forge/internal/agent/harness"
 	"github.com/castwell/forge/internal/forgex/storage"
+	serveworker "github.com/castwell/forge/internal/serve/worker"
 )
 
 // forgex memory review — propose what to do with the memory store.
@@ -67,6 +68,7 @@ func runMemoryReview(args []string) error {
 	indexPath := fs.String("index", "", "SQLite index path (default <root>/index.db)")
 	ttl := fs.Duration("ttl", 0, "how long an episodic memory is worth keeping")
 	minRuns := fs.Int("min-runs", 0, "runs describing the same pattern needed to propose distillation")
+	knowledgeDir := fs.String("knowledge-dir", "", "agent plane's knowledge directory (default "+serveworker.DefaultKnowledgeDir+")")
 	asJSON := fs.Bool("json", false, "print the review as JSON")
 	useLLM := fs.Bool("llm", false, "allow the model-assisted extraction pass")
 	if err := fs.Parse(args); err != nil {
@@ -82,7 +84,7 @@ func runMemoryReview(args []string) error {
 	defer idx.Close()
 
 	ctx := context.Background()
-	memories, err := loadReviewMemories(ctx, idx)
+	memories, err := loadReviewMemories(*knowledgeDir)
 	if err != nil {
 		return err
 	}
@@ -172,24 +174,32 @@ func oneLine(s string) string {
 	return s[:limit] + "..."
 }
 
-// loadReviewMemories reads the entries under review.
+// loadReviewMemories reads the entries under review from the agent plane's
+// memory store.
 //
-// The long-term store belongs to the agent plane (a document file), and this
-// command runs in the control plane. There is no cross-plane reader today, so
-// the source is an explicit file path when one is configured and an empty list
-// otherwise — the review is honest about having nothing to read rather than
-// inventing entries.
-func loadReviewMemories(ctx context.Context, idx *storage.SQLiteIndex) ([]agentcore.MemoryEntry, error) {
-	_ = ctx
-	_ = idx
-	// The memory records live in the agent plane's document store. Until a
-	// controlled export exists, the review reads what the observation table can
-	// tell it about: the entries that were recalled, with no content.
-	//
-	// Returning empty here is the truthful outcome, and the command says so.
-	// Fabricating entries from ids alone would produce proposals about text
-	// nobody has read.
-	return nil, nil
+// The store belongs to the agent plane and is read through the serve layer's
+// projector, which knows its layout. The read is one-directional by
+// construction: this command has no writer for that file, because every
+// candidate it produces is a proposal and a proposal needs no write access.
+func loadReviewMemories(knowledgeDir string) ([]agentcore.MemoryEntry, error) {
+	export, err := serveworker.LoadMemoryExport(knowledgeDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentcore.MemoryEntry, 0, len(export.Memories))
+	for _, m := range export.Memories {
+		out = append(out, agentcore.MemoryEntry{
+			ID:         m.ID,
+			Content:    m.Content,
+			Category:   m.Category,
+			Source:     agentcore.MemorySource(m.Source),
+			Confidence: m.Confidence,
+			ObservedAt: m.ObservedAt,
+			CreatedAt:  m.CreatedAt,
+			Layer:      m.Layer,
+		})
+	}
+	return out, nil
 }
 
 // loadUsageStats reads the observation aggregate, when the table exists.

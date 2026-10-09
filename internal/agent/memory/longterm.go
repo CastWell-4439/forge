@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,12 +38,9 @@ func (m *LongTermMemory) Save(ctx context.Context, entry core.MemoryEntry) error
 	}
 
 	doc := core.Document{
-		ID:      entry.ID,
-		Content: entry.Content,
-		Metadata: map[string]string{
-			"category":   entry.Category,
-			"created_at": entry.CreatedAt.Format(time.RFC3339),
-		},
+		ID:       entry.ID,
+		Content:  entry.Content,
+		Metadata: memoryMetadata(entry),
 	}
 
 	embedding, err := m.embedder.Embed(ctx, entry.Content)
@@ -51,6 +49,78 @@ func (m *LongTermMemory) Save(ctx context.Context, entry core.MemoryEntry) error
 	}
 
 	return m.store.Upsert(ctx, doc, embedding)
+}
+
+// memoryMetadata renders an entry's governance fields into the store's
+// key/value metadata.
+//
+// The document store predates the governance work and carries a flat
+// map[string]string, so the fields ride in it rather than changing the stored
+// format. Two things make that the right call: existing files keep loading
+// (unknown keys are simply absent), and the fields become readable by anything
+// that can read the file — which is what the control plane's review and
+// verification need, since they read this store without importing the agent
+// plane.
+//
+// A zero value is written as an ABSENT key rather than as "0" or "". Absence is
+// what a reader already has to handle for entries written before these fields
+// existed, so there is one case to get right instead of two.
+func memoryMetadata(entry core.MemoryEntry) map[string]string {
+	meta := map[string]string{
+		"category":   entry.Category,
+		"created_at": entry.CreatedAt.Format(time.RFC3339),
+	}
+	if entry.Source != "" {
+		meta["source"] = string(entry.Source)
+	}
+	if entry.Confidence > 0 {
+		meta["confidence"] = strconv.FormatFloat(entry.Confidence, 'f', -1, 64)
+	}
+	if !entry.ObservedAt.IsZero() {
+		meta["observed_at"] = entry.ObservedAt.Format(time.RFC3339)
+	}
+	if entry.Layer != "" {
+		meta["layer"] = string(entry.Layer)
+	}
+	return meta
+}
+
+// memoryEntryFromDoc rebuilds an entry from a stored document.
+//
+// Every field is optional and every parse failure falls back to the zero value:
+// a malformed confidence must not make a memory unreadable, because the memory
+// itself is the valuable part and the metadata only helps judge it.
+func memoryEntryFromDoc(doc core.Document) core.MemoryEntry {
+	entry := core.MemoryEntry{
+		ID:      doc.ID,
+		Content: doc.Content,
+	}
+	if doc.Metadata == nil {
+		// No metadata at all is the oldest possible document. It still gets the
+		// default layer, so a caller can treat layer uniformly instead of
+		// checking for the empty string everywhere.
+		entry.Layer = core.NormalizeMemoryLayer("")
+		return entry
+	}
+	entry.Category = doc.Metadata["category"]
+	entry.Source = core.MemorySource(doc.Metadata["source"])
+	if raw := doc.Metadata["confidence"]; raw != "" {
+		if v, err := strconv.ParseFloat(raw, 64); err == nil {
+			entry.Confidence = v
+		}
+	}
+	if raw := doc.Metadata["observed_at"]; raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			entry.ObservedAt = t
+		}
+	}
+	if raw := doc.Metadata["created_at"]; raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			entry.CreatedAt = t
+		}
+	}
+	entry.Layer = core.NormalizeMemoryLayer(doc.Metadata["layer"])
+	return entry
 }
 
 // Search finds relevant memories by semantic similarity.
@@ -71,15 +141,12 @@ func (m *LongTermMemory) Search(ctx context.Context, query string, topK int) ([]
 
 	entries := make([]core.MemoryEntry, len(docs))
 	for i, doc := range docs {
-		cat := ""
-		if doc.Metadata != nil {
-			cat = doc.Metadata["category"]
-		}
-		entries[i] = core.MemoryEntry{
-			ID:       doc.ID,
-			Content:  doc.Content,
-			Category: cat,
-		}
+		// The full entry, metadata included. This used to rebuild only id,
+		// content and category, which meant the governance fields added later
+		// were written on save and then dropped on read — a memory's source,
+		// confidence and layer were lost the moment it was recalled, so every
+		// cross-run judgement about it (agreement, staleness, layer) had no data.
+		entries[i] = memoryEntryFromDoc(doc)
 	}
 	return entries, nil
 }
