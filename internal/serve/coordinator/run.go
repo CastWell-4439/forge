@@ -150,6 +150,11 @@ func Run(appCtx context.Context) error {
 	// The tracer is installed process-wide: the gRPC server and every dial
 	// site read it through the interceptors, so wiring happens here once.
 	observability.TracerConfigEnv("forge-coordinator")
+	// Kernel-level TCP latency, where the platform supports it and the operator
+	// asked for it. Off by default: attaching probes needs privileges, and an
+	// observability feature must not be the reason a node fails to start.
+	stopEBPF := observability.StartEBPFObserver(appCtx, metrics)
+	defer stopEBPF()
 	profiler := observability.NewProfiler(observability.DefaultProfilingConfig())
 	profiler.Start()
 
