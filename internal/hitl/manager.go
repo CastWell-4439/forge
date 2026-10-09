@@ -5,6 +5,7 @@ package hitl
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -46,6 +47,17 @@ type Store interface {
 	Get(ctx context.Context, id string) (*Request, error)
 	ListPending(ctx context.Context) ([]*Request, error)
 	Update(ctx context.Context, req *Request) error
+}
+
+// ExpiredLister is the optional half of a Store that can find requests past
+// their deadline by reading persisted state.
+//
+// It is separate from Store because a sweep only needs it when the process
+// running the sweep is not the one that filed the requests — a two-process
+// deployment. An in-memory-only store simply does not implement it, and the
+// sweep falls back to its own map.
+type ExpiredLister interface {
+	ListExpired(ctx context.Context, now time.Time) ([]*Request, error)
 }
 
 // Manager orchestrates HITL interactions.
@@ -157,8 +169,18 @@ func (m *Manager) Get(ctx context.Context, id string) (*Request, error) {
 }
 
 // CheckTimeouts marks expired pending requests as timed out.
-func (m *Manager) CheckTimeouts(ctx context.Context) int {
+//
+// It sweeps memory AND the store. Memory alone was not enough: in a two-process
+// deployment the worker creates requests and the coordinator runs the sweep
+// loop, so the coordinator's own map is empty and every request the worker filed
+// would sit past its deadline untouched. The store is what the two processes
+// share, so it is what a sweep has to consult.
+//
+// It returns the requests that expired, so the caller can act on their tasks: a
+// timed-out request whose task is left parked is the same stall moved elsewhere.
+func (m *Manager) CheckTimeouts(ctx context.Context) []*Request {
 	now := time.Now()
+
 	m.mu.Lock()
 	var timedOut []*Request
 	for id, req := range m.pending {
@@ -170,13 +192,37 @@ func (m *Manager) CheckTimeouts(ctx context.Context) int {
 	}
 	m.mu.Unlock()
 
+	// The store may hold requests this process never created.
+	if lister, ok := m.store.(ExpiredLister); ok {
+		stored, err := lister.ListExpired(ctx, now)
+		if err != nil {
+			log.Printf("WARN: hitl: list expired requests: %v", err)
+		}
+		// Skip anything already collected from memory: both paths can see the
+		// same request, and reporting it twice would time out one task twice.
+		seen := make(map[string]bool, len(timedOut))
+		for _, req := range timedOut {
+			seen[req.ID] = true
+		}
+		for _, req := range stored {
+			if seen[req.ID] {
+				continue
+			}
+			req.Status = StatusTimeout
+			timedOut = append(timedOut, req)
+			seen[req.ID] = true
+		}
+	}
+
 	// Persist timeout status
 	for _, req := range timedOut {
 		if m.store != nil {
-			m.store.Update(ctx, req)
+			if err := m.store.Update(ctx, req); err != nil {
+				log.Printf("WARN: hitl: persist timeout for %s: %v", req.ID, err)
+			}
 		}
 	}
-	return len(timedOut)
+	return timedOut
 }
 
 // PendingCount returns the number of pending requests.
