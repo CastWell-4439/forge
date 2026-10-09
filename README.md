@@ -683,13 +683,13 @@ int main() {
 
 | 指标 | 数值 |
 |------|------|
-| Go 源码（非测试、非生成） | 约 **27,800 行** / 233 文件 |
-| Go 测试代码 | 约 **14,100 行** / 100 文件 |
-| 测试函数 | **660+** |
-| Go 包数量 | **63** |
-| 其中 ForgeX 控制面 | 约 **8,600 行** / 95 文件 / 24 子包 |
-| TypeScript (Dashboard) | 约 1,200 行 |
-| Python SDK | 约 1,500 行 |
+| Go 源码（非测试、非生成） | 约 **53,800 行** |
+| Go 测试代码 | 约 **33,600 行** |
+| 测试函数 | **1,360+** |
+| 受版本控制文件 | **669** |
+| 其中 ForgeX 控制面 | 见 `internal/forgex/`（24 子包） |
+| TypeScript (Dashboard) | 见 `web/` |
+| Python SDK | 见 `sdk/python/` |
 | C++ SDK | 含 protobuf 生成代码 |
 | Helm / Docker / K8s / CI 配置 | 见 `deploy/` 与 `.github/` |
 
