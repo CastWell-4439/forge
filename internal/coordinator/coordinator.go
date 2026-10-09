@@ -966,12 +966,90 @@ func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg st
 		return nil
 	}
 
+	// on_failure decides what a spent task means for the rest of the run. The
+	// field already existed with three values; only COMPENSATE was ever acted
+	// on, so the other two were documentation rather than behaviour and a
+	// workflow that wrote CONTINUE got a failed run.
+	switch c.taskDef(task).OnFailure {
+	case FailureActionContinue:
+		// The task is FAILED and stays that way — the failure is real and the
+		// audit trail says so. What CONTINUE buys is the rest of the DAG: its
+		// dependents are released rather than left waiting on a task that will
+		// never succeed.
+		//
+		// A failed task satisfies its dependents here, which is the opposite of
+		// the default. That is exactly what the author asked for by naming this
+		// action, and the alternative is a workflow that hangs forever on a
+		// branch its author declared optional.
+		log.Printf("INFO: task %s failed but on_failure=CONTINUE, so the workflow proceeds", task.TaskName)
+		return c.advanceWorkflowPastFailure(ctx, task)
+
+	case FailureActionFailWorkflow:
+		// Explicit, and identical to the default. Named here so the two paths
+		// are visible in one place rather than one being an absence.
+	}
+
 	// Default: mark workflow as failed
 	if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusFailed); err != nil {
 		return fmt.Errorf("fail workflow %s: %w", task.WorkflowID, err)
 	}
 	c.saveEvent(ctx, task.WorkflowID, "", storage.EventWorkflowFailed, payload)
 	c.evictDAGCache(task.WorkflowID)
+	return nil
+}
+
+// advanceWorkflowPastFailure releases a failed task's dependents.
+//
+// It marks the workflow RUNNING again (a failure with CONTINUE does not stop the
+// run) and then lets the ordinary advance decide what is eligible. The failed
+// task is "settled" for dependency purposes even though it did not succeed —
+// which is the one place this differs from a normal advance, so it is expressed
+// here rather than by teaching advanceWorkflow a second notion of settled.
+func (c *Coordinator) advanceWorkflowPastFailure(ctx context.Context, task *storage.Task) error {
+	if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusRunning); err != nil {
+		return fmt.Errorf("keep workflow %s running: %w", task.WorkflowID, err)
+	}
+	c.advanceMu.Lock()
+	defer c.advanceMu.Unlock()
+
+	dag := c.cachedDAG(task.WorkflowID)
+	if dag == nil {
+		return fmt.Errorf("advance past failed task %s: DAG is not cached", task.TaskName)
+	}
+
+	tasks, err := c.store.ListTasksByWorkflow(ctx, task.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("list tasks for workflow %s: %w", task.WorkflowID, err)
+	}
+
+	// A failed task counts as satisfied for its dependents, and so does a
+	// skipped one. Anything else still blocks.
+	satisfied := map[string]bool{task.TaskName: true}
+	for _, t := range tasks {
+		if t.Status == storage.TaskStatusCompleted || t.Status == storage.TaskStatusSkipped {
+			satisfied[t.TaskName] = true
+		}
+	}
+
+	for _, t := range tasks {
+		if t.Status != storage.TaskStatusPending {
+			continue
+		}
+		ready := true
+		for _, dep := range t.DependsOn {
+			if !satisfied[dep] {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			if err := c.store.UpdateTaskStatus(ctx, t.ID, storage.TaskStatusReady); err != nil {
+				return fmt.Errorf("mark task %s ready: %w", t.ID, err)
+			}
+		}
+	}
+
+	go c.scheduleReadyTasks(context.Background(), task.WorkflowID)
 	return nil
 }
 
@@ -1338,6 +1416,24 @@ func (c *Coordinator) renderInputForTask(ctx context.Context, task *storage.Task
 	return withTaskIdentity(task, body)
 }
 
+// remainingTimeoutMs reports how long a task may still run, in milliseconds, or 0
+// when nothing declared a deadline.
+//
+// Zero means "no deadline" on the wire, which is what a task with no declared
+// timeout has always meant here. A deadline that has already passed is reported
+// as 0 too rather than as a negative number: the task is about to be failed by
+// the sweep, and a negative timeout is not a value the worker can act on.
+func remainingTimeoutMs(deadline *time.Time, now time.Time) int64 {
+	if deadline == nil {
+		return 0
+	}
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining.Milliseconds()
+}
+
 // withTaskIdentity adds the task's own identity to an already-built params blob.
 //
 // A handler that has to refer to its own task — the HITL worker files a request
@@ -1454,6 +1550,14 @@ func (c *Coordinator) dispatchTask(ctx context.Context, worker *WorkerEntry, tas
 		TaskName:   task.TaskName,
 		Handler:    task.Handler,
 		Input:      input,
+		// How long the worker has, so it can bound its own work rather than
+		// being killed from outside with no chance to clean up. The field
+		// existed on the wire and was never set, so every worker had to guess.
+		//
+		// The remaining time is sent, not the original duration: a task that
+		// spent time queued has less left, and sending the full window would
+		// let it run past its deadline.
+		TimeoutMs: remainingTimeoutMs(task.TimeoutAt, callStartedAt),
 	})
 	callEndedAt := time.Now().UTC()
 	if err != nil {
