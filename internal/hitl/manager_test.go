@@ -143,9 +143,17 @@ func TestManager_CheckTimeouts(t *testing.T) {
 	mgr.Create(ctx, req)
 
 	time.Sleep(20 * time.Millisecond)
-	count := mgr.CheckTimeouts(ctx)
-	if count != 1 {
-		t.Errorf("timed out count = %d, want 1", count)
+	timedOut := mgr.CheckTimeouts(ctx)
+	if len(timedOut) != 1 {
+		t.Fatalf("timed out count = %d, want 1", len(timedOut))
+	}
+	// The request comes back so the caller can release the task waiting on it:
+	// a timed-out request whose task stays parked is the same stall moved.
+	if timedOut[0].ID != "hitl-timeout" {
+		t.Errorf("timed out request = %s, want hitl-timeout", timedOut[0].ID)
+	}
+	if timedOut[0].TaskID != "task-1" {
+		t.Errorf("timed out request lost its task id: %+v", timedOut[0])
 	}
 	if mgr.PendingCount() != 0 {
 		t.Errorf("pending after timeout = %d", mgr.PendingCount())

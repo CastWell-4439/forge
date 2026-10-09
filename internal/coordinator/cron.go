@@ -10,6 +10,7 @@ import (
 	"time"
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
+	"github.com/castwell/forge/internal/storage"
 )
 
 // MisfirePolicy defines behavior when a scheduled trigger is missed.
@@ -70,9 +71,17 @@ func (s *CronScheduler) AddTrigger(trigger *CronTrigger) error {
 		return fmt.Errorf("invalid cron expression %q: %w", trigger.CronExpr, err)
 	}
 
-	if trigger.MaxConcurrent <= 0 {
-		trigger.MaxConcurrent = 1
-	}
+	// MaxConcurrent is OPTIONAL, and left as declared. It used to be forced to 1
+	// here and then never read, which made it a field that looked like a limit
+	// and was not one: every deployment got the same answer whatever it wrote.
+	//
+	//	 0 or absent → no limit (an operator who did not ask for one is not
+	//	               given a silent cap on a workflow that used to run freely)
+	//	>0          → at most that many instances of this workflow running
+	//
+	// The zero value is what an existing YAML has, so this reads as "unset"
+	// rather than as "one", and no workflow's behaviour changes until someone
+	// asks for a limit.
 	if trigger.MisfirePolicy == "" {
 		trigger.MisfirePolicy = MisfireSkip
 	}
@@ -181,6 +190,27 @@ func (s *CronScheduler) fire(trigger *CronTrigger, now time.Time) {
 	}
 	trigger.mu.Unlock()
 
+	// Honour a declared concurrency limit, if one was declared. Checked before
+	// the fire is logged or submitted so a skipped fire leaves no trace of work
+	// that did not happen.
+	if trigger.MaxConcurrent > 0 {
+		running, err := s.runningInstances(ctx, trigger.WorkflowName)
+		if err != nil {
+			// Cannot tell whether it is safe to start: skipping is the safe
+			// direction, and saying so is better than firing blind.
+			log.Printf("WARN: cron: cannot read running instances of %q, skipping this fire: %v",
+				trigger.WorkflowName, err)
+			s.recordSkippedFire(trigger, now)
+			return
+		}
+		if running >= trigger.MaxConcurrent {
+			log.Printf("INFO: cron: trigger %q skipped: %d instance(s) of %q already running (max_concurrent=%d)",
+				trigger.ID, running, trigger.WorkflowName, trigger.MaxConcurrent)
+			s.recordSkippedFire(trigger, now)
+			return
+		}
+	}
+
 	log.Printf("INFO: cron: firing trigger %q for workflow %q", trigger.ID, trigger.WorkflowName)
 
 	var err error
@@ -213,6 +243,60 @@ func (s *CronScheduler) fire(trigger *CronTrigger, now time.Time) {
 	trigger.NextFireAt = &next
 	trigger.mu.Unlock()
 }
+
+// recordSkippedFire advances a trigger that was considered but not fired.
+//
+// LastFireAt is set as well as NextFireAt, and that is the load-bearing part: the
+// misfire policy decides whether a fire was missed by comparing LastFireAt with
+// now. Leaving it stale while moving NextFireAt forward would make the next tick
+// see an ever-growing gap and apply the misfire policy to a trigger that is not
+// late at all — a skipped fire would turn into a skipped schedule.
+func (s *CronScheduler) recordSkippedFire(trigger *CronTrigger, now time.Time) {
+	trigger.mu.Lock()
+	defer trigger.mu.Unlock()
+	trigger.LastFireAt = &now
+	next, _ := nextCronTime(trigger.CronExpr, now)
+	trigger.NextFireAt = &next
+}
+
+// runningInstances counts how many instances of a workflow are currently running.
+//
+// It counts from storage rather than from an in-process tally. A tally would be
+// wrong as soon as there is more than one coordinator — each would count only
+// its own fires and the limit would be multiplied by the number of replicas,
+// which is the opposite of what a concurrency limit is for.
+//
+// RUNNING plus PAUSED are both "in flight": a workflow waiting on a human is
+// still occupying the slot its trigger created, and counting only RUNNING would
+// let a cron keep piling up instances behind an unanswered approval.
+func (s *CronScheduler) runningInstances(ctx context.Context, workflowName string) (int, error) {
+	store := s.coordinator.store
+
+	count := 0
+	for _, status := range []storage.WorkflowStatus{
+		storage.WorkflowStatusRunning,
+		storage.WorkflowStatusPaused,
+	} {
+		workflows, err := store.ListWorkflows(ctx, status, cronInstanceScanLimit, 0)
+		if err != nil {
+			return 0, fmt.Errorf("list %s workflows: %w", status, err)
+		}
+		for _, wf := range workflows {
+			if wf.Name == workflowName {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// cronInstanceScanLimit bounds the per-status scan a concurrency check performs.
+//
+// It is a page limit, not a cap on the count: a deployment with more than this
+// many concurrent workflows in one state is beyond what an in-process cron
+// trigger is expected to police, and the log line says when the limit was hit
+// rather than silently under-counting.
+const cronInstanceScanLimit = 500
 
 // Triggers returns a copy of all registered triggers (for testing/inspection).
 func (s *CronScheduler) Triggers() []*CronTrigger {

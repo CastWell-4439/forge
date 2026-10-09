@@ -135,6 +135,30 @@ func (c *Coordinator) RejectPausedTask(ctx context.Context, taskID, reason strin
 	return c.OnTaskFailed(ctx, taskID, reason)
 }
 
+// FailPausedTaskOnTimeout ends a pause that nobody resolved in time.
+//
+// A request that expires has to land somewhere. Leaving the task parked would
+// mean a workflow waiting on an approval that can no longer arrive, with nothing
+// in the system willing to say so — the stall would look identical to a task
+// that is merely slow.
+//
+// It goes through the ordinary failure path so the workflow's own failure
+// handling runs, exactly as a rejected review does. The difference between
+// "rejected" and "nobody answered" is in the reason, which is what an operator
+// reads.
+func (c *Coordinator) FailPausedTaskOnTimeout(ctx context.Context, taskID string) error {
+	task, err := c.store.GetTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("get task %s: %w", taskID, err)
+	}
+	if task.Status != storage.TaskStatusPaused {
+		// It moved on: answered at the last moment, or already failed. Nothing
+		// to do, and the caller is told so it does not retry forever.
+		return fmt.Errorf("task %s is %s, not PAUSED", taskID, task.Status)
+	}
+	return c.OnTaskFailed(ctx, taskID, "human approval request timed out")
+}
+
 // ResolveTaskPause records a human decision about a paused task — the
 // production entry point for approval. State lives in the coordinator, so the
 // approval API lives here too: asking a second system to approve something it

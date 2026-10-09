@@ -31,6 +31,10 @@ func Run(appCtx context.Context) error {
 	// Installed process-wide: the worker's gRPC server and its dial to the
 	// coordinator read it through the tracing interceptors.
 	observability.TracerConfigEnv("forge-worker-" + lang)
+	// Same as the coordinator: kernel TCP latency where available and enabled,
+	// a no-op otherwise.
+	stopEBPF := observability.StartEBPFObserver(appCtx, metrics)
+	defer stopEBPF()
 	profiler := observability.NewProfiler(observability.DefaultProfilingConfig())
 	profiler.Start()
 

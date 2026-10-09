@@ -142,9 +142,19 @@ func Run(appCtx context.Context) error {
 
 	// --- Observability ---
 	metrics := observability.NewMetrics()
+	// Hand the counters to the state machine. Without this the /metrics endpoint
+	// publishes six series that can only ever read zero: the coordinator
+	// produced no observations at all, which reads as an idle system rather than
+	// an uninstrumented one.
+	coord.SetMetrics(observability.NewCoordinatorMetrics(metrics))
 	// The tracer is installed process-wide: the gRPC server and every dial
 	// site read it through the interceptors, so wiring happens here once.
 	observability.TracerConfigEnv("forge-coordinator")
+	// Kernel-level TCP latency, where the platform supports it and the operator
+	// asked for it. Off by default: attaching probes needs privileges, and an
+	// observability feature must not be the reason a node fails to start.
+	stopEBPF := observability.StartEBPFObserver(appCtx, metrics)
+	defer stopEBPF()
 	profiler := observability.NewProfiler(observability.DefaultProfilingConfig())
 	profiler.Start()
 
@@ -162,6 +172,18 @@ func Run(appCtx context.Context) error {
 	// on the bind address and the secret (see webhook.go): a routable address
 	// without a secret gets no entry point rather than an open one.
 	registerWorkflowEntryPoints(mux, coord)
+
+	// --- Human-in-the-loop ---
+	// The endpoints an operator answers approvals at, plus the sweep that times
+	// out requests nobody answered. The coordinator supplies the store and the
+	// release path; the requests themselves are filed by the worker's hitl
+	// handler in its own process (see hitl.go).
+	hitlSweep := setupHITL(coord, store, mux)
+
+	// The sweep runs on its own goroutine rather than inside the timeout
+	// manager: they watch different things (task deadlines versus human
+	// requests) and either may be in play without the other.
+	go hitlSweep(appCtx)
 
 	httpAddr := httpAddr()
 	httpLn, err := net.Listen("tcp", httpAddr)
