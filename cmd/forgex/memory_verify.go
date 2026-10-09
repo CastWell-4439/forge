@@ -53,7 +53,8 @@ across planes, which the export channel will carry.
 func runMemoryVerify(args []string) error {
 	fs := flag.NewFlagSet("memory verify", flag.ContinueOnError)
 	root := fs.String("root", ".forgex", "ForgeX root directory")
-	claimsPath := fs.String("claims", "", "JSON file of claims to check")
+	claimsPath := fs.String("claims", "", "JSON file of claims to check (default: read the memory store)")
+	knowledgeDir := fs.String("knowledge-dir", "", "agent plane's knowledge directory (default "+serveworker.DefaultKnowledgeDir+")")
 	minEvidence := fs.Int("min-evidence", 0, "observations needed to report a language conflict")
 	maxRuns := fs.Int("max-runs", 0, "how many recent runs to read")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
@@ -79,19 +80,33 @@ func runMemoryVerify(args []string) error {
 		return nil
 	}
 
+	// Claims come from the memory store when the operator does not supply a
+	// file. Reading the store directly is what connects this command to the
+	// review: the export is a plain read of the agent plane's file, and the
+	// extractor runs on the content here rather than in a separate step.
 	claims, err := loadClaims(*claimsPath)
 	if err != nil {
 		return err
 	}
 	if len(claims) == 0 {
-		// No claims to check is a real outcome and the message explains why
-		// rather than looking like a bug: the memories live in the agent
-		// plane's store, and this command does not reach into it.
+		export, err := serveworker.LoadMemoryExport(*knowledgeDir)
+		if err != nil {
+			return err
+		}
+		claims = serveworker.ClaimsFromExport(export)
+		if len(claims) > 0 {
+			fmt.Fprintf(os.Stdout, "read %d memory claim set(s) from %s\n",
+				len(claims), export.Path)
+		}
+	}
+	if len(claims) == 0 {
+		// No claims to check is a real outcome, and the message names the two
+		// ways to supply them rather than looking like a bug.
 		fmt.Fprintf(os.Stdout,
 			"read %d tool call(s) from %s/runs\n", len(calls), *root)
 		fmt.Fprintln(os.Stdout,
-			"no claims to check: pass --claims FILE (the memory store is the agent plane's, "+
-				"and this command reads what the control plane can see)")
+			"no claims to check: no memories were found in the knowledge directory, "+
+				"and no --claims file was given")
 		return nil
 	}
 
