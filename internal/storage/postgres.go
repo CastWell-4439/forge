@@ -321,16 +321,56 @@ func (s *PGStorage) ReleaseTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// AssignTaskWorker records which worker is executing a task (see the interface).
+// MarkTaskScheduled performs the READY to SCHEDULED transition as a
+// compare-and-set (see the interface). The WHERE clause is what makes it atomic:
+// the database decides the winner, not the caller's earlier read.
 //
-// A dedicated UPDATE rather than SaveTask, which is an INSERT on this backend:
-// using it to change one column would add a duplicate row instead of amending
-// the existing one.
-func (s *PGStorage) AssignTaskWorker(ctx context.Context, taskID string, workerID string) error {
+// It deliberately does not touch scheduled_at: that column carries the retry
+// backoff ("do not run before this instant"), and overwriting it here would
+// erase the wait a retry is serving. The transition is the whole job.
+func (s *PGStorage) MarkTaskScheduled(ctx context.Context, taskID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1
+		WHERE id = $2 AND status = $3
+	`, TaskStatusScheduled, taskID, TaskStatusReady)
+	if err != nil {
+		return false, fmt.Errorf("mark task %s scheduled: %w", taskID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// MarkTaskRunning records that a task has begun executing under a worker (see
+// the interface): RUNNING, its owner, and the attempt counter advanced.
+func (s *PGStorage) MarkTaskRunning(ctx context.Context, taskID string, workerID string) error {
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE task_instances SET worker_id = $1 WHERE id = $2
-	`, workerID, taskID); err != nil {
-		return fmt.Errorf("assign worker %s to task %s: %w", workerID, taskID, err)
+		UPDATE task_instances
+		SET status = $1,
+		    worker_id = $2,
+		    attempt = attempt + 1,
+		    started_at = NOW(),
+		    finished_at = NULL
+		WHERE id = $3
+	`, TaskStatusRunning, workerID, taskID); err != nil {
+		return fmt.Errorf("mark task %s running: %w", taskID, err)
+	}
+	return nil
+}
+
+// ScheduleTaskRetry returns a failed task to READY with notBefore as the
+// earliest run time (see the interface).
+func (s *PGStorage) ScheduleTaskRetry(ctx context.Context, taskID string, notBefore time.Time) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE task_instances
+		SET status = $1,
+		    scheduled_at = $2,
+		    worker_id = NULL,
+		    started_at = NULL,
+		    finished_at = NULL,
+		    error_msg = ''
+		WHERE id = $3
+	`, TaskStatusReady, notBefore, taskID); err != nil {
+		return fmt.Errorf("schedule retry for task %s: %w", taskID, err)
 	}
 	return nil
 }
