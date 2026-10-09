@@ -68,6 +68,13 @@ const (
 	// evaluated to false. The audit trail has to be able to answer "why did
 	// this task not run" with something better than its absence.
 	EventTaskSkipped EventType = "TASK_SKIPPED"
+	// EventTaskGoto records a loop iteration: which task jumped to which, and
+	// how many times the target had been revisited. Without it a replay would
+	// show a task running repeatedly with nothing explaining why.
+	EventTaskGoto EventType = "TASK_GOTO"
+	// EventTaskRewound records a task returning to the queue because a goto
+	// jumped back over it.
+	EventTaskRewound EventType = "TASK_REWOUND"
 )
 
 // WorkflowDefinition stores a versioned workflow DAG definition.
@@ -114,6 +121,17 @@ type Task struct {
 	TimeoutAt   *time.Time      `json:"timeout_at"`
 	CreatedAt   time.Time       `json:"created_at"`
 	DependsOn   []string        `json:"depends_on"`
+
+	// LoopIteration counts how many times this task has been revisited by an
+	// `on_result: goto` route. It is persisted because it is the only thing
+	// bounding a goto loop: an in-memory counter would reset on restart and
+	// turn a capped loop into an unbounded one.
+	//
+	// It is separate from Attempt, which counts execution attempts for the
+	// retry policy. One goto may cause several attempts, and a retry does not
+	// consume loop budget; folding them together would make each one silently
+	// change the other's limit.
+	LoopIteration int `json:"loop_iteration"`
 }
 
 // Event represents an immutable event in the event sourcing log.
@@ -199,6 +217,22 @@ type Storage interface {
 	// A mutex would not serve here: the coordinator runs as several processes in
 	// distributed mode, and only the store is shared.
 	MarkTaskScheduled(ctx context.Context, taskID string) (bool, error)
+
+	// RewindTaskForGoto returns a task to the queue because a goto jumped back
+	// to it (or to one of its ancestors), and advances its loop counter.
+	//
+	// This is a rewind, not a retry: the task is being re-run as part of a loop
+	// the author asked for, not because it failed. So Attempt is left alone —
+	// it belongs to the retry policy, and spending retry budget on a loop
+	// iteration would silently change a limit the author set elsewhere.
+	//
+	// Output is cleared. A re-run produces a new value, and a stale one still
+	// readable by successors is worse than no value: it would look like the
+	// re-run had already reported. Callers that want the old value should have
+	// read it before asking for the rewind.
+	//
+	// A missing task is not an error.
+	RewindTaskForGoto(ctx context.Context, taskID string) error
 
 	// ReleaseTask clears a task's worker assignment so the scheduler no longer
 	// treats it as owned. Used when a task is parked (paused awaiting human
