@@ -234,11 +234,11 @@ Forge 的核心调度单元是 DAG。每个工作流被编译为 DAG，由 Coord
 |------|------|
 | **拓扑排序执行** | `TopologicalOrder()` 按依赖顺序迭代（Kahn 算法） |
 | **判环** | 编译期校验，检出环路即拒绝加载 |
-| **CEL 条件分支** | Google CEL 表达式引擎，编译结果缓存，上下文含 `results`/`vars`/`iteration`/`workflow_id` |
-| **结果路由** | 4 种动作：`continue`（默认）/ `goto`（跳转）/ `abort`（中止）/ `skip`（跳过下游） |
-| **循环支持** | `max_iterations`（默认 10，硬上限 100）+ `break_on` CEL 表达式 |
-| **超时+重试** | 每个 Task 独立超时 + 指数退避重试（`max_attempts` + `initial_delay`） |
-| **DAG 缓存** | Coordinator 维护 LRU 缓存并自动淘汰，避免内存泄漏 |
+| **CEL 条件分支** | Google CEL 表达式引擎，编译结果缓存；上下文含 `results`（已完成任务的命名产出）与 `workflow_id`，循环中另有 `iteration`。任务自己的 `condition` 为假即标记 `SKIPPED`；表达式本身出错则**任务失败**（失败方向取安全的一侧） |
+| **结果路由** | 4 种动作：`continue`（默认）/ `goto:<task>`（回跳到**祖先**，重跑该段）/ `abort`（中止工作流）/ `skip`（跳过下游）。**无法履行的路由（非祖先、目标不存在）会失败整个工作流**，而不是静默当作 `continue` |
+| **循环支持** | `loop.max_iterations`（默认 10，硬上限 100）+ `loop.break_on` CEL 表达式；**计数持久化在任务的 `loop_iteration` 列**，重启不丢 |
+| **超时+重试** | 任务级 `timeout`（回落工作流级）+ 重试：`retry.max_attempts` / `backoff`（`fixed`/`exponential`/`exponential_with_jitter`）/ `initial_interval` / `max_interval` / `multiplier`（默认 2.0）。`max_attempts` 是**总执行次数** |
+| **DAG 缓存** | Coordinator 按 workflow ID 缓存已编译 DAG，工作流终态时**显式淘汰**（`evictDAGCache`），避免泄漏 |
 
 ---
 
@@ -583,12 +583,9 @@ stages:
         params: { analysis: "{{.analysis}}" }
         output: plan
 
-  # 人工闸门：审批任务。条件是任务级 `condition` 字段（CEL 表达式）。
-  #
-  # 注意两处现状：
-  #   - 全局的 `hitl.auto_pause_on` 从未接线，已删除（避免留成陷阱）。
-  #   - 任务级 `condition` 目前只被解析进 DAG，求值尚未接线，
-  #     因此这里的条件暂时不会真正跳过该任务。
+  # 人工闸门：审批任务。`condition` 是任务级 CEL 表达式，为假时该任务标记 SKIPPED
+  # 而不执行（下游照常解锁）。全局的 `hitl.auto_pause_on` 已删除——它从未接线。
+  # 条件读已完成任务的命名产出，所以这里用 `results.<output 名>.<字段>`。
   - name: approve
     tasks:
       - worker: hitl
@@ -596,7 +593,7 @@ stages:
         params:
           message: "修复方案：{{.plan.summary}}"
           options: [approve, reject, modify]
-        condition: "plan.confidence < 0.95"
+        condition: "results.plan.confidence < 0.95"
       - worker: review
         action: review_plan
         params: { plan: "{{.plan}}" }
