@@ -219,6 +219,59 @@ func (s Store) MarkReviewed(id string, at time.Time) (Pack, error) {
 	return pack, nil
 }
 
+// RecordVerification stores the outcome of running a skill's bound cases.
+//
+// It records failures as well as successes, and that symmetry is the point: a
+// skill whose last run failed is exactly the one a reader needs to find, and
+// writing only successes would make "never verified" and "verified and broken"
+// look identical.
+//
+// Recording does not change the skill's status. A regression may mean the skill
+// is wrong, or that a case went stale, or that the environment moved — three
+// different repairs, none of which this function can choose between. It
+// reports; a person decides.
+func (s Store) RecordVerification(id string, failedCases []string, at time.Time) (Pack, error) {
+	pack, err := s.Load(id)
+	if err != nil {
+		return Pack{}, err
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	pack.Metadata.LastVerifiedAt = at
+	if len(failedCases) == 0 {
+		pack.Metadata.LastVerifyStatus = VerifyPassed
+		// Clear the previous failures: a stale list of case names next to a
+		// "passed" status would describe a failure that no longer exists.
+		pack.Metadata.LastVerifyFailedCases = nil
+	} else {
+		pack.Metadata.LastVerifyStatus = VerifyFailed
+		pack.Metadata.LastVerifyFailedCases = append([]string(nil), failedCases...)
+	}
+	if _, err := s.savePreservingStatus(pack); err != nil {
+		return Pack{}, err
+	}
+	return pack, nil
+}
+
+// ListNeedingAttention returns published skills whose last verification failed.
+//
+// Deprecated skills are excluded: a retired skill is out of use, and reporting
+// its regression would ask someone to fix something nobody runs.
+func (s Store) ListNeedingAttention() ([]Pack, error) {
+	all, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	var out []Pack
+	for _, p := range all {
+		if p.Metadata.NeedsAttention() {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
 // savePreservingStatus writes a pack without letting Save's draft flag decide
 // its status.
 //
