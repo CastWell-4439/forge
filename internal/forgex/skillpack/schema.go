@@ -21,13 +21,28 @@ const (
 )
 
 // Pack statuses and review states.
+//
+// The lifecycle is draft -> published -> deprecated. Deprecation is a STATUS,
+// not a deletion: a skill encodes someone's reviewed judgement, and retiring it
+// is a decision that can be revisited. Removing the file would destroy the
+// evidence that the judgement was once made and why it stopped applying.
 const (
-	StatusDraft     = "draft"
-	StatusPublished = "published"
+	StatusDraft      = "draft"
+	StatusPublished  = "published"
+	StatusDeprecated = "deprecated"
 
 	ReviewPending = "pending"
 	ReviewDone    = "reviewed"
 )
+
+// DefaultStaleAfter is how long a reviewed skill is trusted before the review
+// proposes looking at it again.
+//
+// It is a review threshold, not an expiry: crossing it produces a line in a
+// report, never a status change. Half a year is long enough that the answer is
+// usually "still fine" and short enough that a project's conventions have not
+// moved twice underneath it.
+const DefaultStaleAfter = 180 * 24 * time.Hour
 
 // ReadmeTemplateMarker tags the placeholder a distilled pack starts with.
 // The publish gate rejects it, so a pack cannot ship until someone (or a model,
@@ -65,6 +80,45 @@ type Metadata struct {
 	SourceRuns    []string  `yaml:"source_runs,omitempty" json:"source_runs,omitempty"`
 	SourceLessons []string  `yaml:"source_lessons,omitempty" json:"source_lessons,omitempty"`
 	GeneratedAt   time.Time `yaml:"generated_at" json:"generated_at"`
+
+	// ReviewedAt is when a human last confirmed this skill still applies.
+	//
+	// ReviewStatus says WHETHER it was reviewed; this says WHEN, and without a
+	// time there is no way to tell a skill reviewed last week from one reviewed
+	// two years ago — which is the entire question staleness asks. Zero means
+	// never recorded, which reads as "unknown", not as "ancient".
+	ReviewedAt time.Time `yaml:"reviewed_at,omitempty" json:"reviewed_at,omitempty"`
+	// DeprecatedAt and DeprecationReason record a retirement.
+	//
+	// The reason is required when deprecating: a reviewer who finds a retired
+	// skill needs to know why it stopped applying, and "deprecated" alone would
+	// leave them to guess whether the world changed or the skill was wrong.
+	DeprecatedAt      time.Time `yaml:"deprecated_at,omitempty" json:"deprecated_at,omitempty"`
+	DeprecationReason string    `yaml:"deprecation_reason,omitempty" json:"deprecation_reason,omitempty"`
+}
+
+// IsDeprecated reports whether this skill has been retired.
+func (m Metadata) IsDeprecated() bool { return m.Status == StatusDeprecated }
+
+// IsStale reports whether a reviewed skill is due for another look.
+//
+// It answers "no" for anything not reviewed, because a draft is not stale — it
+// is unfinished, and the review's own rules already route it. Only a reviewed
+// skill that has gone unreviewed long enough counts, which keeps the report
+// about neglect rather than about age.
+func (m Metadata) IsStale(now time.Time, staleAfter time.Duration) bool {
+	if m.ReviewStatus != ReviewDone {
+		return false
+	}
+	if staleAfter <= 0 {
+		staleAfter = DefaultStaleAfter
+	}
+	// Never recorded means unknown, and an unknown age is not evidence of
+	// neglect — reporting it would flag every skill that predates the field.
+	if m.ReviewedAt.IsZero() {
+		return false
+	}
+	return now.Sub(m.ReviewedAt) > staleAfter
 }
 
 // Spec is the machine-readable half.
