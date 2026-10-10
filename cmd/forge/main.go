@@ -23,9 +23,13 @@ import (
 )
 
 // The coordinator's listen address, mirroring the serve package's env names.
+//
+// The default binds loopback, matching servecoordinator's own default. The two
+// have to agree: this constant is what standalone dials, and if they disagreed
+// the CLI would poll an address the coordinator had not bound.
 const (
 	envCoordGRPCAddr     = "FORGE_GRPC_ADDR"
-	defaultCoordGRPCAddr = ":50051"
+	defaultCoordGRPCAddr = "127.0.0.1:50051"
 )
 
 func main() {
