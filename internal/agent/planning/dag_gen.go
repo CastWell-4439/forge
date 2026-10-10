@@ -5,34 +5,42 @@ import (
 	"fmt"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/domain"
 	"github.com/castwell/forge/internal/coordinator"
 )
 
 const (
-	// maxRetries is the maximum number of LLM retry attempts for DAG generation.
+	// maxRetries is how many times a DAG that fails validation is sent back to
+	// the model. Three is the spec's figure: two attempts catch formatting and
+	// schema slips, the third catches a model that needed the error text twice.
 	maxRetries = 3
 )
 
-// DAGGenerator orchestrates DAG generation using a three-strategy approach:
-// 1. Template matching (fast, stable)
-// 2. LLM generation + validation (flexible, with retry)
-// 3. Fallback template (always succeeds, may lose detail)
-// From agent-tech-spec section 5.1.
+// DAGGenerator produces a validated DAG from a requirement, in three strategies:
+//
+//  1. template  — a domain's pre-built shape (fast, always valid)
+//  2. llm       — generated and validated, with errors fed back on retry
+//  3. fallback  — a single executor step (always valid, loses the step breakdown)
+//
+// The order is by cost, and the fallback is what makes the chain total: a
+// requirement that a model cannot plan still runs, as one task, rather than
+// failing to start. Losing the breakdown is a real loss and the strategy is
+// reported so a caller can see it happened.
 type DAGGenerator struct {
 	planner   *TaskPlanner
 	validator *DAGValidator
-	registry  *core.ToolRegistry
 	llmClient core.LLMClient
+	catalog   *HandlerCatalog
 }
 
-// NewDAGGenerator creates a new DAGGenerator.
-func NewDAGGenerator(llm core.LLMClient, registry *core.ToolRegistry) *DAGGenerator {
+// NewDAGGenerator creates a generator for a domain. A nil profile means the
+// generic one; a nil catalog means no handlers are known, which makes every
+// generated step fail L3 — so assembly is expected to supply one.
+func NewDAGGenerator(llm core.LLMClient, catalog *HandlerCatalog, profile DomainProfile) *DAGGenerator {
 	return &DAGGenerator{
-		planner:   NewTaskPlanner(llm, registry),
-		validator: NewDAGValidator(registry),
-		registry:  registry,
+		planner:   NewTaskPlanner(llm, catalog, profile),
+		validator: NewDAGValidator(catalog),
 		llmClient: llm,
+		catalog:   catalog,
 	}
 }
 
@@ -44,30 +52,42 @@ type GenerateResult struct {
 	Retries  int    // number of LLM retries used
 }
 
-// Generate produces a validated DAG from a VideoRequirement.
-// It tries three strategies in order: template, LLM+validate, fallback.
-func (g *DAGGenerator) Generate(ctx context.Context, req *domain.VideoRequirement) (*GenerateResult, error) {
-	// Strategy 1: Template matching — check if any template fits.
-	for _, tmpl := range g.planner.templates {
-		if tmpl.Match(req) {
-			yamlStr := tmpl.Build(req)
-			result := g.validator.Validate(yamlStr)
-			if result.Valid && result.DAG != nil {
-				return &GenerateResult{
-					DAG:      result.DAG,
-					YAML:     yamlStr,
-					Strategy: "template",
-				}, nil
-			}
-			// Template produced invalid DAG — fall through to LLM.
-			break
+// Generate produces a validated DAG. The strategies are tried in order, and the
+// first that validates wins.
+func (g *DAGGenerator) Generate(ctx context.Context, req *Requirement) (*GenerateResult, error) {
+	// Strategy 1: a domain template that fits.
+	for _, tmpl := range g.planner.Templates() {
+		if tmpl.Match != nil && !tmpl.Match(req) {
+			continue
 		}
+		yamlStr, err := tmpl.Build(req)
+		if err != nil {
+			return nil, fmt.Errorf("generate DAG: template %s: %w", tmpl.Name, err)
+		}
+		result := g.validator.Validate(yamlStr)
+		if result.Valid && result.DAG != nil {
+			return &GenerateResult{
+				DAG:      result.DAG,
+				YAML:     yamlStr,
+				Strategy: "template",
+			}, nil
+		}
+		// A template that produces an invalid DAG is a defect in the template,
+		// not in the requirement. Falling through to the model would hide it, so
+		// it is reported as an error — but only after the model has had its
+		// chance, because a requirement the template half-matches is still worth
+		// planning.
+		if err := g.llmFallback(ctx, req, result); err != nil {
+			return nil, fmt.Errorf("generate DAG: template %s produced an invalid DAG (%s) and LLM fallback failed: %w",
+				tmpl.Name, result.ErrorSummary(), err)
+		}
+		break
 	}
 
-	// Strategy 2: LLM dynamic generation with validation and retry.
+	// Strategy 2: the model, with validation and error feedback.
 	var lastErrors string
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		yamlStr, err := g.generateWithLLM(ctx, req, lastErrors)
+		yamlStr, err := g.planner.planWithLLM(ctx, req, lastErrors)
 		if err != nil {
 			return nil, fmt.Errorf("generate DAG (attempt %d): %w", attempt, err)
 		}
@@ -81,12 +101,11 @@ func (g *DAGGenerator) Generate(ctx context.Context, req *domain.VideoRequiremen
 				Retries:  attempt,
 			}, nil
 		}
-
-		// Feed errors back for next retry.
 		lastErrors = result.ErrorSummary()
 	}
 
-	// Strategy 3: Fallback — use a minimal template that always works.
+	// Strategy 3: one executor step. Always valid, because it names no handler
+	// the catalog might not have beyond the executor itself.
 	yamlStr := g.buildFallbackDAG(req)
 	dag, err := coordinator.ParseDAG([]byte(yamlStr))
 	if err != nil {
@@ -101,91 +120,54 @@ func (g *DAGGenerator) Generate(ctx context.Context, req *domain.VideoRequiremen
 	}, nil
 }
 
-// generateWithLLM calls the LLM to generate a DAG, optionally including
-// error feedback from a previous attempt.
-func (g *DAGGenerator) generateWithLLM(ctx context.Context, req *domain.VideoRequirement, previousErrors string) (string, error) {
-	if previousErrors == "" {
-		return g.planner.planWithLLM(ctx, req)
+// llmFallback is a small helper so the template path can hand over to the model
+// without duplicating the retry loop. It reports whether the model produced a
+// usable DAG, leaving the caller to decide what a failure means.
+func (g *DAGGenerator) llmFallback(ctx context.Context, req *Requirement, first *ValidationResult) error {
+	lastErrors := first.ErrorSummary()
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		yamlStr, err := g.planner.planWithLLM(ctx, req, lastErrors)
+		if err != nil {
+			return err
+		}
+		result := g.validator.Validate(yamlStr)
+		if result.Valid && result.DAG != nil {
+			return nil
+		}
+		lastErrors = result.ErrorSummary()
 	}
-
-	// Retry with error feedback — from agent-tech-spec 3.3.1.
-	selectedTools := g.planner.selectTools(req)
-	toolsPrompt := g.registry.FormatForPrompt()
-
-	reqPrompt := req.ToPromptString()
-
-	systemPrompt := fmt.Sprintf(`你是一个 DAG 编排专家。根据下面的任务需求，生成 Forge DAG YAML。
-
-⚠️ 你上一次生成的 DAG 有以下问题：
-%s
-
-请修复以上问题，重新生成正确的 DAG YAML。
-
-规则：
-1. 每个 task 必须指定 handler 和 params
-2. depends_on 必须引用已存在的 task 名称
-3. 没有依赖的 task 将并行执行
-4. DAG 必须包含 name 字段
-5. 每个 task 的 handler 必须是以下可用 handler 之一
-
-可用 handler 列表：
-%s
-
-推荐 handler：%s
-
-只输出纯 YAML，不要包含 markdown 代码块或任何解释文字。`,
-		previousErrors, toolsPrompt,
-		fmt.Sprintf("%v", selectedTools))
-
-	messages := []core.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: reqPrompt},
-	}
-
-	raw, err := g.llmClient.Chat(ctx, messages)
-	if err != nil {
-		return "", fmt.Errorf("LLM call failed: %w", err)
-	}
-
-	return g.planner.fixDAG(raw), nil
+	return fmt.Errorf("model did not produce a valid DAG in %d attempts: %s", maxRetries+1, lastErrors)
 }
 
-// buildFallbackDAG creates a minimal but valid DAG that covers the basic
-// operations. This always succeeds but may lose some detail from the
-// original requirement.
-func (g *DAGGenerator) buildFallbackDAG(req *domain.VideoRequirement) string {
-	// Fetch the source, run one scripted step over it, publish the result -
-	// the smallest pipeline every requirement can answer to.
-	sourceURL := "input"
-	if len(req.SourceVideos) > 0 {
-		sourceURL = req.SourceVideos[0].URL
-	}
-	resolution := req.Resolution
-	if resolution == "" {
-		resolution = "1080p"
+// buildFallbackDAG renders the single-step DAG.
+//
+// It is written as a struct rather than with Sprintf so the YAML is escaped by
+// the marshaller: a requirement whose description contains a colon or a quote
+// would otherwise produce YAML that does not parse — and this is the path taken
+// exactly when things have already gone wrong.
+func (g *DAGGenerator) buildFallbackDAG(req *Requirement) string {
+	acceptance := acceptanceText(req.Acceptance)
+	task := req.Description
+	if task == "" {
+		task = "完成需求描述中要求的工作"
 	}
 
-	return fmt.Sprintf(`name: fallback-pipeline
-tasks:
-  fetch:
-    handler: web.fetch
-    params:
-      url: %q
-    timeout: 60s
-  process:
-    handler: code.execute
-    params:
-      language: go
-      code: 'process(source=%q, resolution=%q)'
-    depends_on:
-      - fetch
-    timeout: 300s
-  publish:
-    handler: file.write
-    params:
-      path: output/result.txt
-      content: "${process.stdout}"
-    depends_on:
-      - process
-    timeout: 120s`, sourceURL, sourceURL, resolution)
+	dag := dagYAML{
+		Name: "fallback-plan",
+		Tasks: map[string]taskYAML{
+			"work": {
+				Handler: agentHandler,
+				Params:  agentParams(task, acceptance),
+				Timeout: "30m",
+			},
+		},
+	}
+
+	out, err := marshalDAG(dag)
+	if err != nil {
+		// Should not happen with well-formed structs; if it does, the caller
+		// gets YAML that fails to parse rather than silent nonsense.
+		return fmt.Sprintf("# marshal error: %v", err)
+	}
+	return out
 }
