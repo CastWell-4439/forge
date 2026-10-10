@@ -42,10 +42,9 @@ func (r *usageRecorder) RecordUsage(ctx context.Context, runID string, entryIDs 
 		if id == "" {
 			continue
 		}
-		// Used=true together with UsageKnown=true: this is the ONE combination
-		// the contract can establish, because the id was checked against what
-		// the run was actually shown before it reached here. See citation.go
-		// for why the opposite combination is never produced.
+		// Used=true together with UsageKnown=true: the run stated it relied on
+		// this id, and the id was checked against what the run was actually
+		// shown before it reached here.
 		err := r.index.RecordObservation(ctx, storage.MemoryObservation{
 			RunID:      runID,
 			EntryID:    id,
@@ -56,6 +55,43 @@ func (r *usageRecorder) RecordUsage(ctx context.Context, runID string, entryIDs 
 		})
 		if err != nil {
 			return fmt.Errorf("record usage for %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// RecordOffers implements core.ObservationSink.
+//
+// It records that the run was SHOWN these ids, and claims nothing about use:
+// Used=false with UsageKnown=false, which the aggregate reads as "offered" and
+// refuses to read as "declined".
+//
+// This is the record that makes a never-cited entry visible to the archive at
+// all. Before it existed, an entry nobody ever mentioned accumulated no rows,
+// so the decision could only look at entries that had been cited — that is, at
+// entries that had been used — and the answer was always "still in use".
+//
+// Same failure posture as RecordUsage: logged and swallowed, because
+// bookkeeping must not fail a run that already produced its answer.
+func (r *usageRecorder) RecordOffers(ctx context.Context, runID string, entryIDs []string) error {
+	if r == nil || r.index == nil || runID == "" || len(entryIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	for _, id := range entryIDs {
+		if id == "" {
+			continue
+		}
+		err := r.index.RecordObservation(ctx, storage.MemoryObservation{
+			RunID:      runID,
+			EntryID:    id,
+			Kind:       storage.ObservationKindMemory,
+			Used:       false,
+			UsageKnown: false,
+			At:         now,
+		})
+		if err != nil {
+			return fmt.Errorf("record offer for %s: %w", id, err)
 		}
 	}
 	return nil
