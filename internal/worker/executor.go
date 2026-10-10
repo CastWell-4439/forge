@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 )
@@ -89,6 +90,22 @@ func (e *Executor) Execute(ctx context.Context, req *forgev1.TaskRequest) *forge
 				ErrorMsg: fmt.Sprintf("runtime gate %s: %s", action, decision.Reason),
 			}
 		}
+	}
+
+	// Bound the handler by the deadline the coordinator sent.
+	//
+	// The field existed on the wire and was never read, so a handler could run
+	// past its task deadline while the coordinator's sweeper failed the task
+	// underneath it — the work still going, and nothing able to stop it. Applying
+	// it here cancels the handler instead, and Go's context propagates that into
+	// whatever it was doing.
+	//
+	// Zero means "no deadline", which is what the coordinator sends for a task
+	// that declared none.
+	if ms := req.GetTimeoutMs(); ms > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(ms)*time.Millisecond)
+		defer cancel()
 	}
 
 	// Execute handler

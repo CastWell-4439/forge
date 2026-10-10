@@ -234,21 +234,35 @@ func CheckAcceptance(a Acceptance, snapshot *WorkflowSnapshot) AcceptanceEvidenc
 			Mentioned: containsFold(string(corpus), check),
 		})
 	}
+
+	// Filled here rather than computed on demand by the caller: the list is the
+	// actionable half of the evidence, and a caller that has to derive it is a
+	// caller that might not.
+	evidence.UnmentionedChecks = evidence.Unmentioned()
 	return evidence
 }
 
 // AcceptanceEvidence is what a run shows about a requirement's acceptance.
+//
+// The JSON names are explicit because this value crosses a boundary: it is
+// returned inside a workflow task's output, where a reader expects the lowercase
+// convention every other payload in this system uses. Without tags the encoder
+// would emit the Go field names, and a caller reading `criteria` would find
+// nothing — which is exactly how this was caught.
 type AcceptanceEvidence struct {
-	Criteria string
-	RunEnded bool
-	Passed   bool
-	Checks   []CheckEvidence
+	Criteria string          `json:"criteria"`
+	RunEnded bool            `json:"run_ended"`
+	Passed   bool            `json:"passed"`
+	Checks   []CheckEvidence `json:"checks,omitempty"`
+	// UnmentionedChecks repeats the unsupported checks as a plain list, so a
+	// caller does not have to filter the checks itself to find what to look at.
+	UnmentionedChecks []string `json:"unmentioned,omitempty"`
 }
 
 // CheckEvidence is one check and whether the run's outputs mention it.
 type CheckEvidence struct {
-	Check     string
-	Mentioned bool
+	Check     string `json:"check"`
+	Mentioned bool   `json:"mentioned"`
 }
 
 // Unmentioned returns the checks with no supporting text, which is what a
