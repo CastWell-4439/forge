@@ -117,6 +117,13 @@ type recordingSink struct {
 	ids   [][]string
 	err   error
 	calls int
+
+	// Offers are a separate observation from citations: what the run was shown,
+	// regardless of what it said it used.
+	offers       [][]string
+	offerRuns    []string
+	offerCalls   int
+	offerFailure error
 }
 
 func (s *recordingSink) RecordUsage(_ context.Context, runID string, entryIDs []string) error {
@@ -124,6 +131,14 @@ func (s *recordingSink) RecordUsage(_ context.Context, runID string, entryIDs []
 	s.runs = append(s.runs, runID)
 	s.ids = append(s.ids, entryIDs)
 	return s.err
+}
+
+// RecordOffers implements core.ObservationSink.
+func (s *recordingSink) RecordOffers(_ context.Context, runID string, entryIDs []string) error {
+	s.offerCalls++
+	s.offerRuns = append(s.offerRuns, runID)
+	s.offers = append(s.offers, entryIDs)
+	return s.offerFailure
 }
 
 // The loop records only verified citations, and only when a sink is attached.
@@ -142,6 +157,63 @@ func TestLoopRecordsVerifiedCitations(t *testing.T) {
 	require.Equal(t, 1, sink.calls)
 	assert.Equal(t, "run-1", sink.runs[0])
 	assert.Equal(t, []string{"mem_1"}, sink.ids[0], "the fabricated id is not recorded")
+}
+
+// Every offered id is recorded as an offer, whether or not it was cited.
+//
+// This is what makes a never-cited entry visible to the archive at all. Without
+// it the observation table only ever holds citations, so the decision can only
+// look at entries that were used — and every one of them reports "still in
+// use", which is why archiving never fired.
+func TestLoopRecordsEveryOffer(t *testing.T) {
+	sink := &recordingSink{}
+	loop := NewAgentLoop(&mockLLM{responses: []string{finalAnswer}},
+		NewToolRouter(registryWithTools(t, "file.read")), DefaultLoopConfig())
+	loop.SetUsageSink(sink)
+
+	// Three offered, one cited.
+	loop.recalledThis = map[string]bool{"mem_1": true, "mem_2": true, "mem_3": true}
+	loop.citedThis = []string{"mem_1"}
+
+	loop.recordCitations(t.Context(), "run-1")
+
+	require.Equal(t, 1, sink.offerCalls)
+	assert.Equal(t, []string{"mem_1", "mem_2", "mem_3"}, sink.offers[0],
+		"all three were shown, so all three are offers — sorted so repeated runs agree")
+	assert.Equal(t, []string{"mem_1"}, sink.ids[0], "only the cited one is a usage signal")
+}
+
+// Offers are recorded even when the model cited nothing at all: the run still
+// showed it these entries, and that fact is what the archive counts.
+func TestOffersAreRecordedWithoutAnyCitation(t *testing.T) {
+	sink := &recordingSink{}
+	loop := NewAgentLoop(&mockLLM{responses: []string{finalAnswer}},
+		NewToolRouter(registryWithTools(t, "file.read")), DefaultLoopConfig())
+	loop.SetUsageSink(sink)
+
+	loop.recalledThis = map[string]bool{"mem_7": true}
+	loop.citedThis = nil
+
+	loop.recordCitations(t.Context(), "run-1")
+
+	assert.Equal(t, 1, sink.offerCalls, "the offer is recorded even in silence")
+	assert.Equal(t, []string{"mem_7"}, sink.offers[0])
+	assert.Zero(t, sink.calls, "and no usage is claimed, because the model said nothing")
+}
+
+// A failing offer write does not stop the usage write, and neither fails a run
+// that already produced its answer.
+func TestOfferFailureDoesNotBlockUsageRecording(t *testing.T) {
+	sink := &recordingSink{offerFailure: assert.AnError}
+	loop := NewAgentLoop(&mockLLM{responses: []string{finalAnswer}},
+		NewToolRouter(registryWithTools(t, "file.read")), DefaultLoopConfig())
+	loop.SetUsageSink(sink)
+
+	loop.recalledThis = map[string]bool{"mem_1": true}
+	loop.citedThis = []string{"mem_1"}
+
+	assert.NotPanics(t, func() { loop.recordCitations(t.Context(), "run-1") })
+	assert.Equal(t, 1, sink.calls, "the citation is still recorded")
 }
 
 // With no sink the loop resolves and discards: the feature is off, and it costs

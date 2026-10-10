@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -140,8 +141,43 @@ func usageObservations(runID string, citations CitationResult, at time.Time) []c
 // outcome for the same reason: the run produced no usable usage signal, and
 // recording a weaker one would be a fabrication that the archive decision
 // would then act on.
+// recordCitations turns a run's citations into observations.
+//
+// Two observations are recorded, and the second is the one that makes the
+// lifecycle work at all:
+//
+//   - USAGE for the ids that were both cited and recalled. A statement.
+//   - OFFERS for everything the run was shown. Not a statement about use, but
+//     the only record that a never-cited entry was ever offered.
+//
+// Without the offer record an entry nobody mentions accumulates no rows, and
+// the archive can only evaluate entries that were cited — which are exactly the
+// entries that were used. The decision then sees only survivors.
+//
+// Nothing about use is recorded when the model said nothing: an offer says the
+// entry was shown, and the observation carries UsageKnown=false so that no
+// later decision can read it as disuse.
 func (l *AgentLoop) recordCitations(ctx context.Context, sessionID string) {
-	if l == nil || l.usageSink == nil || len(l.citedThis) == 0 {
+	if l == nil || l.usageSink == nil {
+		return
+	}
+
+	// The offers are recorded whichever way the citation resolution goes; a run
+	// that cited nothing still showed the model these entries.
+	if len(l.recalledThis) > 0 {
+		offered := make([]string, 0, len(l.recalledThis))
+		for id := range l.recalledThis {
+			if id != "" {
+				offered = append(offered, id)
+			}
+		}
+		sort.Strings(offered)
+		if err := l.usageSink.RecordOffers(ctx, sessionID, offered); err != nil {
+			log.Printf("[INFO] could not record memory offers for run %s: %v", sessionID, err)
+		}
+	}
+
+	if len(l.citedThis) == 0 {
 		return
 	}
 	resolved := resolveCitations(l.citedThis, l.recalledThis)
@@ -155,7 +191,7 @@ func (l *AgentLoop) recordCitations(ctx context.Context, sessionID string) {
 	}
 	if !resolved.UsageKnown() {
 		// The model cited nothing verifiable. This is the common case and it is
-		// NOT a negative signal — see citation.go rule 1.
+		// NOT a negative signal — the offers above are the only thing recorded.
 		return
 	}
 
