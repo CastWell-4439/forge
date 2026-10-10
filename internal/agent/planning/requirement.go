@@ -23,13 +23,34 @@ type Acceptance struct {
 	// Checks are individually verifiable statements. A run is judged against
 	// these, so each one has to be answerable yes or no.
 	Checks []string `json:"checks,omitempty" yaml:"checks,omitempty"`
+
+	// Artifacts names what the run must produce, so completeness can be checked
+	// before quality is. Each entry is a path or glob as the executing side sees
+	// it.
+	//
+	// This exists because the two checks are not interchangeable and must run in
+	// this order: a missing artifact makes the quality question unanswerable, and
+	// a model asked to score incomplete material will usually produce something
+	// plausible rather than say the input is missing. Completeness is mechanical,
+	// so it goes first and it can fail unambiguously.
+	Artifacts []string `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
+
+	// Threshold is the score a run must reach to count as acceptable, on a 0..1
+	// scale. Zero means no threshold was declared, and the workflow decides
+	// whether to gate on the score at all.
+	//
+	// Note who does NOT read this: the scorer. It reports a score and never
+	// learns the bar, so it cannot decide its own outcome — the comparison lives
+	// in the workflow declaration where it can be reviewed, replayed and, if
+	// needed, tightened without touching a prompt.
+	Threshold float64 `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 }
 
 // IsEmpty reports whether nothing was declared. It is how the planner recognises
 // a requirement that never said what finishing looks like, so it can be told to
 // say — an undeclared acceptance is not the same as "anything goes".
 func (a Acceptance) IsEmpty() bool {
-	return a.Criteria == "" && len(a.Checks) == 0
+	return a.Criteria == "" && len(a.Checks) == 0 && len(a.Artifacts) == 0
 }
 
 // Requirement is a structured requirement as this engine sees it.

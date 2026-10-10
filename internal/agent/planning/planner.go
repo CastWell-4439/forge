@@ -77,7 +77,7 @@ func (p *TaskPlanner) Templates() []DAGTemplate { return p.templates }
 // planWithLLM asks the model for a DAG. previousErrors, when set, is fed back so
 // a retry is a correction rather than a repetition.
 func (p *TaskPlanner) planWithLLM(ctx context.Context, req *Requirement, previousErrors string) (string, error) {
-	systemPrompt := p.buildPlanPrompt(previousErrors)
+	systemPrompt := p.buildPlanPrompt(req, previousErrors)
 
 	reqJSON, err := json.MarshalIndent(req, "", "  ")
 	if err != nil {
@@ -104,7 +104,7 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *Requirement, previou
 // model is NOT asked to pick tools — it cannot see the workspace or the data,
 // and a tool chosen blind is a guess the executor has to live with. The executor
 // picks, at a point where it can actually tell which tool fits.
-func (p *TaskPlanner) buildPlanPrompt(previousErrors string) string {
+func (p *TaskPlanner) buildPlanPrompt(req *Requirement, previousErrors string) string {
 	var b strings.Builder
 
 	b.WriteString("你是一个工作流编排专家。根据下面的结构化需求，生成一份 Forge 工作流 DAG YAML。\n\n")
@@ -128,15 +128,68 @@ func (p *TaskPlanner) buildPlanPrompt(previousErrors string) string {
 6. task 说明里不要出现具体命令、工具名或代码——那是执行者的事。
 7. 只输出纯 YAML，不要 markdown 代码块，不要任何解释文字。
 
-示例：
 `)
-	b.WriteString(examplePlanYAML)
+
+	// The quality gate, taught only when the requirement asked for one.
+	//
+	// Emitting it always would add a step to every plan, including ones that
+	// declared no bar; emitting it never would mean an acceptance a requirement
+	// did declare gets written down and then never checked. So it appears exactly
+	// when the acceptance named artifacts or a score to reach.
+	if gate := gateHint(req); gate != "" {
+		b.WriteString(gate)
+		b.WriteString("\n")
+	}
+
+	b.WriteString("示例：\n")
+	b.WriteString(examplePlanYAML + "\n")
 
 	if hints := strings.TrimSpace(p.profile.PlanHints()); hints != "" {
-		b.WriteString("\n\n本领域补充说明：\n")
+		b.WriteString("\n本领域补充说明：\n")
 		b.WriteString(hints)
 	}
 
+	return b.String()
+}
+
+// gateHint describes the quality gate, when the requirement asked for one.
+//
+// The gate is a declared structure rather than a model decision: the scorer
+// reports a score and never learns the bar, and the workflow compares the two.
+// That split is why this hint gives a shape to reproduce instead of an
+// instruction to "check the quality" — a step that decided for itself would put
+// the verdict in its own output, where it cannot be reviewed or replayed.
+//
+// The loop is bounded, and exhausting it fails the run: a plan that keeps missing
+// the bar must say so rather than quietly hand back the best attempt.
+func gateHint(req *Requirement) string {
+	if req == nil {
+		return ""
+	}
+	artifacts := req.Acceptance.Artifacts
+	threshold := req.Acceptance.Threshold
+	if len(artifacts) == 0 && threshold <= 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("8. 需求声明了验收门槛，必须按下面的形状加一步质量评估，不要省：\n")
+	b.WriteString("   - 产出步骤都声明 output，好让评估步骤能引用\n")
+	b.WriteString("   - 加一个 handler: judge 的步骤，params.acceptance 原样带上需求里的验收标准\n")
+
+	if len(artifacts) > 0 {
+		fmt.Fprintf(&b, "     acceptance.artifacts 必须列出这些产物：%s\n", strings.Join(artifacts, "、"))
+		b.WriteString("     评估会先检查它们齐不齐——缺了直接返回低分，这一步不调用模型\n")
+	}
+
+	if threshold > 0 {
+		fmt.Fprintf(&b, "   - 产出步骤上声明 loop，break_on 用 results.verdict.score >= %g\n", threshold)
+		fmt.Fprintf(&b, "     %g 是需求声明的门槛，不要自己改\n", threshold)
+		b.WriteString("   - 评估步骤的 on_result.success 写成 {action: goto, target: <第一个产出步骤>}\n")
+		b.WriteString("     回跳是否真的发生由 break_on 决定：达标就结束循环，未达标就重做这一段\n")
+	}
+
+	b.WriteString("   - 评估步骤的 output 命名为 verdict，便于 break_on 引用\n")
 	return b.String()
 }
 
