@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/castwell/forge/internal/discovery"
 	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
 	"github.com/castwell/forge/internal/observability"
@@ -380,8 +382,19 @@ func (c *Coordinator) submitDAG(ctx context.Context, dag *DAG, input json.RawMes
 		return nil, status.Errorf(codes.Internal, "save workflow: %v", err)
 	}
 
-	// Record submission event
-	c.saveEvent(ctx, workflowID, "", storage.EventWorkflowSubmitted, nil)
+	// Record the submission event, carrying the DAG.
+	//
+	// The payload used to be nil, which left the DAG reachable only from this
+	// process's memory — and the two things that need it (deciding whether a
+	// failure compensates, and building the compensation plan) both read that
+	// memory. A restart therefore silently disabled compensation: the workflow
+	// was still in the database, its tasks were still there, and nothing could
+	// tell that it was supposed to roll back.
+	//
+	// The event log is this system's record of what happened, so the DAG belongs
+	// in it. It is written once per workflow and read back only when memory has
+	// lost it.
+	c.saveEvent(ctx, workflowID, "", storage.EventWorkflowSubmitted, submissionPayload(dag))
 
 	// Cache DAG for Saga compensation lookup.
 	c.dagCacheMu.Lock()
@@ -955,9 +968,9 @@ func (c *Coordinator) OnTaskFailed(ctx context.Context, taskID string, errMsg st
 	c.saveEvent(ctx, task.WorkflowID, taskID, storage.EventTaskFailed, payload)
 
 	// Check if this task has on_failure: COMPENSATE — if so, trigger Saga.
-	// We need the DAG definition to check. Store it on workflow submission
-	// so we can retrieve it here.
-	if c.shouldCompensate(task.WorkflowID, task.TaskName) {
+	// The DAG is resolved from memory, or recovered from the submission event
+	// when memory no longer has it — see resolveDAG.
+	if c.shouldCompensate(ctx, task.WorkflowID, task.TaskName) {
 		// Transition workflow to COMPENSATING state.
 		if err := c.store.UpdateWorkflowStatus(ctx, task.WorkflowID, storage.WorkflowStatusCompensating); err != nil {
 			return fmt.Errorf("set workflow %s compensating: %w", task.WorkflowID, err)
@@ -1886,12 +1899,144 @@ func (c *Coordinator) evictDAGCache(workflowID string) {
 	c.dagCacheMu.Unlock()
 }
 
-// shouldCompensate checks if the failed task's on_failure policy is COMPENSATE.
-func (c *Coordinator) shouldCompensate(workflowID, taskName string) bool {
+// submissionPayload renders the event payload that carries a workflow's DAG.
+//
+// It is written once at submission and read back only when the in-memory cache
+// has lost the definition — a restart, or a workflow that arrived through another
+// coordinator. The payload is the YAML rather than a re-serialised struct so a
+// reader gets back exactly what was submitted, including declarations this
+// version might not model.
+func submissionPayload(dag *DAG) json.RawMessage {
+	if dag == nil {
+		return nil
+	}
+	raw, err := json.Marshal(map[string]string{"dag_yaml": marshalDAGForEvent(dag)})
+	if err != nil {
+		// Not fatal to the submission: the DAG is still cached and the workflow
+		// still runs. What is lost is the ability to recover it after a restart,
+		// which is worth a warning rather than a failure.
+		log.Printf("WARN: marshal DAG for submission event: %v", err)
+		return nil
+	}
+	return raw
+}
+
+// marshalDAGForEvent renders a parsed DAG back to YAML for the event payload.
+func marshalDAGForEvent(dag *DAG) string {
+	raw := rawDAG{
+		Name:    dag.Name,
+		Version: dag.Version,
+		Tasks:   map[string]*rawTaskDef{},
+	}
+	if dag.Timeout > 0 {
+		raw.Timeout = dag.Timeout.String()
+	}
+	for name, task := range dag.Tasks {
+		rawTask := &rawTaskDef{
+			Handler:    task.Handler,
+			Params:     task.Params,
+			DependsOn:  task.DependsOn,
+			OnFailure:  task.OnFailure,
+			Compensate: task.Compensate,
+			Condition:  task.Condition,
+			Output:     task.Output,
+			Loop:       task.Loop,
+		}
+		if task.Timeout > 0 {
+			rawTask.Timeout = task.Timeout.String()
+		}
+		if task.Retry.MaxAttempts > 0 {
+			rawTask.Retry = &rawRetryPolicy{
+				MaxAttempts:     task.Retry.MaxAttempts,
+				InitialInterval: task.Retry.InitialInterval.String(),
+				MaxInterval:     task.Retry.MaxInterval.String(),
+				Multiplier:      task.Retry.Multiplier,
+				Backoff:         string(task.Retry.BackoffType),
+			}
+		}
+		if task.OnResult != nil {
+			rawTask.OnResult = map[string]any{}
+			for status, route := range task.OnResult {
+				if route.Target != "" {
+					rawTask.OnResult[status] = map[string]any{
+						"action": string(route.Action),
+						"target": route.Target,
+					}
+				} else {
+					rawTask.OnResult[status] = string(route.Action)
+				}
+			}
+		}
+		raw.Tasks[name] = rawTask
+	}
+
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		log.Printf("WARN: marshal DAG to YAML for submission event: %v", err)
+		return ""
+	}
+	return string(out)
+}
+
+// resolveDAG returns a workflow's parsed DAG, from cache if present and from the
+// event log otherwise.
+//
+// This is what makes compensation survive a restart. Both the decision to
+// compensate and the plan of what to roll back need the DAG, and both used to
+// read memory alone — so a coordinator that restarted between the failure and
+// the compensation (or simply had evicted the entry) would conclude that nothing
+// needed compensating and let a half-applied workflow stand. The event log has
+// carried the answer since submission; it just was not asked.
+//
+// A missing DAG is reported as nil rather than as an error: not every workflow
+// compensates, and the callers treat "cannot tell" and "no" the same way — by
+// not compensating — while logging which one it was.
+func (c *Coordinator) resolveDAG(ctx context.Context, workflowID string) *DAG {
 	c.dagCacheMu.RLock()
 	dag, ok := c.dagCache[workflowID]
 	c.dagCacheMu.RUnlock()
-	if !ok {
+	if ok {
+		return dag
+	}
+
+	events, err := c.store.GetWorkflowHistory(ctx, workflowID)
+	if err != nil {
+		log.Printf("WARN: saga: read history for workflow %s: %v", workflowID, err)
+		return nil
+	}
+	for _, event := range events {
+		if event.Type != storage.EventWorkflowSubmitted || len(event.Payload) == 0 {
+			continue
+		}
+		var payload struct {
+			DagYAML string `json:"dag_yaml"`
+		}
+		if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.DagYAML == "" {
+			continue
+		}
+		recovered, err := ParseDAG([]byte(payload.DagYAML))
+		if err != nil {
+			log.Printf("WARN: saga: parse recovered DAG for workflow %s: %v", workflowID, err)
+			return nil
+		}
+		// Put it back: a compensated workflow is looked at more than once (the
+		// decision, then the plan), and re-reading the log each time would be
+		// work for nothing.
+		c.dagCacheMu.Lock()
+		c.dagCache[workflowID] = recovered
+		c.dagCacheMu.Unlock()
+		log.Printf("INFO: recovered DAG for workflow %s from its submission event", workflowID)
+		return recovered
+	}
+
+	log.Printf("WARN: saga: workflow %s has no recoverable DAG (no submission payload)", workflowID)
+	return nil
+}
+
+// shouldCompensate checks if the failed task's on_failure policy is COMPENSATE.
+func (c *Coordinator) shouldCompensate(ctx context.Context, workflowID, taskName string) bool {
+	dag := c.resolveDAG(ctx, workflowID)
+	if dag == nil {
 		return false
 	}
 	taskDef, ok := dag.Tasks[taskName]
@@ -1904,11 +2049,9 @@ func (c *Coordinator) shouldCompensate(workflowID, taskName string) bool {
 // runCompensation executes Saga compensation for a failed workflow.
 // It delegates to saga.Compensator.BuildPlan + saga.Execute for a single source of truth.
 func (c *Coordinator) runCompensation(ctx context.Context, workflowID, failedTaskName string) {
-	c.dagCacheMu.RLock()
-	dag, ok := c.dagCache[workflowID]
-	c.dagCacheMu.RUnlock()
-	if !ok {
-		log.Printf("ERROR: saga: no DAG cached for workflow %s", workflowID)
+	dag := c.resolveDAG(ctx, workflowID)
+	if dag == nil {
+		log.Printf("ERROR: saga: no DAG available for workflow %s", workflowID)
 		return
 	}
 

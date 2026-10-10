@@ -1,5 +1,3 @@
-// Package planning implements requirement parsing, task planning, and DAG
-// generation for the Agent layer.
 package planning
 
 import (
@@ -8,106 +6,83 @@ import (
 	"fmt"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/domain"
 )
 
-// dagYAML is the top-level struct for generating DAG YAML via yaml.Marshal.
-// This replaces the unsafe fmt.Sprintf approach (#6).
-type dagYAML struct {
-	Name  string              `yaml:"name"`
-	Tasks map[string]taskYAML `yaml:"tasks"`
-}
-
-// taskYAML represents one task in the DAG template.
-type taskYAML struct {
-	Handler   string                 `yaml:"handler"`
-	Params    map[string]interface{} `yaml:"params"`
-	DependsOn []string               `yaml:"depends_on,omitempty"`
-	Timeout   string                 `yaml:"timeout,omitempty"`
-	Retry     *retryYAML             `yaml:"retry,omitempty"`
-}
-
-// retryYAML holds retry configuration for a task.
-type retryYAML struct {
-	MaxAttempts     int    `yaml:"max_attempts"`
-	Backoff         string `yaml:"backoff"`
-	InitialInterval string `yaml:"initial_interval"`
-}
-
-// DAGTemplate is a predefined DAG template for a recurring task shape
-// scenarios. Strategy A from agent-tech-spec 3.3.
+// DAGTemplate is a pre-built DAG shape, supplied by a domain.
+//
+// A template earns its place only if it is both common and fixed — the shape
+// recurs, and its steps do not depend on the requirement's details. A template
+// that has to inspect domain fields to decide its own shape is not a template;
+// it is a planner written in Go, and it will be wrong the first time reality
+// differs slightly.
 type DAGTemplate struct {
 	// Name is the template identifier.
 	Name string
-	// Description explains what this template is for.
+	// Description explains what shape this template builds.
 	Description string
-	// Match returns true if the given requirement fits this template.
-	Match func(req *domain.VideoRequirement) bool
-	// Build generates a YAML DAG string from the requirement.
-	Build func(req *domain.VideoRequirement) string
+	// Match reports whether this template fits the requirement. A template that
+	// inspects req.Fields is doing so by agreement with its own domain.
+	Match func(req *Requirement) bool
+	// Build renders the DAG YAML.
+	Build func(req *Requirement) (string, error)
 }
 
-// TaskPlanner converts a structured requirement into Forge DAG YAML.
-// It uses a two-strategy approach: template matching first, then LLM fallback.
+// TaskPlanner converts a structured requirement into workflow DAG YAML.
+//
+// Strategy A tries the domain's templates. Strategy B asks a model, giving it
+// the handler catalog and the requirement — and nothing about tools, because the
+// generated steps dispatch to the executor and name their goal instead.
 type TaskPlanner struct {
 	llmClient core.LLMClient
-	registry  *core.ToolRegistry
+	catalog   *HandlerCatalog
+	profile   DomainProfile
 	templates []DAGTemplate
 }
 
-// NewTaskPlanner creates a new TaskPlanner.
-func NewTaskPlanner(llm core.LLMClient, registry *core.ToolRegistry) *TaskPlanner {
-	p := &TaskPlanner{
-		llmClient: llm,
-		registry:  registry,
+// NewTaskPlanner creates a planner for a domain.
+//
+// A nil profile means the generic one; a nil catalog means no handlers are
+// known, which is a valid state for a caller that only wants templates.
+func NewTaskPlanner(llm core.LLMClient, catalog *HandlerCatalog, profile DomainProfile) *TaskPlanner {
+	if profile == nil {
+		profile = GenericProfile{}
 	}
-	p.templates = defaultTemplates()
-	return p
+	return &TaskPlanner{
+		llmClient: llm,
+		catalog:   catalog,
+		profile:   profile,
+		templates: profile.Templates(),
+	}
 }
 
-// Plan generates a DAG YAML string for the given requirement.
-// It checks templates first, then falls back to LLM generation.
-func (p *TaskPlanner) Plan(ctx context.Context, req *domain.VideoRequirement) (string, error) {
-	// Strategy A: try template matching first (fast, stable).
+// Plan generates DAG YAML for the requirement: templates first, then the model.
+func (p *TaskPlanner) Plan(ctx context.Context, req *Requirement) (string, error) {
 	for _, tmpl := range p.templates {
-		if tmpl.Match(req) {
-			return tmpl.Build(req), nil
+		if tmpl.Match == nil || tmpl.Match(req) {
+			yamlStr, err := tmpl.Build(req)
+			if err != nil {
+				return "", fmt.Errorf("plan: template %s: %w", tmpl.Name, err)
+			}
+			return yamlStr, nil
 		}
 	}
-
-	// Strategy B: LLM dynamic generation (flexible, complex scenarios).
-	return p.planWithLLM(ctx, req)
+	return p.planWithLLM(ctx, req, "")
 }
 
-// planWithLLM uses the LLM to dynamically generate a DAG.
-func (p *TaskPlanner) planWithLLM(ctx context.Context, req *domain.VideoRequirement) (string, error) {
-	selectedTools := p.selectTools(req)
-	toolsPrompt := p.registry.FormatForPrompt()
+// Templates returns the active templates, for the generator to try without
+// re-asking the planner which one matches.
+func (p *TaskPlanner) Templates() []DAGTemplate { return p.templates }
+
+// planWithLLM asks the model for a DAG. previousErrors, when set, is fed back so
+// a retry is a correction rather than a repetition.
+func (p *TaskPlanner) planWithLLM(ctx context.Context, req *Requirement, previousErrors string) (string, error) {
+	systemPrompt := p.buildPlanPrompt(previousErrors)
 
 	reqJSON, err := json.MarshalIndent(req, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("plan with LLM: marshal requirement: %w", err)
 	}
-
-	systemPrompt := fmt.Sprintf(`你是一个 DAG 编排专家。根据下面的任务需求，生成 Forge DAG YAML。
-
-规则：
-1. 每个 task 必须指定 handler 和 params
-2. depends_on 必须引用已存在的 task 名称
-3. 没有依赖的 task 将并行执行
-4. DAG 必须包含 name 字段
-5. 每个 task 的 handler 必须是以下可用 handler 之一
-
-可用 handler 列表：
-%s
-
-推荐使用的 handler（根据需求分析）：
-%s
-
-只输出纯 YAML，不要包含 markdown 代码块或任何解释文字。`, toolsPrompt, strings.Join(selectedTools, ", "))
 
 	messages := []core.Message{
 		{Role: "system", Content: systemPrompt},
@@ -119,68 +94,88 @@ func (p *TaskPlanner) planWithLLM(ctx context.Context, req *domain.VideoRequirem
 		return "", fmt.Errorf("plan with LLM: LLM call failed: %w", err)
 	}
 
-	return p.fixDAG(raw), nil
+	return fixDAG(raw), nil
 }
 
-// selectTools analyzes the requirement and returns a list of recommended
-// handler names that should be used in the DAG.
+// buildPlanPrompt assembles the planning instruction.
 //
-// The mapping is deliberately generic - sources are fetched, material is
-// inspected, every transformation is a scripted step, the result is written out
-// and checked. Which requirement block triggers which recommendation still keys
-// off VideoRequirement until that type goes domain-neutral (A.11).
-func (p *TaskPlanner) selectTools(req *domain.VideoRequirement) []string {
-	var selected []string
-	seen := make(map[string]bool)
-	add := func(names ...string) {
-		for _, name := range names {
-			if !seen[name] {
-				seen[name] = true
-				selected = append(selected, name)
-			}
-		}
+// It teaches the one shape that matters: every step is a self-contained task
+// dispatched to the executor, saying what to achieve and what done means. The
+// model is NOT asked to pick tools — it cannot see the workspace or the data,
+// and a tool chosen blind is a guess the executor has to live with. The executor
+// picks, at a point where it can actually tell which tool fits.
+func (p *TaskPlanner) buildPlanPrompt(previousErrors string) string {
+	var b strings.Builder
+
+	b.WriteString("你是一个工作流编排专家。根据下面的结构化需求，生成一份 Forge 工作流 DAG YAML。\n\n")
+
+	if previousErrors != "" {
+		b.WriteString("⚠️ 你上一次生成的 DAG 有以下问题，请修正后重新生成：\n")
+		b.WriteString(previousErrors)
+		b.WriteString("\n\n")
 	}
 
-	// Source material handling: fetch it.
-	if len(req.SourceVideos) > 0 || len(req.SourceImages) > 0 || len(req.SourceAudios) > 0 {
-		add("web.fetch")
+	b.WriteString("规则：\n1. 每个 task 的 handler 必须是下列可用 handler 之一。\n\n")
+	fmt.Fprintf(&b, "可用 handler：\n%s\n\n", p.catalog.FormatForPrompt())
+
+	b.WriteString(`2. 每一步都交给 agent 执行，用 params 说明这一步要做什么，而不是指定用什么工具：
+     params.task       要达成的结果，一句话，具体到不需要再问
+     params.acceptance 这一步的验收标准（可选），怎么算做完
+   工具的选择由执行者在运行时决定——它能看到工作区和实际数据，比在规划阶段盲选更可靠。
+3. depends_on 只能引用已存在的 task 名称；没有依赖的 task 会并行执行。
+4. DAG 必须有 name 字段。
+5. 步骤要少而清楚。能一步做完的不要拆成三步。
+6. task 说明里不要出现具体命令、工具名或代码——那是执行者的事。
+7. 只输出纯 YAML，不要 markdown 代码块，不要任何解释文字。
+
+示例：
+`)
+	b.WriteString(examplePlanYAML)
+
+	if hints := strings.TrimSpace(p.profile.PlanHints()); hints != "" {
+		b.WriteString("\n\n本领域补充说明：\n")
+		b.WriteString(hints)
 	}
 
-	// Video sources get inspected before anything runs against them.
-	if len(req.SourceVideos) > 0 {
-		add("file.read")
-	}
-
-	// Every transformation block - face work, lip sync, narration, script,
-	// soundtrack, subtitles - is one scripted step in the neutral vocabulary.
-	if req.FaceSwap != nil || req.LipSync != nil || req.TTS != nil ||
-		req.Script != nil || req.BGM != nil || req.Subtitles != nil {
-		add("code.execute")
-	}
-
-	// The result always gets published.
-	add("code.execute", "file.write")
-
-	// Quality levels are checked by running a checker, not by a dedicated tool.
-	if req.QualityLevel == domain.QualityStandard || req.QualityLevel == domain.QualityPremium {
-		add("shell.run")
-	}
-
-	return selected
+	return b.String()
 }
 
-// fixDAG performs basic cleanup on LLM-generated DAG YAML.
-// Strips markdown fences and leading/trailing whitespace.
-func (p *TaskPlanner) fixDAG(raw string) string {
+// examplePlanYAML is a worked example in the planning prompt.
+//
+// A concrete shape is worth more than another rule: the rules say steps go to the
+// executor, and this shows what that looks like. It is domain-free on purpose —
+// an example drawn from this project's own work would teach the model to imitate
+// it rather than to plan.
+const examplePlanYAML = `name: example-plan
+tasks:
+  gather:
+    handler: agent
+    params:
+      task: 收集完成该需求所需的全部输入，并记录它们的来源
+      acceptance: 每项输入都指出了具体来源；缺什么、为什么缺，都写清楚了
+    timeout: 10m
+
+  produce:
+    handler: agent
+    params:
+      task: 依据已收集的输入产出目标成果
+      acceptance: 成果满足需求里声明的验收标准；不满足的部分要说明差在哪里
+    depends_on:
+      - gather
+    timeout: 30m`
+
+// fixDAG strips markdown fences from model output.
+//
+// Models wrap YAML despite being told not to, and a fence is a formatting habit
+// rather than a mistake worth a retry: stripping it costs nothing, while
+// rejecting it would spend a whole round trip on punctuation.
+func fixDAG(raw string) string {
 	s := strings.TrimSpace(raw)
 
-	// Strip markdown code fences: ```yaml ... ``` or ``` ... ```
 	if strings.HasPrefix(s, "```") {
-		// Remove first line (```yaml or ```)
 		if idx := strings.Index(s, "\n"); idx >= 0 {
 			s = s[idx+1:]
 		}
-		// Remove trailing ```
 		if idx := strings.LastIndex(s, "```"); idx >= 0 {
 			s = s[:idx]
 		}
@@ -188,148 +183,4 @@ func (p *TaskPlanner) fixDAG(raw string) string {
 	}
 
 	return s
-}
-
-// defaultTemplates returns the built-in DAG templates.
-func defaultTemplates() []DAGTemplate {
-	return []DAGTemplate{
-		SourcePipelineTemplate(),
-	}
-}
-
-// SourcePipelineTemplate returns the DAG template for a requirement that
-// specifies all of its processing blocks: fetch the sources, run the scripted
-// transform steps, publish the result.
-//
-// The match still keys off the requirement's feature blocks because the
-// requirement type is VideoRequirement until the domain profile moves out
-// (A.11); the built YAML itself uses only domain-neutral handlers.
-func SourcePipelineTemplate() DAGTemplate {
-	return DAGTemplate{
-		Name:        "source_pipeline",
-		Description: "Fetch sources, transform them with scripted steps, publish the result",
-		Match: func(req *domain.VideoRequirement) bool {
-			return req.FaceSwap != nil &&
-				req.TTS != nil &&
-				req.BGM != nil &&
-				req.Subtitles != nil &&
-				len(req.SourceVideos) > 0
-		},
-		Build: buildSourcePipeline,
-	}
-}
-
-// buildSourcePipeline generates DAG YAML using struct + yaml.Marshal (#6 fix).
-// Requirement values (narration text, soundtrack style, resolution, ...) travel
-// as data inside the scripted steps, so the YAML stays readable from the
-// requirement alone.
-func buildSourcePipeline(req *domain.VideoRequirement) string {
-	sourceURL := ""
-	if len(req.SourceVideos) > 0 {
-		sourceURL = req.SourceVideos[0].URL
-	}
-	faceURL := ""
-	if req.FaceSwap != nil {
-		faceURL = req.FaceSwap.TargetFace.URL
-	}
-	ttsText := ""
-	ttsVoice := "zh-CN-XiaoxiaoNeural"
-	ttsLang := "zh-CN"
-	if req.TTS != nil {
-		ttsText = req.TTS.Text
-		if req.TTS.Voice != "" {
-			ttsVoice = req.TTS.Voice
-		}
-		if req.TTS.Language != "" {
-			ttsLang = req.TTS.Language
-		}
-	}
-	bgmStyle := "upbeat"
-	bgmVolume := 0.3
-	if req.BGM != nil {
-		if req.BGM.Style != "" {
-			bgmStyle = req.BGM.Style
-		}
-		if req.BGM.Volume > 0 {
-			bgmVolume = req.BGM.Volume
-		}
-	}
-	resolution := req.Resolution
-	if resolution == "" {
-		resolution = "1080p"
-	}
-	subLang := ""
-	if req.Subtitles != nil {
-		subLang = req.Subtitles.Language
-	}
-
-	dag := dagYAML{
-		Name: "source-pipeline",
-		Tasks: map[string]taskYAML{
-			"fetch-source": {
-				Handler: "web.fetch",
-				Params:  map[string]interface{}{"url": sourceURL},
-				Timeout: "60s",
-			},
-			"fetch-asset": {
-				Handler: "web.fetch",
-				Params:  map[string]interface{}{"url": faceURL},
-				Timeout: "60s",
-			},
-			"prepare": {
-				Handler:   "code.execute",
-				Params:    map[string]interface{}{"language": "go", "code": fmt.Sprintf("prepare(source=%q, asset=%q)", sourceURL, faceURL)},
-				DependsOn: []string{"fetch-source", "fetch-asset"},
-				Timeout:   "60s",
-			},
-			"transform": {
-				Handler:   "code.execute",
-				Params:    map[string]interface{}{"language": "go", "code": fmt.Sprintf("transform(source=%q, resolution=%q)", sourceURL, resolution)},
-				DependsOn: []string{"prepare"},
-				Timeout:   "600s",
-				Retry:     &retryYAML{MaxAttempts: 2, Backoff: "exponential", InitialInterval: "10s"},
-			},
-			"narrate": {
-				Handler: "code.execute",
-				Params: map[string]interface{}{
-					"language": "go",
-					"code":     fmt.Sprintf("narrate(text=%q, voice=%q, language=%q)", ttsText, ttsVoice, ttsLang),
-				},
-				Timeout: "60s",
-			},
-			"soundtrack": {
-				Handler: "code.execute",
-				Params: map[string]interface{}{
-					"language": "go",
-					"code":     fmt.Sprintf("soundtrack(style=%q, volume=%.2f)", bgmStyle, bgmVolume),
-				},
-				Timeout: "30s",
-			},
-			"combine": {
-				Handler:   "code.execute",
-				Params:    map[string]interface{}{"language": "go", "code": "combine(narrate.output, soundtrack.output)"},
-				DependsOn: []string{"narrate", "soundtrack"},
-				Timeout:   "60s",
-			},
-			"annotate": {
-				Handler:   "code.execute",
-				Params:    map[string]interface{}{"language": "go", "code": fmt.Sprintf("annotate(combine.output, language=%q)", subLang)},
-				DependsOn: []string{"combine"},
-				Timeout:   "120s",
-			},
-			"publish": {
-				Handler:   "file.write",
-				Params:    map[string]interface{}{"path": "output/result.txt", "content": "${transform.stdout}"},
-				DependsOn: []string{"transform", "annotate"},
-				Timeout:   "120s",
-			},
-		},
-	}
-
-	data, err := yaml.Marshal(dag)
-	if err != nil {
-		// Should never happen with well-formed structs.
-		return fmt.Sprintf("# yaml.Marshal error: %v", err)
-	}
-	return string(data)
 }

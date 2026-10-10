@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/domain"
 )
 
 // SessionState represents the current state of an agent session.
@@ -43,14 +42,23 @@ var validTransitions = map[SessionState][]SessionState{
 type Session struct {
 	mu sync.RWMutex
 
-	ID          string
-	State       SessionState
-	Messages    []core.Message
-	Requirement *domain.VideoRequirement
-	RetryCount  int
-	WorkflowID  string
-	CreatedAt   time.Time
-	maxRetries  int
+	ID       string
+	State    SessionState
+	Messages []core.Message
+
+	// Requirement is the parsed requirement, held opaquely.
+	//
+	// It used to be *domain.VideoRequirement, which meant every session — and
+	// therefore the whole agent layer — carried one product's vocabulary. A
+	// session stores a requirement and hands it back; it has no reason to know
+	// what is inside, and not knowing is what lets the same code serve any
+	// domain.
+	Requirement any
+
+	RetryCount int
+	WorkflowID string
+	CreatedAt  time.Time
+	maxRetries int
 }
 
 // NewSession creates a new session in the idle state.
@@ -120,7 +128,7 @@ func (s *Session) SetWorkflowID(id string) {
 }
 
 // SetRequirement sets the parsed requirement.
-func (s *Session) SetRequirement(req *domain.VideoRequirement) {
+func (s *Session) SetRequirement(req any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Requirement = req

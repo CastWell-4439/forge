@@ -12,6 +12,9 @@ const STATUS_COLORS: Record<string, string> = {
   TASK_STATUS_FAILED: '#ff4d4f',
   TASK_STATUS_SKIPPED: '#fadb14',
   TASK_STATUS_COMPENSATING: '#fa8c16',
+  // A distinct colour, not the running blue: a paused node is where a human is
+  // needed, and it has to stand out from the nodes that are merely in progress.
+  TASK_STATUS_PAUSED: '#faad14',
 };
 
 const STATUS_TEXT_COLORS: Record<string, string> = {
@@ -23,6 +26,7 @@ const STATUS_TEXT_COLORS: Record<string, string> = {
   TASK_STATUS_FAILED: '#ffffff',
   TASK_STATUS_SKIPPED: '#595959',
   TASK_STATUS_COMPENSATING: '#ffffff',
+  TASK_STATUS_PAUSED: '#ffffff',
 };
 
 interface Props {

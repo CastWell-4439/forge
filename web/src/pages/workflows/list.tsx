@@ -22,6 +22,7 @@ const statusColorMap: Record<string, string> = {
   WORKFLOW_STATUS_FAILED: 'error',
   WORKFLOW_STATUS_CANCELLED: 'warning',
   WORKFLOW_STATUS_COMPENSATING: 'orange',
+  WORKFLOW_STATUS_PAUSED: 'gold',
 };
 
 const statusLabelMap: Record<string, string> = {
@@ -31,6 +32,7 @@ const statusLabelMap: Record<string, string> = {
   WORKFLOW_STATUS_FAILED: 'Failed',
   WORKFLOW_STATUS_CANCELLED: 'Cancelled',
   WORKFLOW_STATUS_COMPENSATING: 'Compensating',
+  WORKFLOW_STATUS_PAUSED: 'Awaiting approval',
 };
 
 function formatDuration(start: string, end: string): string {
