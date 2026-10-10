@@ -80,12 +80,12 @@ func registerPlannerHandler(r *worker.Registry, coordAddr string) {
 
 	client := session.NewForgeClient(conn)
 
-	// The catalog holds what this deployment can dispatch. It lists the executor
-	// because that is what generated plans use — see the planning package: a
-	// generated step says what to achieve and lets its executor pick the tools.
-	catalog := planning.NewHandlerCatalog([]planning.HandlerSpec{
-		planning.AgentHandlerSpec(),
-	})
+	// The catalog holds what this deployment can dispatch, and it is the same
+	// list the planner prompt describes. Built from one source
+	// (GeneratedHandlerSpecs) rather than written out here: two hand-kept lists
+	// is how the previous design came to validate generated plans against a
+	// vocabulary that had nothing to do with dispatch.
+	catalog := planning.NewHandlerCatalog(planning.GeneratedHandlerSpecs())
 
 	// The generic profile: no domain, because this handler exists for
 	// requirements nobody has written a domain for. A deployment with a domain

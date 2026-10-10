@@ -275,7 +275,7 @@ func TestPlannerPromptTeachesTheExecutorShape(t *testing.T) {
 	profile := stubProfile{hints: "本领域的步骤通常是先取证再改。"}
 	planner := NewTaskPlanner(&scriptedLLM{}, testCatalog(), profile)
 
-	prompt := planner.buildPlanPrompt("")
+	prompt := planner.buildPlanPrompt(&Requirement{Description: "x"}, "")
 
 	assert.Contains(t, prompt, "agent", "the executor must be named as the handler")
 	assert.Contains(t, prompt, paramTask, "and the param that says what to do")
@@ -290,10 +290,117 @@ func TestPlannerPromptTeachesTheExecutorShape(t *testing.T) {
 func TestPlannerPromptCarriesPreviousErrors(t *testing.T) {
 	planner := NewTaskPlanner(&scriptedLLM{}, testCatalog(), stubProfile{})
 
-	prompt := planner.buildPlanPrompt("[L3/error] task \"x\" uses unknown handler \"nope\"")
+	prompt := planner.buildPlanPrompt(&Requirement{Description: "x"}, "[L3/error] task \"x\" uses unknown handler \"nope\"")
 
 	assert.Contains(t, prompt, "unknown handler")
 	assert.Contains(t, prompt, "修正", "the retry must ask for a fix")
+}
+
+// The quality gate is taught only when the requirement declared one. Emitting it
+// always would add a step to every plan; emitting it never would mean a declared
+// acceptance is written down and then never checked.
+func TestPlannerTeachesTheGateOnlyWhenDeclared(t *testing.T) {
+	newPrompt := func(a Acceptance) string {
+		planner := NewTaskPlanner(&scriptedLLM{}, testCatalog(), stubProfile{})
+		return planner.buildPlanPrompt(&Requirement{Description: "x", Acceptance: a}, "")
+	}
+
+	t.Run("nothing declared", func(t *testing.T) {
+		prompt := newPrompt(Acceptance{Criteria: "输出可用"})
+		assert.NotContains(t, prompt, "handler: judge",
+			"a requirement with no bar must not get a gate step")
+		assert.NotContains(t, prompt, "break_on")
+	})
+
+	t.Run("threshold declared", func(t *testing.T) {
+		prompt := newPrompt(Acceptance{Criteria: "输出可用", Threshold: 0.8})
+		assert.Contains(t, prompt, "judge", "a declared bar must be checked")
+		assert.Contains(t, prompt, "0.8", "and the declared threshold is what the gate compares")
+		assert.Contains(t, prompt, "break_on", "the loop is declared on the producing step")
+		assert.Contains(t, prompt, "goto", "with a route back so a miss is retried")
+		assert.Contains(t, prompt, "verdict", "the score lands in a named output the condition reads")
+	})
+
+	t.Run("artifacts declared", func(t *testing.T) {
+		prompt := newPrompt(Acceptance{Criteria: "输出可用", Artifacts: []string{"report.md", "*.csv"}})
+		assert.Contains(t, prompt, "report.md")
+		assert.Contains(t, prompt, "*.csv", "every declared artifact is named")
+		assert.Contains(t, prompt, "judge")
+	})
+}
+
+// The prompt tells the planner NOT to choose the bar itself. A model that
+// rewrote the threshold would put the decision back inside a prompt.
+func TestGateHintForbidsInventingTheThreshold(t *testing.T) {
+	planner := NewTaskPlanner(&scriptedLLM{}, testCatalog(), stubProfile{})
+	prompt := planner.buildPlanPrompt(&Requirement{
+		Description: "x",
+		Acceptance:  Acceptance{Criteria: "c", Threshold: 0.75},
+	}, "")
+
+	assert.Contains(t, prompt, "不要自己改", "the declared threshold is not the model's to move")
+}
+
+// A nil requirement is a programming error, not a crash.
+func TestGateHintHandlesNil(t *testing.T) {
+	assert.Empty(t, gateHint(nil))
+}
+
+// The handlers the prompt teaches must be exactly the handlers the validator
+// accepts.
+//
+// This is the guard that matters most in this file. The previous design told the
+// model about one set of names and validated against another, so a generated DAG
+// passed every layer and then had no worker to run it. Any handler added to the
+// prompt without being added to the catalog shows up here — which is how the
+// scorer was caught: the gate hint taught `handler: judge` while the catalog
+// listed only the executor.
+func TestEveryTaughtHandlerIsValidatable(t *testing.T) {
+	planner := NewTaskPlanner(&scriptedLLM{}, NewHandlerCatalog(GeneratedHandlerSpecs()), stubProfile{})
+
+	// A requirement that exercises the gate hint, so the prompt names every
+	// handler it can ever name.
+	prompt := planner.buildPlanPrompt(&Requirement{
+		Description: "x",
+		Acceptance:  Acceptance{Criteria: "c", Artifacts: []string{"a.txt"}, Threshold: 0.8},
+	}, "")
+
+	// Each handler the prompt tells the model it may use is looked for by name in
+	// the catalog the validator will consult.
+	for _, spec := range GeneratedHandlerSpecs() {
+		assert.Contains(t, prompt, spec.Name,
+			"the prompt must describe handler %q", spec.Name)
+
+		validated := NewDAGValidator(NewHandlerCatalog(GeneratedHandlerSpecs()))
+		result := validated.Validate("name: t\ntasks:\n  s:\n    handler: " + spec.Name + "\n    params:\n      action: run\n      task: 做点什么\n")
+		for _, issue := range result.Issues {
+			assert.NotContains(t, issue.Message, "unknown handler",
+				"handler %q is taught by the prompt but rejected by the validator; "+
+					"a generated plan using it would pass the model and fail L3", spec.Name)
+		}
+	}
+}
+
+// The catalog the planner is given is the one the prompt describes: assembly
+// does not keep a second list.
+func TestGeneratedHandlerSpecsCoverTheExecutorAndTheScorer(t *testing.T) {
+	names := NewHandlerCatalog(GeneratedHandlerSpecs()).Names()
+
+	assert.Contains(t, names, agentHandler)
+	assert.Contains(t, names, judgeHandler)
+	assert.Len(t, names, 2, "the list is what generated plans may use, and nothing else")
+}
+
+// The scorer's catalog entry must require what the generator writes, or every
+// generated scorer step fails L4 for a param nobody can supply.
+func TestScorerSpecRequiresOnlyWhatTheGeneratorWrites(t *testing.T) {
+	spec := JudgeHandlerSpec()
+
+	assert.Equal(t, judgeHandler, spec.Name)
+	assert.Contains(t, spec.Required, "action",
+		"the worker adapter needs an action, and the generator writes it")
+	assert.NotContains(t, spec.Required, paramTask,
+		"a scorer has nothing to achieve; requiring a task would fail every plan")
 }
 
 // The acceptance text passed to the executor carries both halves: the criterion
