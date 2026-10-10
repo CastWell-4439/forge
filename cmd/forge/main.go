@@ -61,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return runHookSend(args[2:], stdout, stderr)
+	case "history":
+		return runHistory(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "forge: unknown command %q\n\n", args[0])
 		usage(stderr)
@@ -199,6 +201,7 @@ Usage:
   forge worker        run the worker (same as ./cmd/worker)
   forge standalone    run coordinator + worker in one process (single-node mode)
   forge hook send     trigger a workflow over the HTTP entry point (signed)
+  forge history       replay a workflow's recorded events (audit / time travel)
   forge help          show this help
 
 Configuration is environment-driven (FORGE_* variables); see README.
