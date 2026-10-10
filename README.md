@@ -464,7 +464,8 @@ Layer 3: 1h   精度
 ### 可观测性
 
 - **Prometheus 指标** (`/metrics`)：任务总数、任务延迟分位、活跃工作流、Worker 数、重试次数、队列深度
-- **OpenTelemetry 追踪**：W3C `traceparent` 传播，Span 嵌套为 Workflow → Task → Tool Call，支持 OTLP 导出
+- **OpenTelemetry 追踪**：W3C `traceparent` 传播，Span 嵌套为 Workflow → Task → Tool Call，**支持 OTLP 导出**（`FORGE_TRACE_EXPORTER=otlp`，端点由 `FORGE_OTLP_ENDPOINT` 指定，默认 `http://localhost:4318`）；默认 exporter 是 `log`，便于开箱即见
+- **eBPF 内核追踪**：观测 TCP 连接建立延迟（`FORGE_EBPF_ENABLED=1`；需 Linux + ebpf 构建标签，其他平台为 no-op）
 - **eBPF 内核追踪**：kprobe 挂载 TCP 连接建立路径，测量连接延迟；非 Linux 平台编译为空实现
 - **连续 Profiling**：CPU / Heap / Goroutine / Mutex / Block 五种 Profile，`/debug/profile` 实时获取
 - **结构化日志**：`slog` 标准库，三后端（StdLog / JSON / Nop），自动附加 trace_id / span_id
