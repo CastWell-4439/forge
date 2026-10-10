@@ -3,12 +3,8 @@ package planning
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
-	"github.com/castwell/forge/internal/agent/core"
 	"github.com/castwell/forge/internal/coordinator"
 )
 
@@ -65,13 +61,23 @@ func (r *ValidationResult) ErrorSummary() string {
 // DAGValidator performs the 4-layer validation pipeline on DAG YAML.
 // L1: Format extraction, L2: Schema validation, L3: Semantic validation,
 // L4: Parameter validation. From agent-tech-spec 3.3.1.
+//
+// L3 and L4 check against the WORKFLOW handler catalog, not the agent's tool
+// registry. The two are different vocabularies: a tool is something the agent
+// calls mid-run, a handler is something the workflow dispatches to a worker.
+// Validating one against the other is how a generated DAG naming `web.fetch`
+// passed every layer and then had no worker to run it — the check was looking at
+// a registry that happened to contain the name, in a system that would never
+// route to it.
 type DAGValidator struct {
-	registry *core.ToolRegistry
+	catalog *HandlerCatalog
 }
 
-// NewDAGValidator creates a new DAGValidator.
-func NewDAGValidator(registry *core.ToolRegistry) *DAGValidator {
-	return &DAGValidator{registry: registry}
+// NewDAGValidator creates a validator over a handler catalog. A nil catalog
+// rejects every handler, which is the safe direction: a validator that cannot
+// tell what exists must not approve what it cannot check.
+func NewDAGValidator(catalog *HandlerCatalog) *DAGValidator {
+	return &DAGValidator{catalog: catalog}
 }
 
 // Validate runs the full 4-layer validation pipeline.
@@ -198,12 +204,11 @@ func validateSchema(yamlStr string) (*coordinator.DAG, []ValidationIssue) {
 func (v *DAGValidator) validateSemantic(dag *coordinator.DAG) []ValidationIssue {
 	var issues []ValidationIssue
 
-	// Check all handlers exist in the tool registry.
+	// Every handler must be one this deployment can actually dispatch to.
 	for name, task := range dag.Tasks {
-		if !v.registry.HasHandler(task.Handler) {
-			suggestion := v.registry.FindSimilar(task.Handler)
+		if !v.catalog.Has(task.Handler) {
 			msg := fmt.Sprintf("task %q uses unknown handler %q", name, task.Handler)
-			if suggestion != "" {
+			if suggestion := v.catalog.FindSimilar(task.Handler); suggestion != "" {
 				msg += fmt.Sprintf(", did you mean %q?", suggestion)
 			}
 			issues = append(issues, ValidationIssue{
@@ -226,27 +231,32 @@ func (v *DAGValidator) validateSemantic(dag *coordinator.DAG) []ValidationIssue 
 	return issues
 }
 
-// validateParams performs L4 validation: checks task params against tool InputSchema.
+// validateParams performs L4 validation: checks a task's params against what its
+// handler requires.
+//
+// The executor gets its own rule rather than the generic required-param check,
+// because its params carry prose: "task is present" is not enough — an empty
+// string satisfies presence and gives the executor nothing to do. Catching that
+// here costs one validation; catching it at run time costs a dispatched task
+// that cannot start.
 func (v *DAGValidator) validateParams(dag *coordinator.DAG) []ValidationIssue {
 	var issues []ValidationIssue
 
 	for name, task := range dag.Tasks {
-		toolDef := v.registry.GetTool(task.Handler)
-		if toolDef == nil {
-			// Handler doesn't exist —already reported in L3.
+		spec, ok := v.catalog.Spec(task.Handler)
+		if !ok {
+			// Unknown handler —already reported in L3. Adding an L4 issue for a
+			// handler the catalog cannot describe would be noise on top of a
+			// real error.
 			continue
 		}
 
-		// Check required parameters are present.
-		for _, reqParam := range toolDef.RequiredParams {
-			if task.Params == nil {
-				issues = append(issues, ValidationIssue{
-					Level:    "L4",
-					Severity: SeverityError,
-					Message:  fmt.Sprintf("task %q missing required param %q for handler %q", name, reqParam, task.Handler),
-				})
-				continue
-			}
+		if task.Handler == agentHandler {
+			issues = append(issues, validateAgentParams(name, task.Params)...)
+		}
+
+		// Required params, as declared by the handler.
+		for _, reqParam := range spec.Required {
 			if _, ok := task.Params[reqParam]; !ok {
 				issues = append(issues, ValidationIssue{
 					Level:    "L4",
@@ -255,124 +265,9 @@ func (v *DAGValidator) validateParams(dag *coordinator.DAG) []ValidationIssue {
 				})
 			}
 		}
-
-		// Also check InputSchema required flags.
-		for paramName, paramDef := range toolDef.InputSchema {
-			if !paramDef.Required {
-				continue
-			}
-			// Skip if already checked via RequiredParams.
-			if isInSlice(paramName, toolDef.RequiredParams) {
-				continue
-			}
-			if task.Params == nil {
-				issues = append(issues, ValidationIssue{
-					Level:    "L4",
-					Severity: SeverityError,
-					Message:  fmt.Sprintf("task %q missing required param %q for handler %q", name, paramName, task.Handler),
-				})
-				continue
-			}
-			if _, ok := task.Params[paramName]; !ok {
-				issues = append(issues, ValidationIssue{
-					Level:    "L4",
-					Severity: SeverityError,
-					Message:  fmt.Sprintf("task %q missing required param %q for handler %q", name, paramName, task.Handler),
-				})
-			}
-		}
-
-		// Type checking: warn if param types don't match schema.
-		if task.Params != nil {
-			v.checkParamTypes(name, task, toolDef, &issues)
-		}
 	}
 
 	return issues
-}
-
-// checkParamTypes validates parameter types against the tool's InputSchema.
-//
-// Parameters are visited in sorted order rather than map order: Go randomises
-// iteration, so the same task would produce its issues in a different sequence
-// on every run. Validation output is compared between runs (and shown to a
-// model), so "same input, same report" has to hold.
-func (v *DAGValidator) checkParamTypes(taskName string, task *coordinator.TaskDef, toolDef *core.ToolDef, issues *[]ValidationIssue) {
-	paramNames := make([]string, 0, len(task.Params))
-	for paramName := range task.Params {
-		paramNames = append(paramNames, paramName)
-	}
-	sort.Strings(paramNames)
-
-	for _, paramName := range paramNames {
-		paramVal := task.Params[paramName]
-		schemaDef, ok := toolDef.InputSchema[paramName]
-		if !ok {
-			// Unknown parameter —warning, not error.
-			*issues = append(*issues, ValidationIssue{
-				Level:    "L4",
-				Severity: SeverityWarning,
-				Message:  fmt.Sprintf("task %q has unknown param %q for handler %q", taskName, paramName, task.Handler),
-			})
-			continue
-		}
-
-		if !checkType(paramVal, schemaDef.Type) {
-			*issues = append(*issues, ValidationIssue{
-				Level:    "L4",
-				Severity: SeverityWarning,
-				Message:  fmt.Sprintf("task %q param %q expected type %q", taskName, paramName, schemaDef.Type),
-			})
-		}
-	}
-}
-
-// checkType validates that a value matches the expected JSON Schema type.
-func checkType(val interface{}, expectedType string) bool {
-	switch expectedType {
-	case "string":
-		_, ok := val.(string)
-		return ok
-	case "integer":
-		switch v := val.(type) {
-		case int, int32, int64:
-			return true
-		case float64:
-			return v == float64(int64(v))
-		default:
-			return false
-		}
-	case "number":
-		switch val.(type) {
-		case int, int32, int64, float32, float64:
-			return true
-		default:
-			return false
-		}
-	case "boolean":
-		_, ok := val.(bool)
-		return ok
-	case "array":
-		return isSlice(val)
-	case "object":
-		_, ok := val.(map[string]interface{})
-		return ok
-	default:
-		return true // unknown type —allow
-	}
-}
-
-// isSlice checks if a value is a slice type (from YAML arrays).
-func isSlice(v interface{}) bool {
-	if v == nil {
-		return false
-	}
-	switch v.(type) {
-	case []interface{}, []string, []int, []float64:
-		return true
-	default:
-		return false
-	}
 }
 
 // ValidateRaw is a convenience for validating a raw YAML string.
@@ -392,42 +287,4 @@ func hasErrorSeverity(issues []ValidationIssue) bool {
 		}
 	}
 	return false
-}
-
-func isInSlice(s string, ss []string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// agentDAGSchema is used for quick YAML structure check before full parse.
-type agentDAGSchema struct {
-	Name  string                     `yaml:"name"`
-	Tasks map[string]agentTaskSchema `yaml:"tasks"`
-}
-
-// agentTaskSchema is a lightweight task schema for validation.
-type agentTaskSchema struct {
-	Handler   string                 `yaml:"handler"`
-	Params    map[string]interface{} `yaml:"params"`
-	DependsOn []string               `yaml:"depends_on"`
-}
-
-// quickSchemaCheck does a lightweight YAML parse to check basic structure
-// before passing to the full coordinator.ParseDAG.
-func quickSchemaCheck(yamlStr string) error {
-	var schema agentDAGSchema
-	if err := yaml.Unmarshal([]byte(yamlStr), &schema); err != nil {
-		return fmt.Errorf("invalid YAML: %w", err)
-	}
-	if schema.Name == "" {
-		return fmt.Errorf("missing 'name' field")
-	}
-	if len(schema.Tasks) == 0 {
-		return fmt.Errorf("missing 'tasks' field or empty tasks")
-	}
-	return nil
 }

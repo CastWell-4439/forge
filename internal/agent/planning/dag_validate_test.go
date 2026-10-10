@@ -5,9 +5,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/castwell/forge/internal/agent/workers"
 )
+
+// testCatalog is the workflow handler set these tests validate against. It is
+// hand-written rather than taken from the workers package so the validator's
+// behaviour is tested against a known set: pulling in the real registry would
+// make a failure here ambiguous between the validator and the registry.
+func testCatalog() *HandlerCatalog {
+	return NewHandlerCatalog([]HandlerSpec{
+		AgentHandlerSpec(),
+		{Name: "shell", Description: "run a whitelisted command", Required: []string{"action"}},
+		{Name: "review", Description: "review a plan or diff", Required: []string{"action"}},
+	})
+}
 
 func TestExtractYAML(t *testing.T) {
 	tests := []struct {
@@ -18,27 +28,27 @@ func TestExtractYAML(t *testing.T) {
 	}{
 		{
 			name:     "plain YAML",
-			input:    "name: test\ntasks:\n  t1:\n    handler: web.fetch",
+			input:    "name: test\ntasks:\n  t1:\n    handler: agent",
 			contains: "name: test",
 		},
 		{
 			name:     "markdown yaml fence",
-			input:    "```yaml\nname: test\ntasks:\n  t1:\n    handler: web.fetch\n```",
+			input:    "```yaml\nname: test\ntasks:\n  t1:\n    handler: agent\n```",
 			contains: "name: test",
 		},
 		{
 			name:     "markdown generic fence",
-			input:    "```\nname: test\ntasks:\n  t1:\n    handler: web.fetch\n```",
+			input:    "```\nname: test\ntasks:\n  t1:\n    handler: agent\n```",
 			contains: "name: test",
 		},
 		{
 			name:     "leading text",
-			input:    "Here is the DAG:\nname: test\ntasks:\n  t1:\n    handler: web.fetch",
+			input:    "Here is the DAG:\nname: test\ntasks:\n  t1:\n    handler: agent",
 			contains: "name: test",
 		},
 		{
 			name:     "tabs to spaces",
-			input:    "name: test\ntasks:\n\tt1:\n\t\thandler: web.fetch",
+			input:    "name: test\ntasks:\n\tt1:\n\t\thandler: agent",
 			contains: "name: test",
 		},
 		{
@@ -58,303 +68,324 @@ func TestExtractYAML(t *testing.T) {
 			result := extractYAML(tc.input)
 			if tc.isEmpty {
 				assert.Empty(t, result)
-			} else {
-				assert.Contains(t, result, tc.contains)
-				assert.NotContains(t, result, "```")
+				return
 			}
+			assert.Contains(t, result, tc.contains)
 		})
 	}
 }
 
-func TestValidateSchemaValid(t *testing.T) {
-	yamlStr := `name: test-dag
-tasks:
-  download:
-    handler: web.fetch
-    params:
-      url: "https://example.com/video.mp4"
-  encode:
-    handler: code.execute
-    params:
-      language: go
-      code: "transform()"
-    depends_on:
-      - download`
+// A DAG naming a handler this deployment cannot dispatch is rejected at L3.
+//
+// This is the check that was broken: it used to consult the agent's tool
+// registry, where `web.fetch` exists — so a DAG naming a tool as a handler
+// passed validation and then had no worker to run it. The catalog holds what the
+// workflow can dispatch, which is the question that matters.
+func TestValidateRejectsHandlerOutsideTheCatalog(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
 
-	dag, issues := validateSchema(yamlStr)
-	require.NotNil(t, dag)
-	assert.Empty(t, issues)
-	assert.Equal(t, "test-dag", dag.Name)
-	assert.Len(t, dag.Tasks, 2)
-}
-
-func TestValidateSchemaMissingName(t *testing.T) {
-	yamlStr := `tasks:
-  download:
-    handler: web.fetch`
-
-	dag, issues := validateSchema(yamlStr)
-	assert.Nil(t, dag)
-	assert.True(t, len(issues) > 0)
-	assert.Equal(t, "L2", issues[0].Level)
-}
-
-func TestValidateSchemaNoTasks(t *testing.T) {
-	yamlStr := `name: empty-dag`
-
-	dag, issues := validateSchema(yamlStr)
-	assert.Nil(t, dag)
-	require.True(t, len(issues) > 0)
-	hasTaskError := false
-	for _, issue := range issues {
-		if issue.Level == "L2" && issue.Severity == SeverityError {
-			hasTaskError = true
-		}
-	}
-	assert.True(t, hasTaskError)
-}
-
-func TestValidateSchemaMissingHandler(t *testing.T) {
-	yamlStr := `name: bad-dag
-tasks:
-  download:
-    params:
-      url: "test"`
-
-	dag, issues := validateSchema(yamlStr)
-	assert.Nil(t, dag)
-	require.True(t, len(issues) > 0)
-	assert.Equal(t, "L2", issues[0].Level)
-	assert.Contains(t, issues[0].Message, "missing handler")
-}
-
-func TestDAGValidatorFullPipeline(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
-
-	yamlStr := `name: valid-pipeline
+	result := v.Validate(`
+name: tool-as-handler
 tasks:
   fetch:
     handler: web.fetch
-    params:
-      url: "https://example.com/video.mp4"
-    timeout: 60s
-  inspect:
-    handler: file.read
-    params:
-      path: "/tmp/video.mp4"
-    depends_on:
-      - fetch
-  transform:
-    handler: code.execute
-    params:
-      language: go
-      code: "transform()"
-    depends_on:
-      - inspect
-  publish:
-    handler: file.write
-    params:
-      path: "/tmp/output.txt"
-      content: "${transform.stdout}"
-    depends_on:
-      - transform`
+`)
 
-	result := validator.Validate(yamlStr)
-	assert.True(t, result.Valid, "expected valid but got issues: %v", result.Issues)
-	require.NotNil(t, result.DAG)
-	assert.Equal(t, "valid-pipeline", result.DAG.Name)
-}
-
-func TestDAGValidatorL3UnknownHandler(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
-
-	yamlStr := `name: bad-handler
-tasks:
-  fetch:
-    handler: web.fetch
-    params:
-      url: "test"
-  magic:
-    handler: ai.magic_transform
-    params: {}
-    depends_on:
-      - fetch`
-
-	result := validator.Validate(yamlStr)
 	assert.False(t, result.Valid)
-
-	hasL3Error := false
-	for _, issue := range result.Issues {
-		if issue.Level == "L3" && issue.Severity == SeverityError {
-			hasL3Error = true
-			assert.Contains(t, issue.Message, "unknown handler")
-			assert.Contains(t, issue.Message, "ai.magic_transform")
-		}
-	}
-	assert.True(t, hasL3Error)
+	require.NotEmpty(t, result.Issues)
+	assert.Equal(t, "L3", result.Issues[0].Level)
+	assert.Contains(t, result.Issues[0].Message, "unknown handler")
 }
 
-func TestDAGValidatorL3CycleDetection(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
+// A handler in the catalog passes L3.
+func TestValidateAcceptsCatalogHandlers(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
 
-	yamlStr := `name: cycle-dag
+	result := v.Validate(`
+name: known-handlers
 tasks:
-  a:
-    handler: web.fetch
+  work:
+    handler: agent
     params:
-      url: "test"
-    depends_on:
-      - c
-  b:
-    handler: file.read
-    params:
-      path: "sample.txt"
-    depends_on:
-      - a
-  c:
-    handler: code.execute
-    params:
-      language: go
-      code: "transform()"
-    depends_on:
-      - b`
+      action: run
+      task: 做点什么
+`)
 
-	result := validator.Validate(yamlStr)
-	assert.False(t, result.Valid)
-
-	hasCycleError := false
-	for _, issue := range result.Issues {
-		if issue.Level == "L3" {
-			hasCycleError = true
-		}
-	}
-	assert.True(t, hasCycleError)
-}
-
-func TestDAGValidatorL4MissingRequiredParam(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
-
-	// web.fetch requires the "url" param.
-	yamlStr := `name: missing-param
-tasks:
-  download:
-    handler: web.fetch
-    params: {}`
-
-	result := validator.Validate(yamlStr)
-	assert.False(t, result.Valid)
-
-	hasL4Error := false
-	for _, issue := range result.Issues {
-		if issue.Level == "L4" && issue.Severity == SeverityError {
-			hasL4Error = true
-			assert.Contains(t, issue.Message, "required param")
-		}
-	}
-	assert.True(t, hasL4Error)
-}
-
-func TestDAGValidatorL4UnknownParam(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
-
-	yamlStr := `name: unknown-param
-tasks:
-  fetch:
-    handler: web.fetch
-    params:
-      url: "https://example.com/video.mp4"
-      nonexistent_param: "value"`
-
-	result := validator.Validate(yamlStr)
-	// Unknown params are warnings, not errors.
-	hasWarning := false
-	for _, issue := range result.Issues {
-		if issue.Level == "L4" && issue.Severity == SeverityWarning {
-			hasWarning = true
-		}
-	}
-	assert.True(t, hasWarning)
-	// Should still be valid (warnings only).
-	assert.True(t, result.Valid)
-}
-
-func TestDAGValidatorMarkdownWrapped(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
-
-	yamlStr := "```yaml\nname: wrapped\ntasks:\n  download:\n    handler: web.fetch\n    params:\n      url: \"test\"\n```"
-
-	result := validator.Validate(yamlStr)
 	assert.True(t, result.Valid, "issues: %v", result.Issues)
 	require.NotNil(t, result.DAG)
-	assert.Equal(t, "wrapped", result.DAG.Name)
 }
 
-func TestValidateRaw(t *testing.T) {
-	registry, err := workers.DefaultRegistry()
-	require.NoError(t, err)
-	validator := NewDAGValidator(registry)
+// An executor step with nothing to do is rejected at L4.
+//
+// Presence is not enough for these params: `task: ""` satisfies "the key exists"
+// and gives the executor no work, so a dispatched task would fail at start
+// instead of here.
+func TestValidateRejectsEmptyAgentTask(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
 
-	validYAML := `name: test
+	result := v.Validate(`
+name: empty-task
 tasks:
-  download:
-    handler: web.fetch
+  work:
+    handler: agent
     params:
-      url: "test"`
+      action: run
+      task: ""
+`)
 
-	dag, err := validator.ValidateRaw(validYAML)
-	require.NoError(t, err)
-	assert.Equal(t, "test", dag.Name)
-
-	// Invalid YAML.
-	_, err = validator.ValidateRaw("not yaml at all: {{{")
-	assert.Error(t, err)
+	assert.False(t, result.Valid)
+	var found bool
+	for _, issue := range result.Issues {
+		if issue.Level == "L4" && issue.Severity == SeverityError {
+			found = true
+			assert.Contains(t, issue.Message, "empty")
+		}
+	}
+	assert.True(t, found, "an empty task must be an L4 error, got %v", result.Issues)
 }
 
-func TestValidationResultErrorSummary(t *testing.T) {
+// An executor step missing `task` entirely is rejected.
+func TestValidateRejectsMissingAgentTask(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: no-task
+tasks:
+  work:
+    handler: agent
+    params:
+      action: run
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "task")
+}
+
+// A declared-but-blank acceptance is rejected rather than treated as absent: it
+// looks specified and is not, which is worse than saying nothing.
+func TestValidateRejectsEmptyAcceptance(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: blank-acceptance
+tasks:
+  work:
+    handler: agent
+    params:
+      action: run
+      task: 做点什么
+      acceptance: "   "
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "acceptance")
+}
+
+// Omitting acceptance is fine: a step whose outcome is obvious from its task
+// does not need one repeated.
+func TestValidateAllowsAbsentAcceptance(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: no-acceptance
+tasks:
+  work:
+    handler: agent
+    params:
+      action: run
+      task: 做点什么
+`)
+
+	assert.True(t, result.Valid, "issues: %v", result.Issues)
+}
+
+// Required params declared by a handler are enforced.
+func TestValidateRequiresDeclaredParams(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: missing-required
+tasks:
+  run:
+    handler: shell
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "action")
+}
+
+// A cycle is an L3 error, reported through the coordinator's own structural
+// validation rather than reimplemented here.
+func TestValidateDetectsCycle(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: cyclic
+tasks:
+  a:
+    handler: shell
+    params:
+      action: run
+    depends_on: [b]
+  b:
+    handler: shell
+    params:
+      action: run
+    depends_on: [a]
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "structural")
+}
+
+// A dangling dependency is an L3 error.
+func TestValidateDetectsDanglingDependency(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: dangling
+tasks:
+  a:
+    handler: shell
+    params:
+      action: run
+    depends_on: [nonexistent]
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "structural")
+}
+
+// Empty or unparseable input fails at L1 or L2 without reaching L3.
+func TestValidateStopsAtFormatAndSchema(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	t.Run("nothing to parse", func(t *testing.T) {
+		result := v.Validate("   ")
+		assert.False(t, result.Valid)
+		assert.Equal(t, "L1", result.Issues[0].Level)
+		assert.Nil(t, result.DAG)
+	})
+
+	t.Run("unparseable", func(t *testing.T) {
+		result := v.Validate("name: x\ntasks: [this is not a map]")
+		assert.False(t, result.Valid)
+		assert.Equal(t, "L2", result.Issues[0].Level)
+	})
+
+	t.Run("no tasks", func(t *testing.T) {
+		result := v.Validate("name: empty\n")
+		assert.False(t, result.Valid)
+		assert.Equal(t, "L2", result.Issues[0].Level)
+	})
+
+	t.Run("task without a handler", func(t *testing.T) {
+		result := v.Validate("name: x\ntasks:\n  t:\n    params:\n      a: b\n")
+		assert.False(t, result.Valid)
+		assert.Contains(t, result.ErrorSummary(), "handler")
+	})
+}
+
+// A nil catalog rejects everything: a validator that cannot tell what exists
+// must not approve what it cannot check.
+func TestValidateWithNilCatalogRejectsEverything(t *testing.T) {
+	v := NewDAGValidator(nil)
+
+	result := v.Validate(`
+name: x
+tasks:
+  work:
+    handler: agent
+    params:
+      action: run
+      task: 做点什么
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "unknown handler")
+}
+
+// A close-but-wrong handler name gets a suggestion, so a retry prompt can point
+// at the right name.
+func TestValidateSuggestsCloseHandlerNames(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: typo
+tasks:
+  work:
+    handler: agent.run
+    params:
+      task: 做点什么
+`)
+
+	assert.False(t, result.Valid)
+	assert.Contains(t, result.ErrorSummary(), "did you mean")
+	assert.Contains(t, result.ErrorSummary(), "agent")
+}
+
+// The four layers are labelled, so a retry prompt can say which one failed and a
+// reader can tell a formatting slip from a semantic mistake.
+func TestValidationIssuesCarryLevels(t *testing.T) {
+	v := NewDAGValidator(testCatalog())
+
+	result := v.Validate(`
+name: levels
+tasks:
+  a:
+    handler: not-a-handler
+    params:
+      action: run
+`)
+	require.False(t, result.Valid)
+
+	levels := map[string]bool{}
+	for _, issue := range result.Issues {
+		levels[issue.Level] = true
+	}
+	assert.True(t, levels["L3"], "an unknown handler is an L3 issue")
+}
+
+// ErrorSummary reports only errors: warnings are advice, and feeding advice back
+// as a failure would send the model chasing things that were already fine.
+func TestErrorSummaryExcludesWarnings(t *testing.T) {
 	r := &ValidationResult{
 		Issues: []ValidationIssue{
-			{Level: "L2", Severity: SeverityError, Message: "missing name"},
-			{Level: "L4", Severity: SeverityWarning, Message: "unknown param"},
-			{Level: "L3", Severity: SeverityError, Message: "unknown handler"},
+			{Level: "L3", Severity: SeverityError, Message: "hard problem"},
+			{Level: "L4", Severity: SeverityWarning, Message: "soft advice"},
 		},
 	}
-
 	summary := r.ErrorSummary()
-	assert.Contains(t, summary, "missing name")
-	assert.Contains(t, summary, "unknown handler")
-	assert.NotContains(t, summary, "unknown param") // warnings excluded
+	assert.Contains(t, summary, "hard problem")
+	assert.NotContains(t, summary, "soft advice")
 }
 
-func TestValidationResultHasErrors(t *testing.T) {
-	noErrors := &ValidationResult{
-		Issues: []ValidationIssue{
-			{Level: "L4", Severity: SeverityWarning, Message: "minor"},
-		},
-	}
-	assert.False(t, noErrors.HasErrors())
+// The catalog's prompt rendering carries the required params, because a model
+// cannot infer them from a name and would otherwise produce tasks that L4 rejects.
+func TestCatalogFormatForPrompt(t *testing.T) {
+	out := testCatalog().FormatForPrompt()
 
-	withErrors := &ValidationResult{
-		Issues: []ValidationIssue{
-			{Level: "L2", Severity: SeverityError, Message: "bad"},
-		},
-	}
-	assert.True(t, withErrors.HasErrors())
+	assert.Contains(t, out, "agent")
+	assert.Contains(t, out, "shell")
+	assert.Contains(t, out, "action", "required params must be stated, not implied")
+
+	assert.Equal(t, "(no handlers available)", (*HandlerCatalog)(nil).FormatForPrompt())
 }
 
-func TestQuickSchemaCheck(t *testing.T) {
-	assert.NoError(t, quickSchemaCheck("name: test\ntasks:\n  t1:\n    handler: x"))
-	assert.Error(t, quickSchemaCheck("not: valid"))
-	assert.Error(t, quickSchemaCheck("{{{invalid yaml"))
+// The catalog answers existence and lookup, and reports absence honestly rather
+// than returning a zero spec that looks real.
+func TestCatalogLookup(t *testing.T) {
+	c := testCatalog()
+
+	assert.True(t, c.Has("agent"))
+	assert.False(t, c.Has("web.fetch"))
+
+	spec, ok := c.Spec("agent")
+	require.True(t, ok)
+	assert.Equal(t, "agent", spec.Name)
+
+	_, ok = c.Spec("nope")
+	assert.False(t, ok, "a missing handler must be distinguishable from an empty spec")
+
+	assert.Equal(t, []string{"agent", "review", "shell"}, c.Names())
 }

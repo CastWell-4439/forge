@@ -2,166 +2,171 @@ package planning
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/castwell/forge/internal/agent/core"
-	"github.com/castwell/forge/internal/agent/domain"
-	"github.com/castwell/forge/internal/agent/structured"
 )
 
-// mockLLMClient returns predefined responses for testing.
-type mockLLMClient struct {
-	responses map[string]string // key: first user message content -> response
-	fallback  string            // default response if no match
-}
-
-func (m *mockLLMClient) Chat(_ context.Context, messages []core.Message) (string, error) {
-	for _, msg := range messages {
-		if msg.Role == "user" {
-			if resp, ok := m.responses[msg.Content]; ok {
-				return resp, nil
-			}
+func TestParseRequirement(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{`{
+		"description": "把季度数据整理成一份报告",
+		"fields": {"scope": "2026 Q1", "audience": "管理层"},
+		"acceptance": {
+			"criteria": "报告覆盖全部指标且数字与源数据一致",
+			"checks": ["每个指标都有数值", "结论有数据支撑"]
 		}
-	}
-	return m.fallback, nil
-}
+	}`}}
 
-func (m *mockLLMClient) ChatWithUsage(ctx context.Context, msgs []core.Message) (core.ChatResult, error) {
-	content, err := m.Chat(ctx, msgs)
-	return core.ChatResult{Content: content}, err
-}
-
-func newMockLLMForParser() *mockLLMClient {
-	return &mockLLMClient{
-		fallback: `{
-	"description": "30秒产品介绍视频，用这张人脸，配轻快的BGM",
-	"duration": 30,
-	"aspect_ratio": "16:9",
-	"resolution": "1080p",
-	"face_swap": {
-		"target_face": {"url": "https://cdn.example.com/face.jpg", "type": "image", "filename": "face.jpg"},
-		"all_faces": false,
-		"face_index": [0]
-	},
-	"tts": {
-		"text": "产品介绍脚本",
-		"voice": "zh-CN-XiaoxiaoNeural",
-		"language": "zh-CN",
-		"speed": 1.0
-	},
-	"bgm": {
-		"style": "轻快",
-		"volume": 0.3
-	},
-	"subtitles": {
-		"language": "zh-CN",
-		"style": "default",
-		"position": "bottom"
-	},
-	"source_videos": [
-		{"url": "https://cdn.example.com/source.mp4", "type": "video", "filename": "source.mp4"}
-	],
-	"quality_level": "standard"
-}`,
-	}
-}
-
-func TestRequirementParserParse(t *testing.T) {
-	mock := newMockLLMForParser()
-	parser := NewRequirementParser(mock)
-
-	req, err := parser.Parse(context.Background(), "帮我做一个30秒的产品介绍视频，用这张人脸，配轻快的BGM")
-	require.NoError(t, err)
-	require.NotNil(t, req)
-
-	assert.Equal(t, "30秒产品介绍视频，用这张人脸，配轻快的BGM", req.Description)
-	assert.Equal(t, float64(30), req.DurationSec)
-	assert.Equal(t, "16:9", req.AspectRatio)
-	assert.Equal(t, "1080p", req.Resolution)
-
-	// Face swap.
-	require.NotNil(t, req.FaceSwap)
-	assert.Equal(t, "https://cdn.example.com/face.jpg", req.FaceSwap.TargetFace.URL)
-	assert.False(t, req.FaceSwap.AllFaces)
-
-	// TTS.
-	require.NotNil(t, req.TTS)
-	assert.Equal(t, "zh-CN", req.TTS.Language)
-
-	// BGM.
-	require.NotNil(t, req.BGM)
-	assert.Equal(t, "轻快", req.BGM.Style)
-	assert.Equal(t, 0.3, req.BGM.Volume)
-
-	// Subtitles.
-	require.NotNil(t, req.Subtitles)
-
-	// Source videos.
-	require.Len(t, req.SourceVideos, 1)
-	assert.Equal(t, "https://cdn.example.com/source.mp4", req.SourceVideos[0].URL)
-
-	// Quality.
-	assert.Equal(t, domain.QualityStandard, req.QualityLevel)
-}
-
-func TestRequirementParserDefaults(t *testing.T) {
-	mock := &mockLLMClient{
-		fallback: `{"duration": 60}`,
-	}
-	parser := NewRequirementParser(mock)
-
-	req, err := parser.Parse(context.Background(), "make a video")
+	parser := NewRequirementParser(llm, nil)
+	req, err := parser.Parse(context.Background(), "帮我整理一份 Q1 的数据报告给管理层")
 	require.NoError(t, err)
 
-	assert.Equal(t, "make a video", req.Description) // fallback from input
-	assert.Equal(t, "16:9", req.AspectRatio)
-	assert.Equal(t, "1080p", req.Resolution)
-	assert.Equal(t, domain.QualityStandard, req.QualityLevel)
+	assert.Equal(t, "把季度数据整理成一份报告", req.Description)
+	assert.Equal(t, "2026 Q1", req.Fields["scope"])
+	assert.Equal(t, "管理层", req.Fields["audience"])
+	assert.Equal(t, "报告覆盖全部指标且数字与源数据一致", req.Acceptance.Criteria)
+	assert.Len(t, req.Acceptance.Checks, 2)
 }
 
-func TestRequirementParserMarkdownWrapped(t *testing.T) {
-	mock := &mockLLMClient{
-		fallback: "```json\n{\"duration\": 30, \"description\": \"test\", \"aspect_ratio\": \"9:16\"}\n```",
-	}
-	parser := NewRequirementParser(mock)
+// The requirement carries whatever the domain extracted, without the parser
+// interpreting it. That is what keeps the engine domain-neutral: it forwards
+// these values and never reads their meaning.
+func TestParseKeepsDomainFieldsOpaque(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{`{
+		"description": "x",
+		"fields": {"anything_at_all": {"nested": [1, 2, 3]}}
+	}`}}
 
-	req, err := parser.Parse(context.Background(), "test")
+	parser := NewRequirementParser(llm, nil)
+	req, err := parser.Parse(context.Background(), "x")
 	require.NoError(t, err)
-	assert.Equal(t, float64(30), req.DurationSec)
-	assert.Equal(t, "9:16", req.AspectRatio)
+
+	nested, ok := req.Fields["anything_at_all"].(map[string]any)
+	require.True(t, ok, "an unknown field shape must survive intact")
+	assert.NotNil(t, nested["nested"])
 }
 
-func TestExtractJSON(t *testing.T) {
-	// Tests now use structured.ExtractJSONObject (shared implementation).
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "pure json",
-			input:    `{"key": "value"}`,
-			expected: `{"key": "value"}`,
-		},
-		{
-			name:     "json with preamble",
-			input:    `Here is the result: {"key": "value"} done`,
-			expected: `{"key": "value"}`,
-		},
-		{
-			name:     "nested json",
-			input:    `{"outer": {"inner": 1}}`,
-			expected: `{"outer": {"inner": 1}}`,
-		},
-	}
+// An empty description falls back to the user's own words: a parser that loses
+// the question has failed even when it produced valid JSON.
+func TestParseFallsBackToUserTextForDescription(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{`{"fields": {}}`}}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := structured.ExtractJSONObject(tc.input)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
+	parser := NewRequirementParser(llm, nil)
+	req, err := parser.Parse(context.Background(), "原始的那句话")
+	require.NoError(t, err)
+
+	assert.Equal(t, "原始的那句话", req.Description)
 }
+
+// Missing fields become an empty map, never nil: callers read from it, and a nil
+// map is a panic waiting for the first write.
+func TestParseAlwaysAllocatesFields(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{`{"description": "只有描述"}`}}
+
+	parser := NewRequirementParser(llm, nil)
+	req, err := parser.Parse(context.Background(), "x")
+	require.NoError(t, err)
+
+	require.NotNil(t, req.Fields)
+	req.Fields["written"] = true // must not panic
+}
+
+// JSON wrapped in a markdown fence is still extracted.
+func TestParseExtractsJSONFromFences(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{"```json\n{\"description\": \"在栅栏里\"}\n```"}}
+
+	parser := NewRequirementParser(llm, nil)
+	req, err := parser.Parse(context.Background(), "x")
+	require.NoError(t, err)
+
+	assert.Equal(t, "在栅栏里", req.Description)
+}
+
+// Unparseable output is an error. Guessing a requirement from prose the model
+// did not format would put invented values into everything downstream.
+func TestParseRejectsUnparseableOutput(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{"这根本不是 JSON"}}
+
+	parser := NewRequirementParser(llm, nil)
+	_, err := parser.Parse(context.Background(), "x")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid JSON")
+}
+
+// An unreachable model is reported, not swallowed.
+func TestParseReportsLLMFailure(t *testing.T) {
+	llm := &scriptedLLM{err: errors.New("network is down")}
+
+	parser := NewRequirementParser(llm, nil)
+	_, err := parser.Parse(context.Background(), "x")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network is down")
+}
+
+// The parser sends the profile's own instruction: what to extract is the
+// domain's business, and the engine never inspects the result. This test is what
+// proves the seam is used rather than the engine quietly carrying its own prompt.
+func TestParseUsesTheProfilesPrompt(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{`{"description": "x"}`}}
+	profile := recordingProfile{}
+
+	parser := NewRequirementParser(llm, profile)
+	_, err := parser.Parse(context.Background(), "x")
+	require.NoError(t, err)
+
+	assert.Contains(t, llm.lastSystemPrompt, recordingMarker,
+		"the profile's prompt must be what the model sees")
+	assert.Equal(t, "recorder", parser.ProfileName())
+}
+
+// The generic profile is used when none is supplied: the engine has to work for
+// a requirement nobody has written a domain for.
+func TestParseNilProfileUsesGeneric(t *testing.T) {
+	llm := &scriptedLLM{replies: []string{`{"description": "x"}`}}
+
+	parser := NewRequirementParser(llm, nil)
+	_, err := parser.Parse(context.Background(), "x")
+	require.NoError(t, err)
+
+	assert.Equal(t, "generic", parser.ProfileName())
+	assert.Contains(t, llm.lastSystemPrompt, "需求分析师")
+}
+
+// --- a profile that proves the seam ---
+
+const recordingMarker = "RECORDING-PROFILE-PROMPT"
+
+type recordingProfile struct{}
+
+func (recordingProfile) Name() string              { return "recorder" }
+func (recordingProfile) ParseSystemPrompt() string { return recordingMarker }
+func (recordingProfile) PlanHints() string         { return "hints" }
+func (recordingProfile) Templates() []DAGTemplate  { return nil }
+
+// The generic prompt must ask for exactly what the engine uses, and must tell
+// the model not to invent an acceptance the user never gave.
+func TestGenericProfilePromptIsHonest(t *testing.T) {
+	prompt := GenericProfile{}.ParseSystemPrompt()
+
+	assert.Contains(t, prompt, "description")
+	assert.Contains(t, prompt, "acceptance")
+	assert.Contains(t, prompt, "criteria")
+	assert.Contains(t, prompt, "checks")
+	assert.Contains(t, prompt, "不要替用户发明标准",
+		"an invented acceptance would make a run look judged when nothing was specified")
+}
+
+// The generic profile declares no templates and no hints: a shape worth
+// pre-building has to come from a domain that knows it recurs.
+func TestGenericProfileDeclaresNothingExtra(t *testing.T) {
+	p := GenericProfile{}
+	assert.Empty(t, p.PlanHints())
+	assert.Empty(t, p.Templates())
+	assert.Equal(t, "generic", p.Name())
+}
+
+var _ = core.Message{}

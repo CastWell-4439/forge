@@ -14,6 +14,9 @@ const statusColorMap: Record<string, string> = {
   WORKFLOW_STATUS_FAILED: 'error',
   WORKFLOW_STATUS_CANCELLED: 'warning',
   WORKFLOW_STATUS_COMPENSATING: 'orange',
+  // Not 'processing': a paused workflow makes no progress until someone
+  // answers, and this colour is what tells an operator to go and answer it.
+  WORKFLOW_STATUS_PAUSED: 'gold',
 };
 
 const taskStatusColorMap: Record<string, string> = {
@@ -25,6 +28,7 @@ const taskStatusColorMap: Record<string, string> = {
   TASK_STATUS_FAILED: 'error',
   TASK_STATUS_SKIPPED: 'warning',
   TASK_STATUS_COMPENSATING: 'orange',
+  TASK_STATUS_PAUSED: 'gold',
 };
 
 function buildDagGraph(tasks: TaskInstance[]): DagGraph {

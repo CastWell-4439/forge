@@ -31,6 +31,8 @@ func Run(appCtx context.Context) error {
 	// Installed process-wide: the worker's gRPC server and its dial to the
 	// coordinator read it through the tracing interceptors.
 	observability.TracerConfigEnv("forge-worker-" + lang)
+	// Same as the coordinator: flush queued spans before exiting.
+	defer observability.StopTracing()
 	// Same as the coordinator: kernel TCP latency where available and enabled,
 	// a no-op otherwise.
 	stopEBPF := observability.StartEBPFObserver(appCtx, metrics)
@@ -64,6 +66,12 @@ func Run(appCtx context.Context) error {
 	// dispatched task, so a nil registry panicked the worker on its first task.
 	registry := worker.NewRegistry()
 	registerBuiltinHandlers(registry)
+
+	// The planner needs to submit the plans it generates, which means a
+	// coordinator connection of its own. It is read here rather than inside the
+	// registry because the address is a deployment fact, not a handler detail —
+	// and the same value the worker dials below.
+	registerPlannerHandler(registry, envOrDefault("FORGE_COORDINATOR_ADDR", "localhost:50051"))
 	log.Printf("INFO: registered handlers: %v", registry.Handlers())
 
 	// --- Worker gRPC Server (registers with the Coordinator, then serves ExecuteTask) ---
