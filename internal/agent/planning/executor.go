@@ -54,6 +54,48 @@ func AgentHandlerSpec() HandlerSpec {
 	}
 }
 
+// The scorer handler.
+//
+// It appears in a generated DAG only when the requirement declared a bar, and it
+// exists to keep the verdict out of the model's hands:
+//
+//	judge:
+//	  handler: judge
+//	  params:
+//	    acceptance: {criteria: ..., artifacts: [...], threshold: ...}
+//	  output: verdict
+//
+// The scorer reports a score and is not told the threshold; the workflow's
+// `break_on` compares the two. That is why its entry here says it measures — a
+// reader deciding whether to trust a plan needs to know which party decides.
+const judgeHandler = "judge"
+
+// JudgeHandlerSpec is the catalog entry for the scorer.
+//
+// It must be in the catalog the validator uses, or a generated plan would teach
+// the model to emit `handler: judge` and then reject its own output at L3. The
+// two lists — what the prompt describes and what the validator accepts — have to
+// be the same list, which is why the guard test asserts the prompt's handlers are
+// all validatable.
+func JudgeHandlerSpec() HandlerSpec {
+	return HandlerSpec{
+		Name: judgeHandler,
+		Description: "对一个产出做质量评估并给出分数。先检查声明的产物是否齐全（齐全才继续），" +
+			"再按验收标准打分。它只测量、不判定是否达标——是否达标由工作流的条件决定",
+		Required: []string{"action"},
+	}
+}
+
+// GeneratedHandlerSpecs is every handler a generated DAG may name.
+//
+// One list, used both to describe the handlers to the model and to validate what
+// it produced. Keeping them in one place is deliberate: the previous design told
+// the model about one set of names and validated against another, so its output
+// passed every layer and had nowhere to go at dispatch.
+func GeneratedHandlerSpecs() []HandlerSpec {
+	return []HandlerSpec{AgentHandlerSpec(), JudgeHandlerSpec()}
+}
+
 // agentParams builds the params for one generated step.
 //
 // `action` is written here rather than requested from the model: it is fixed

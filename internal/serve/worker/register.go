@@ -81,10 +81,16 @@ func registerBuiltinHandlers(r *worker.Registry) {
 	registerWasm(r)
 	registerMCP(r)
 
+	// The scorer. Registered even with no model configured, so a deployment that
+	// only wants the completeness half still gets it — and the quality half then
+	// says which half is unavailable rather than "unknown handler", which would
+	// send an author looking for a typo.
+	registerJudge(r)
+
 	// Guard the wiring itself: a workflow that declares a worker this build does
 	// not know about must fail loudly at registration time, not silently at run
 	// time.
-	for _, required := range []string{"ai", "review", "database", "git", "mcp", "hitl", "shell", "claude_code", "wasm", "agent"} {
+	for _, required := range []string{"ai", "review", "database", "git", "mcp", "hitl", "shell", "claude_code", "wasm", "agent", "judge"} {
 		if r.Get(required) == nil {
 			panic(fmt.Sprintf("worker %q is declared by workflows but was not registered", required))
 		}
