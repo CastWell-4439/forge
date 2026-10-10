@@ -2074,6 +2074,24 @@ func (c *Coordinator) runCompensation(ctx context.Context, workflowID, failedTas
 
 		c.saveEvent(ctx, workflowID, step.OriginalTaskID, storage.EventTaskCompensating, nil)
 
+		// Record the status alongside the event.
+		//
+		// The event was always written and the status never was, so the two
+		// records answered differently about the same task: `forge history`
+		// reconstructs COMPENSATING from the event, while the task table and the
+		// dashboard still said COMPLETED. Since the event log is this system's
+		// record of what happened, the table has to agree with it — an audit read
+		// through one and a live query through the other must not disagree.
+		//
+		// A failure here is logged loudly and does not stop the rollback. The
+		// compensation is the substance; this is the record of it, and refusing
+		// to roll back because a bookkeeping write failed would trade a real
+		// safety property for a tidier table.
+		if err := c.store.UpdateTaskStatus(ctx, step.OriginalTaskID, storage.TaskStatusCompensating); err != nil {
+			log.Printf("ERROR: saga: task %s was compensated but its status could not be recorded: %v "+
+				"(the task table and the event log now disagree for this task)", step.OriginalTaskID, err)
+		}
+
 		resp, err := worker.Client.ExecuteTask(ctx, &forgev1.TaskRequest{
 			TaskId:     step.OriginalTaskID + "-compensate",
 			WorkflowId: workflowID,
