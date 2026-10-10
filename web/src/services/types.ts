@@ -5,7 +5,11 @@ export type WorkflowStatus =
   | 'WORKFLOW_STATUS_COMPLETED'
   | 'WORKFLOW_STATUS_FAILED'
   | 'WORKFLOW_STATUS_CANCELLED'
-  | 'WORKFLOW_STATUS_COMPENSATING';
+  | 'WORKFLOW_STATUS_COMPENSATING'
+  // PAUSED is not terminal: the workflow is waiting on a human decision. It was
+  // defined in the backend and missing here, so a paused workflow rendered with
+  // no status at all — which reads as "unknown" rather than "waiting on you".
+  | 'WORKFLOW_STATUS_PAUSED';
 
 export type TaskStatus =
   | 'TASK_STATUS_UNSPECIFIED'
@@ -16,7 +20,9 @@ export type TaskStatus =
   | 'TASK_STATUS_COMPLETED'
   | 'TASK_STATUS_FAILED'
   | 'TASK_STATUS_SKIPPED'
-  | 'TASK_STATUS_COMPENSATING';
+  | 'TASK_STATUS_COMPENSATING'
+  // A task parked for human approval carries its own PAUSED status.
+  | 'TASK_STATUS_PAUSED';
 
 export interface OverviewData {
   activeWorkflows: number;

@@ -52,12 +52,18 @@ func GlobalTracer() *Tracer {
 // TracerConfigEnv reads the tracer configuration from the environment and
 // installs it as the process-wide tracer:
 //
-//	FORGE_TRACE_EXPORTER = log (default) | noop
+//	FORGE_TRACE_EXPORTER = log (default) | noop | otlp
 //	FORGE_TRACE_SAMPLE   = 0.0..1.0 (default 1.0)
+//	FORGE_OTLP_ENDPOINT  = collector base URL for the otlp exporter
+//	                       (default http://localhost:4318 — the OTLP/HTTP port)
 //
 // The default is the log exporter so tracing is observable out of the box —
 // a tracer that is installed but silently discards everything would be the
 // same half-wired state this wiring exists to end.
+//
+// Selecting "otlp" without an endpoint uses the standard collector port rather
+// than refusing: the deployment that asks for OTLP has almost certainly put a
+// collector somewhere conventional, and a warning names the default it chose.
 func TracerConfigEnv(serviceName string) *Tracer {
 	exporterName := strings.ToLower(strings.TrimSpace(os.Getenv("FORGE_TRACE_EXPORTER")))
 	var exporter SpanExporter
@@ -66,6 +72,16 @@ func TracerConfigEnv(serviceName string) *Tracer {
 		exporter = LogExporter{}
 	case "noop", "off", "none":
 		exporter = &NoopExporter{}
+	case "otlp":
+		endpoint := strings.TrimSpace(os.Getenv("FORGE_OTLP_ENDPOINT"))
+		if endpoint == "" {
+			endpoint = defaultOTLPEndpoint
+			log.Printf("INFO: otlp exporter selected; using the default collector endpoint %s "+
+				"(set FORGE_OTLP_ENDPOINT to change it)", endpoint)
+		}
+		built, stop := NewOTLPExporter(context.Background(), OTLPConfig{Endpoint: endpoint})
+		otlpStop = stop
+		exporter = built
 	default:
 		log.Printf("WARN: unknown FORGE_TRACE_EXPORTER %q, spans will be discarded", exporterName)
 		exporter = &NoopExporter{}
@@ -87,6 +103,27 @@ func TracerConfigEnv(serviceName string) *Tracer {
 	})
 	SetGlobalTracer(t)
 	return t
+}
+
+// defaultOTLPEndpoint is the OTLP/HTTP port a collector conventionally listens
+// on. 4317 is the gRPC port, which this exporter does not speak.
+const defaultOTLPEndpoint = "http://localhost:4318"
+
+// otlpStop, when set, flushes the OTLP exporter's queue.
+//
+// It is package state because TracerConfigEnv is called for its side effect
+// (installing the global tracer) and has no return channel for a stop function.
+// A process that wants its last spans sent calls StopTracing; one that does not
+// still gets them, because the exporter flushes on its own interval.
+var otlpStop func()
+
+// StopTracing flushes any queued spans. It is safe to call when tracing was
+// never started, or when the exporter is not OTLP.
+func StopTracing() {
+	if otlpStop != nil {
+		otlpStop()
+		otlpStop = nil
+	}
 }
 
 // LogExporter writes one line per finished span to the standard logger.

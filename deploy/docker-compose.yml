@@ -22,20 +22,24 @@ services:
   coordinator:
     build:
       context: ..
-      dockerfile: build/Dockerfile.coordinator
-    command:
-      - forge
-      - coordinator
-      - --embed-etcd
-      - --db=postgres://forge:forge@postgres:5432/forge?sslmode=disable
+      dockerfile: build/coordinator/Dockerfile
+    # The image's entrypoint IS the coordinator, so there is no `forge
+    # coordinator` subcommand to name. Configuration is environment-driven like
+    # every other entry point — the CLI deliberately adds no flags, and the
+    # `--embed-etcd` / `--db=` this used to pass were flags nothing accepted.
+    environment:
+      FORGE_GRPC_ADDR: ":50051"
+      FORGE_REST_ADDR: ":8081"
+      FORGE_PG_DSN: postgres://forge:forge@postgres:5432/forge?sslmode=disable
+      FORGE_ETCD_EMBED: "1"
     ports:
-      - "8080:8080"   # gRPC
-      - "8081:8081"   # HTTP/metrics
+      - "50051:50051"  # gRPC
+      - "8081:8081"    # HTTP/metrics
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "grpc_health_probe -addr=:8080 || exit 1"]
+      test: ["CMD-SHELL", "grpc_health_probe -addr=:50051 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,11 +48,12 @@ services:
   worker-go:
     build:
       context: ..
-      dockerfile: build/Dockerfile.worker
-    command:
-      - forge
-      - worker
-      - --coordinator=coordinator:8080
+      dockerfile: build/worker-go/Dockerfile
+    # The image's entrypoint is the worker, and it reads the coordinator's
+    # address from the environment (FORGE_COORDINATOR_ADDR).
+    environment:
+      FORGE_COORDINATOR_ADDR: coordinator:50051
+      FORGE_WORKER_LANG: go
     deploy:
       replicas: 3
     depends_on:
@@ -59,14 +64,12 @@ services:
   worker-python:
     build:
       context: ..
-      dockerfile: build/Dockerfile.worker-python
-    command:
-      - python
-      - -m
-      - forge_worker
-      - --coordinator=coordinator:8080
+      dockerfile: build/worker-python/Dockerfile
+    # The image's entrypoint runs the worker module; it reads FORGE_COORDINATOR
+    # (not _ADDR — the SDK chose the shorter name) and takes no flags.
     environment:
-      FORGE_COORDINATOR: coordinator:8080
+      FORGE_COORDINATOR: coordinator:50051
+      FORGE_WORKER_LANG: python
     deploy:
       replicas: 2
     depends_on:
@@ -74,15 +77,27 @@ services:
         condition: service_healthy
 
   # --- C++ Worker ---
+  #
+  # NOT RUNNABLE AS SHIPPED, and left declared so the gap is visible rather than
+  # hidden by deleting the service:
+  #
+  #   build/worker-cpp/Dockerfile copies /src/sdk/cpp/build/forge-worker-cpp
+  #   sdk/cpp/CMakeLists.txt defines only a LIBRARY (forge_worker_sdk) and the
+  #   SDK has no main(), so that executable is never produced.
+  #
+  # The C++ worker that does exist is examples/cpp-worker, which reads
+  # FORGE_COORDINATOR and takes no flags. Making the image build means adding an
+  # executable target for it — a change to the SDK's build, not to this file.
+  # Until then, `docker compose up` will fail on this service; the Go and Python
+  # workers are unaffected.
   worker-cpp:
+    profiles: ["cpp"]  # opt-in, so the default `up` works without it
     build:
       context: ..
-      dockerfile: build/Dockerfile.worker-cpp
-    command:
-      - ./forge-worker
-      - --coordinator=coordinator:8080
+      dockerfile: build/worker-cpp/Dockerfile
     environment:
-      FORGE_COORDINATOR: coordinator:8080
+      FORGE_COORDINATOR: coordinator:50051
+      FORGE_WORKER_LANG: cpp
     deploy:
       replicas: 1
     depends_on:

@@ -150,6 +150,10 @@ func Run(appCtx context.Context) error {
 	// The tracer is installed process-wide: the gRPC server and every dial
 	// site read it through the interceptors, so wiring happens here once.
 	observability.TracerConfigEnv("forge-coordinator")
+	// Flush any queued spans on the way out. A process's last spans are often
+	// the ones that explain why it stopped, and the OTLP exporter holds them in
+	// a batch until the interval or the batch size releases them.
+	defer observability.StopTracing()
 	// Kernel-level TCP latency, where the platform supports it and the operator
 	// asked for it. Off by default: attaching probes needs privileges, and an
 	// observability feature must not be the reason a node fails to start.
