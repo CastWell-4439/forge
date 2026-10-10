@@ -11,6 +11,7 @@ import (
 	"github.com/castwell/forge/internal/agent/harness"
 	"github.com/castwell/forge/internal/agent/planning"
 	"github.com/castwell/forge/internal/agent/session"
+	"github.com/castwell/forge/internal/grpcauth"
 	"github.com/castwell/forge/internal/worker"
 	planworker "github.com/castwell/forge/internal/workers/plan"
 )
@@ -72,7 +73,13 @@ func registerPlannerHandler(r *worker.Registry, coordAddr string) {
 	// grpc.NewClient is lazy: it does not connect here, so an unreachable
 	// coordinator does not stop the worker from starting. The first plan fails
 	// instead, which is the same posture as every other optional dependency.
-	conn, err := grpc.NewClient(coordAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	//
+	// The secret travels with the client when the deployment has one: the planner
+	// submits child workflows, so it calls the coordinator exactly like a CLI
+	// operator would.
+	dialOpts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
+		grpcauth.ClientOptions()...)
+	conn, err := grpc.NewClient(coordAddr, dialOpts...)
 	if err != nil {
 		log.Printf("WARN: planner handler not registered: dial coordinator %s: %v", coordAddr, err)
 		return

@@ -516,7 +516,7 @@ cd web && npm install && npm run build
 # 启动依赖（PostgreSQL + etcd）
 docker-compose -f deploy/docker-compose.yml up -d
 
-# 启动 Coordinator (gRPC :50051, REST :8081, Metrics :9090)
+# 启动 Coordinator (gRPC 127.0.0.1:50051, REST :8081, Metrics :9090)
 go run ./cmd/coordinator
 
 # 启动 Worker
@@ -525,6 +525,20 @@ go run ./cmd/worker
 # 跑一次 ForgeX 通用用例
 go run ./cmd/forgex run-demo --case generic-contract-success --root .forgex
 ```
+
+> **gRPC 默认绑 loopback**（`127.0.0.1:50051`）——这个 API 能提交和取消工作流，所以**从别的机器够到它应当是一个决定，而不是没设环境变量的副产品**。
+>
+> 要让别的机器连上，必须同时配密钥，否则**拒绝启动**（而不是打个警告就敞着）：
+>
+> ```bash
+> export FORGE_GRPC_ADDR=":50051"          # 绑所有接口 = 对外可达
+> export FORGE_GRPC_SECRET="$(openssl rand -hex 32)"
+> # Worker / CLI 侧读同一个变量，它们自动带上
+> ```
+>
+> 启动日志会明说当前姿态（`gRPC auth enabled` / `auth DISABLED ... bound loopback`）。
+>
+> **如实说明两点**：① loopback 且无密钥时**放行**——同机的其他用户/进程仍可调用，这个取舍与 HTTP 侧（D-36）一致；② 这是**共享密钥**，它认证的是"持有密钥者"，**不是"谁是谁"**——没有身份层/RBAC，也没有 TLS。
 
 ### 配置
 

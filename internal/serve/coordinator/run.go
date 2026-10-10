@@ -25,6 +25,7 @@ import (
 	"github.com/castwell/forge/internal/forgex/policy"
 	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
 	"github.com/castwell/forge/internal/forgex/toolgw"
+	"github.com/castwell/forge/internal/grpcauth"
 	"github.com/castwell/forge/internal/observability"
 )
 
@@ -32,6 +33,10 @@ import (
 // tears everything down in the same order the original binary did. Setup
 // failures are returned (the entry point decides how to report them);
 // per-server runtime errors stay logged, exactly as before.
+// defaultGRPCAddr binds loopback: exposing the API to a network is then an
+// explicit choice, and the secret requirement follows from it.
+const defaultGRPCAddr = "127.0.0.1:50051"
+
 func Run(appCtx context.Context) error {
 	log.Println("INFO: forge-coordinator starting...")
 
@@ -202,18 +207,38 @@ func Run(appCtx context.Context) error {
 	}()
 
 	// --- gRPC Server ---
-	grpcAddr := envOrDefault("FORGE_GRPC_ADDR", ":50051")
+	//
+	// The default binds loopback, for the same reason the HTTP side does: this
+	// API can submit and cancel workflows, so reaching it from another machine
+	// should be a deliberate act rather than the zero value of an unset variable.
+	// It used to default to ":50051" — every interface — with no authentication,
+	// which is exposure nobody chose.
+	grpcAddr := envOrDefault("FORGE_GRPC_ADDR", defaultGRPCAddr)
+
+	// The auth posture is decided before the listener opens, and a routable bind
+	// without a secret refuses to serve. Failing here rather than logging a
+	// warning is the point: a warning leaves the port open.
+	authCfg := grpcauth.FromEnv(grpcAddr)
+	if err := authCfg.Validate(); err != nil {
+		return err
+	}
+	authCfg.LogPosture()
+
 	grpcLn, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen gRPC %s: %w", grpcAddr, err)
 	}
 
-	grpcServer := grpc.NewServer(observability.ServerOptions()...)
+	grpcOpts := append(observability.ServerOptions(), authCfg.ServerOptions()...)
+	grpcServer := grpc.NewServer(grpcOpts...)
 	forgev1.RegisterCoordinatorServiceServer(grpcServer, coord)
 	// Out-of-process workers register themselves through WorkerService/
 	// Register on THIS listener; without it every worker died at startup
 	// with "unknown service" (see register_rpc.go).
 	forgev1.RegisterWorkerServiceServer(grpcServer, coord)
+	// Reflection is covered by the interceptors too. It discloses the API
+	// surface, so leaving it open while the calls behind it are closed would
+	// hand out the map to a door that is locked.
 	reflection.Register(grpcServer)
 
 	go func() {

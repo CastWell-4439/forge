@@ -12,6 +12,7 @@ import (
 
 	forgev1 "github.com/castwell/forge/api/proto/gen"
 	"github.com/castwell/forge/internal/discovery"
+	"github.com/castwell/forge/internal/grpcauth"
 	"github.com/castwell/forge/internal/observability"
 )
 
@@ -101,6 +102,12 @@ func (w *Worker) Stop() {
 func (w *Worker) registerWithCoordinator(ctx context.Context) error {
 	dialOpts := append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())},
 		observability.ClientDialOptions()...)
+	// Present the shared secret when the deployment has one. Reading it here
+	// rather than taking it as a parameter keeps every dial site consistent: the
+	// worker, the planner's submission and the CLI all authenticate the same way,
+	// against the same variable.
+	dialOpts = append(dialOpts, grpcauth.ClientOptions()...)
+
 	conn, err := grpc.NewClient(w.coordAddr, dialOpts...)
 	if err != nil {
 		return fmt.Errorf("connect to coordinator %s: %w", w.coordAddr, err)
