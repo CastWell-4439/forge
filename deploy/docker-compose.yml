@@ -60,7 +60,7 @@ services:
     # address from the environment (FORGE_COORDINATOR_ADDR).
     environment:
       FORGE_COORDINATOR_ADDR: coordinator:50051
-      FORGE_GRPC_SECRET: 
+      FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
       FORGE_WORKER_LANG: go
     deploy:
       replicas: 3
@@ -77,7 +77,7 @@ services:
     # (not _ADDR — the SDK chose the shorter name) and takes no flags.
     environment:
       FORGE_COORDINATOR: coordinator:50051
-      FORGE_GRPC_SECRET: 
+      FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
       FORGE_WORKER_LANG: python
     deploy:
       replicas: 2
@@ -106,7 +106,7 @@ services:
       dockerfile: build/worker-cpp/Dockerfile
     environment:
       FORGE_COORDINATOR: coordinator:50051
-      FORGE_GRPC_SECRET: 
+      FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
       FORGE_WORKER_LANG: cpp
     deploy:
       replicas: 1
