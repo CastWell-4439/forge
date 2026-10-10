@@ -181,13 +181,30 @@ func AggregateObservations(obs []MemoryObservation) map[string]UsageStat {
 // ArchivePolicy decides what leaves the recall pool.
 type ArchivePolicy struct {
 	// MinKnown is how many recalls with a USABLE usage signal an entry must
-	// have before its lack of use counts as evidence. Below it there is no
-	// evidence, only silence.
+	// have before its lack of use counts as STRONG evidence. Below it, a lack
+	// of use is still evidence — just weaker; see MinRecalled.
 	//
 	// This is the field that keeps the store from being swept clean: most runs
 	// cannot say whether a recalled memory mattered, and those runs must not
-	// count toward "offered and not taken".
+	// count toward "offered and not taken" on their own.
 	MinKnown int
+	// MinRecalled is how many times an entry must have been OFFERED, with no
+	// known use, before it is archived on the weaker evidence.
+	//
+	// It exists because the strong signal is one this system cannot always
+	// produce. Usage is recorded only when a run cites what it relied on, and
+	// citing is an invitation rather than a requirement — so an entry nobody
+	// ever mentions accumulates no strong signal at all. Requiring MinKnown of
+	// an entry that can never produce one made archiving unreachable: every
+	// entry that reached the decision had a known signal, every known signal
+	// was positive, so the use ratio was always 1.0 and the answer was always
+	// "still in use".
+	//
+	// "Offered many times, never used" is an observable fact rather than a
+	// score, which is what the decision is supposed to rest on. It is weaker
+	// than "declined many times", so it gets a higher bar of its own, and the
+	// decision says which of the two it used.
+	MinRecalled int
 	// MaxUseRatio is the use ratio at or below which an entry is considered
 	// unused. Zero means "never used at all" — the strictest reading, and the
 	// default, because a memory used once in fifty recalls is rare but real
@@ -201,9 +218,13 @@ type ArchivePolicy struct {
 }
 
 // DefaultArchivePolicy returns the standard thresholds.
+//
+// MinRecalled is higher than MinKnown on purpose: being never mentioned is
+// weaker evidence than being declined, so it takes more of it.
 func DefaultArchivePolicy() ArchivePolicy {
 	return ArchivePolicy{
 		MinKnown:          5,
+		MinRecalled:       10,
 		MaxUseRatio:       0,
 		ProtectPersistent: true,
 	}
@@ -212,6 +233,9 @@ func DefaultArchivePolicy() ArchivePolicy {
 func (p ArchivePolicy) normalize() ArchivePolicy {
 	if p.MinKnown <= 0 {
 		p.MinKnown = DefaultArchivePolicy().MinKnown
+	}
+	if p.MinRecalled <= 0 {
+		p.MinRecalled = DefaultArchivePolicy().MinRecalled
 	}
 	if p.MaxUseRatio < 0 {
 		p.MaxUseRatio = 0
@@ -261,25 +285,54 @@ func ShouldArchive(entryID string, memType MemoryType, stat UsageStat, policy Ar
 		return d
 	}
 
-	// No evidence yet. Note the denominator: KNOWN recalls, not all recalls.
-	// A run that could not report usage has told us the entry was offered, not
-	// that it went unused — and treating silence as disuse would archive every
-	// entry the first time a few silent runs recalled it.
-	if stat.Known < policy.MinKnown {
-		d.Reason = "insufficient usage signal (" + itoa(stat.Known) + " of " +
-			itoa(policy.MinKnown) + " known recalls, " + itoa(stat.Recalled) + " total)"
+	// Strong evidence: enough recalls carried a usage signal for the ratio to
+	// mean something. The runs could tell us, and the configured tolerance
+	// decides how much rare use is acceptable.
+	if stat.Known >= policy.MinKnown {
+		if stat.UseRatio() > policy.MaxUseRatio {
+			d.Reason = "still in use (used in " + itoa(stat.Used) + " of " + itoa(stat.Known) +
+				" recalls with a usage signal, " + itoa(stat.Recalled) + " offered)"
+			return d
+		}
+		d.Archive = true
+		d.Reason = "offered " + itoa(stat.Recalled) + " times, used " + itoa(stat.Used) + " in " +
+			itoa(stat.Known) + " recalls with a usage signal (type " + string(orUnclassified(memType)) + ")"
 		return d
 	}
 
-	ratio := stat.UseRatio()
-	if ratio > policy.MaxUseRatio {
-		d.Reason = "still in use"
+	// Below that, a single known use protects the entry outright.
+	//
+	// The ratio is not applied here: with one or two known signals it would call
+	// an entry used-once "still in use" at any tolerance, which is right, and an
+	// entry used-zero "unused" — but the latter also matches any entry nobody
+	// ever cited, so the two cannot be told apart by the ratio alone. Protecting
+	// on Used > 0 keeps the one distinction that is certain.
+	if stat.Used > 0 {
+		d.Reason = "still in use (used in " + itoa(stat.Used) + " of " + itoa(stat.Known) +
+			" recalls with a usage signal, " + itoa(stat.Recalled) + " offered)"
 		return d
 	}
 
-	d.Archive = true
-	d.Reason = "recalled " + itoa(stat.Known) + " times with a usage signal, used " + itoa(stat.Used) +
-		" (type " + string(orUnclassified(memType)) + ")"
+	// Weak evidence: offered many times and never cited, with too few usable
+	// signals to say more.
+	//
+	// The bar is higher because the inference is weaker — a run that used the
+	// entry without citing it is indistinguishable from one that ignored it.
+	// The decision is still worth making, because it is the only one the data
+	// supports and archiving is reversible; that is why the reason names which
+	// evidence it used rather than reporting a bare count.
+	if stat.Recalled >= policy.MinRecalled {
+		d.Archive = true
+		d.Reason = "offered " + itoa(stat.Recalled) + " times, never cited, and only " +
+			itoa(stat.Known) + " of those runs declared usage (weak signal; " +
+			"recoverable with `memory recover`)"
+		return d
+	}
+
+	// Not enough of either. The reason reports both counts, because "not enough"
+	// is only actionable if the reader can see how close it is.
+	d.Reason = "insufficient evidence (" + itoa(stat.Recalled) + " of " + itoa(policy.MinRecalled) +
+		" offers, " + itoa(stat.Known) + " of " + itoa(policy.MinKnown) + " with a usage signal)"
 	return d
 }
 
@@ -358,16 +411,34 @@ func ObservedRunFrom(ctx context.Context) string {
 // reason the lesson channel is an interface rather than a package import). The
 // serve layer implements this and injects it.
 //
-// Note what the interface can express and what it cannot: RecordUsage takes
-// VERIFIED citations, so a caller has no way to declare "this was offered and
-// declined". That combination is not currently establishable, and leaving it
-// out of the interface is how the type system keeps the lifecycle from acting
-// on a signal nobody can produce.
+// The two methods record the two things a run can honestly report, and they are
+// not symmetrical:
+//
+//   - RecordUsage takes VERIFIED citations. It is a statement: "I relied on
+//     these". Only ids the run was actually shown are accepted, so a
+//     hallucinated citation cannot steer the archive.
+//   - RecordOffers takes the ids the run was SHOWN, and says nothing about use.
+//     It is the observation the lifecycle needs in order to see a never-cited
+//     entry at all: without it, an entry nobody ever mentions has no rows, and
+//     the archive can only ever look at entries that were cited — that is, at
+//     entries that were used. The decision then sees only the survivors and
+//     concludes nothing.
+//
+// What the interface still cannot express is the middle case: "these were
+// offered AND I used none of them". That is a stronger statement than an offer
+// and a different one from a citation, and no contract currently produces it —
+// so it is absent here rather than approximated.
 type ObservationSink interface {
 	// RecordUsage records that a run relied on the given memory ids.
 	// Implementations must be safe for concurrent use: N5 delegation can run
 	// child loops that share their parent's sink.
 	RecordUsage(ctx context.Context, runID string, entryIDs []string) error
+
+	// RecordOffers records that a run was shown the given memory ids, without
+	// claiming anything about whether they were used.
+	//
+	// Same concurrency requirement as RecordUsage.
+	RecordOffers(ctx context.Context, runID string, entryIDs []string) error
 }
 
 // SortedDecisions orders decisions for stable reporting: archives first (they

@@ -314,3 +314,158 @@ func TestItoa(t *testing.T) {
 	assert.Equal(t, "-5", itoa(-5))
 	assert.Equal(t, "1000000", itoa(1000000))
 }
+
+// --- the weak signal: offered many times, never cited ---
+
+// An entry that is offered repeatedly and never mentioned can be archived.
+//
+// This is the case that could not happen before. Usage was recorded only for
+// entries a run cited, so a never-cited entry accumulated no observations at
+// all: the archive could only evaluate entries that had been cited — that is,
+// entries that had been used — and every one of them reported "still in use".
+// The machinery ran and could never act.
+func TestNeverCitedEntryCanBeArchived(t *testing.T) {
+	now := time.Now()
+	var list []MemoryObservation
+	for i := 0; i < 12; i++ {
+		list = append(list, silent("r"+itoa(i), "e1", now))
+	}
+	stat := AggregateObservations(list)["e1"]
+
+	require.Equal(t, 12, stat.Recalled, "offers are counted as recalls")
+	require.Equal(t, 0, stat.Known, "none of them carried a usage signal")
+
+	d := ShouldArchive("e1", MemoryUnclassified, stat, DefaultArchivePolicy())
+	assert.True(t, d.Archive, "offered twelve times and never used is enough to act on")
+}
+
+// The weak decision says which evidence it used, because a reviewer cannot
+// otherwise tell "declined many times" from "never mentioned".
+func TestWeakDecisionNamesItsSignal(t *testing.T) {
+	now := time.Now()
+	var list []MemoryObservation
+	for i := 0; i < 12; i++ {
+		list = append(list, silent("r"+itoa(i), "e1", now))
+	}
+	stat := AggregateObservations(list)["e1"]
+
+	d := ShouldArchive("e1", MemoryUnclassified, stat, DefaultArchivePolicy())
+
+	require.True(t, d.Archive)
+	assert.Contains(t, d.Reason, "never cited", "the weaker inference is named as such")
+	assert.Contains(t, d.Reason, "12", "and the count it acted on is in the reason")
+	assert.Contains(t, d.Reason, "recover", "archiving is reversible, and the reason says how")
+}
+
+// The strong decision is distinguishable from the weak one.
+func TestStrongDecisionReadsDifferentlyFromWeak(t *testing.T) {
+	now := time.Now()
+
+	var weak []MemoryObservation
+	for i := 0; i < 12; i++ {
+		weak = append(weak, silent("r"+itoa(i), "e1", now))
+	}
+	weakDecision := ShouldArchive("e1", MemoryUnclassified,
+		AggregateObservations(weak)["e1"], DefaultArchivePolicy())
+
+	var strong []MemoryObservation
+	for i := 0; i < 6; i++ {
+		strong = append(strong, obs("r"+itoa(i), "e2", false, now))
+	}
+	strongDecision := ShouldArchive("e2", MemoryUnclassified,
+		AggregateObservations(strong)["e2"], DefaultArchivePolicy())
+
+	require.True(t, weakDecision.Archive)
+	require.True(t, strongDecision.Archive)
+	assert.NotEqual(t, weakDecision.Reason, strongDecision.Reason)
+	assert.Contains(t, strongDecision.Reason, "usage signal",
+		"the strong decision cites the signals the runs actually gave")
+	assert.NotContains(t, strongDecision.Reason, "never cited")
+}
+
+// A single known use protects an entry outright when there is not enough signal
+// for the ratio to mean anything.
+//
+// This is the safety argument for acting on the weak signal at all: the weak
+// inference must never override a run that said it used the entry.
+func TestOneKnownUseProtectsBelowTheStrongBar(t *testing.T) {
+	now := time.Now()
+	var list []MemoryObservation
+	for i := 0; i < 30; i++ {
+		list = append(list, silent("s"+itoa(i), "e1", now))
+	}
+	list = append(list, obs("known", "e1", true, now)) // exactly one use
+
+	stat := AggregateObservations(list)["e1"]
+	require.Equal(t, 31, stat.Recalled)
+	require.Equal(t, 1, stat.Known, "below MinKnown, so the ratio is not used")
+
+	d := ShouldArchive("e1", MemoryUnclassified, stat, DefaultArchivePolicy())
+	assert.False(t, d.Archive, "thirty offers do not outweigh one run saying it used it")
+	assert.Contains(t, d.Reason, "still in use")
+}
+
+// The weak bar is higher than the strong one: being never mentioned is weaker
+// evidence than being declined, so it takes more of it.
+func TestWeakBarIsHigherThanTheStrongBar(t *testing.T) {
+	p := DefaultArchivePolicy()
+	assert.Greater(t, p.MinRecalled, p.MinKnown,
+		"the weaker inference must need more evidence, not less")
+}
+
+// Below both bars, the reason reports both counts so a reader can see how close
+// the entry is.
+func TestBelowBothBarsReportsBothCounts(t *testing.T) {
+	now := time.Now()
+	var list []MemoryObservation
+	for i := 0; i < 3; i++ {
+		list = append(list, silent("r"+itoa(i), "e1", now))
+	}
+	stat := AggregateObservations(list)["e1"]
+
+	d := ShouldArchive("e1", MemoryUnclassified, stat, DefaultArchivePolicy())
+	require.False(t, d.Archive)
+	assert.Contains(t, d.Reason, "3", "the offer count")
+	assert.Contains(t, d.Reason, "insufficient")
+}
+
+// The weak path is configurable, so a deployment can raise or lower it.
+func TestMinRecalledIsConfigurable(t *testing.T) {
+	now := time.Now()
+	var list []MemoryObservation
+	for i := 0; i < 12; i++ {
+		list = append(list, silent("r"+itoa(i), "e1", now))
+	}
+	stat := AggregateObservations(list)["e1"]
+
+	demanding := DefaultArchivePolicy()
+	demanding.MinRecalled = 20
+	assert.False(t, ShouldArchive("e1", MemoryUnclassified, stat, demanding).Archive,
+		"a deployment can demand more offers before acting on the weak signal")
+
+	eager := DefaultArchivePolicy()
+	eager.MinRecalled = 5
+	assert.True(t, ShouldArchive("e1", MemoryUnclassified, stat, eager).Archive)
+}
+
+// A persistent memory is protected on either path.
+func TestWeakPathStillProtectsPersistentMemories(t *testing.T) {
+	now := time.Now()
+	var list []MemoryObservation
+	for i := 0; i < 30; i++ {
+		list = append(list, silent("r"+itoa(i), "e1", now))
+	}
+	stat := AggregateObservations(list)["e1"]
+
+	d := ShouldArchive("e1", MemoryPersistent, stat, DefaultArchivePolicy())
+	assert.False(t, d.Archive, "a property is not retired for being rarely needed")
+}
+
+// An entry with no observations is absent from the aggregate entirely, which is
+// exactly why the offer record had to exist: what is not recorded cannot be
+// evaluated.
+func TestNoObservationsMeansNoDecision(t *testing.T) {
+	stats := AggregateObservations(nil)
+	_, present := stats["e1"]
+	assert.False(t, present, "an entry nobody recorded is not even a candidate")
+}

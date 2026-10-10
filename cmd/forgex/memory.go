@@ -43,7 +43,8 @@ Flags:
   --root PATH          ForgeX root directory (default .forgex)
   --index PATH         SQLite index path (default <root>/index.db)
   --kind KIND          memory (default) or lesson
-  --min-known N        known usage signals needed before "never used" counts
+  --min-known N        known usage signals for the STRONG case (declined many times)
+  --min-recalled N     offers for the WEAK case (offered many times, never cited)
   --archive-before D   prune entries archived longer than this (default 720h)
   --execute            actually make the change (default: dry run)
   --recovered          include recovered entries in the listing
@@ -127,7 +128,8 @@ func memoryArchive(args []string) error {
 	root := fs.String("root", ".forgex", "ForgeX root directory")
 	indexPath := fs.String("index", "", "SQLite index path (default <root>/index.db)")
 	kindFlag := fs.String("kind", "memory", "memory or lesson")
-	minKnown := fs.Int("min-known", 0, "known usage signals needed before \"never used\" counts")
+	minKnown := fs.Int("min-known", 0, "known usage signals needed for the strong \"declined\" case")
+	minRecalled := fs.Int("min-recalled", 0, "offers needed for the weak \"never cited\" case")
 	execute := fs.Bool("execute", false, "actually archive (default: dry run)")
 	persistent := fs.String("persistent", "", "comma-separated entry ids to treat as persistent")
 	if err := fs.Parse(args); err != nil {
@@ -150,7 +152,7 @@ func memoryArchive(args []string) error {
 	// classify from, and guessing would either protect everything or nothing.
 	types := parseTypeList(*persistent, agentcore.MemoryPersistent)
 
-	decisions, err := evaluateArchive(ctx, idx, kind, types, *minKnown)
+	decisions, err := evaluateArchive(ctx, idx, kind, types, *minKnown, *minRecalled)
 	if err != nil {
 		return err
 	}
@@ -187,7 +189,7 @@ func memoryArchive(args []string) error {
 }
 
 // evaluateArchive is the shared evaluation used by archive and prune reporting.
-func evaluateArchive(ctx context.Context, idx *storage.SQLiteIndex, kind storage.ObservationKind, types map[string]agentcore.MemoryType, minKnown int) ([]agentcore.ArchiveDecision, error) {
+func evaluateArchive(ctx context.Context, idx *storage.SQLiteIndex, kind storage.ObservationKind, types map[string]agentcore.MemoryType, minKnown, minRecalled int) ([]agentcore.ArchiveDecision, error) {
 	obs, err := idx.LoadObservations(ctx, kind, 0)
 	if err != nil {
 		return nil, err
@@ -215,6 +217,9 @@ func evaluateArchive(ctx context.Context, idx *storage.SQLiteIndex, kind storage
 	policy := agentcore.DefaultArchivePolicy()
 	if minKnown > 0 {
 		policy.MinKnown = minKnown
+	}
+	if minRecalled > 0 {
+		policy.MinRecalled = minRecalled
 	}
 	policy.Now = time.Now().UTC()
 
