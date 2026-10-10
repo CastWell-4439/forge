@@ -294,7 +294,31 @@ LLM 生成的 DAG 在采纳前经过四层防御，任一层失败都会把**具
 | L1 | 格式与可解析性 |
 | L2 | 结构合法性（schema） |
 | L3 | 语义（handler 存在性 + 无环） |
-| L4 | 参数完整性 |
+| L4 | 参数（handler 声明的必填项 + 执行步骤要给得出任务）|
+
+> **L3 校验的是"工作流能派发的 handler"，不是 agent 的工具表**。两者是不同的词汇表——工具是 agent 运行中调用的东西，handler 是工作流派发给 worker 的东西。用前者校验后者，会让一份写着 `handler: web.fetch` 的 DAG 通过所有层、然后在派发时无处可去。
+
+#### Plan-and-Execute（`planner` handler，默认关）
+
+Agent 层是 **Plan-and-Execute + ReAct 两半**：前者把需求变成 DAG 并提交执行，后者在需要时多轮推理。两半都实现并有测试。
+
+```yaml
+# 需求进 → 生成 DAG → 提交子工作流 → 等待 → 按验收标准汇总
+- worker: planner
+  action: run
+  params:
+    task: 把上季度的数据整理成一份给管理层看的报告
+    acceptance:
+      criteria: 报告覆盖全部指标，数字与源数据一致
+      checks: ["每个指标都有数值", "结论有数据支撑"]
+  timeout: 30m
+```
+
+**生成的每一步都是 `handler: agent`**，用 `params.task` 说清要达成什么、`params.acceptance` 说清什么算做完——**不在规划阶段指定工具**。工具选择留给执行时的 agent：它看得到工作区和实际数据，比规划阶段盲选可靠。这条规则同时消灭了一整类错误（见上面 L3 的说明）。
+
+需 `FORGE_PLANNER_ENABLED=1` 与 LLM 密钥（`FORGE_PLANNER_LLM_API_KEY`，缺省回落 `FORGE_LLM_API_KEY`）。**关闭时不注册该 handler**，声明它的工作流会得到 `unknown handler`——比静默成功诚实。
+
+**领域无关**：引擎不认识任何具体业务。要提取哪些字段、有哪些固定流程形状，由 `DomainProfile` 提供；换一个领域是加一个实现，不是改引擎。
 
 ---
 
@@ -316,6 +340,7 @@ Worker 通过 gRPC 连接 Coordinator，接收任务、执行、返回结果。�
 | **MCP Worker** | `internal/workers/mcp/` | MCP 协议操作（list_tools / call_tool / list_resources 等） |
 | **Wasm Worker** | `internal/workers/wasm/` | Wasm 插件执行（wazero 沙箱；`action` 即插件名；插件目录自动发现 + SHA-256 身份） |
 | **Agent Worker** | `internal/workers/agent/` | 完整 ReAct agent 执行（黄金工具集 real 模式；`action: run` + `params.task`；检索/数据/搜索后端按环境注入） |
+| **Planner Worker** | `internal/workers/plan/` | **Plan-and-Execute**：需求 → 生成 DAG → 提交子工作流 → 等待 → 按验收标准汇总（默认关，见上文）|
 
 #### 安全边界
 
