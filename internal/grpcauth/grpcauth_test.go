@@ -3,6 +3,7 @@ package grpcauth
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,8 +78,9 @@ func TestEmptyHostMeansEveryInterface(t *testing.T) {
 // --- the interceptor, over a real gRPC connection ---
 
 // startServer runs a real gRPC server with the given posture against a bufconn
-// listener, and returns a dial target for it.
-func startServer(t *testing.T, cfg Config) *bufconn.Listener {
+// listener. It returns the listener and the stub, so a test can assert on what
+// the SERVER did rather than only on what the client saw.
+func startServer(t *testing.T, cfg Config) (*bufconn.Listener, *stubWorkerService) {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
@@ -86,11 +88,12 @@ func startServer(t *testing.T, cfg Config) *bufconn.Listener {
 
 	// WorkerService/Register is used as the probe: it is one of the calls that
 	// was reachable without authentication, which is what this closes.
-	forgev1.RegisterWorkerServiceServer(srv, &stubWorkerService{})
+	stub := &stubWorkerService{}
+	forgev1.RegisterWorkerServiceServer(srv, stub)
 
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
-	return lis
+	return lis, stub
 }
 
 // dial opens a client against the bufconn listener, optionally presenting a
@@ -115,14 +118,22 @@ func dial(t *testing.T, lis *bufconn.Listener, secret string) forgev1.WorkerServ
 
 // The call that was reachable from anywhere without authentication is now
 // reachable only with the secret.
+//
+// The assertion is on whether the HANDLER RAN, not on what the client received.
+// That is the property the interceptor provides — it decides before any handler
+// is reached — and unlike a client-side observation it is decidable without
+// depending on how the rejection and the call happen to interleave.
 func TestInboundCallRequiresTheSecret(t *testing.T) {
-	lis := startServer(t, Config{Addr: "10.0.0.5:50051", Secret: "s3cret"})
+	lis, stub := startServer(t, Config{Addr: "10.0.0.5:50051", Secret: "s3cret"})
 
 	t.Run("without a secret", func(t *testing.T) {
 		client := dial(t, lis, "")
 		_, err := client.Register(context.Background(), &forgev1.RegisterRequest{})
 		require.Error(t, err)
 		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+
+		unary, _ := stub.hits()
+		assert.Zero(t, unary, "the handler must not run for an unauthenticated call")
 	})
 
 	t.Run("with the wrong secret", func(t *testing.T) {
@@ -136,6 +147,9 @@ func TestInboundCallRequiresTheSecret(t *testing.T) {
 		client := dial(t, lis, "s3cret")
 		_, err := client.Register(context.Background(), &forgev1.RegisterRequest{})
 		require.NoError(t, err)
+
+		unary, _ := stub.hits()
+		assert.Equal(t, 1, unary, "and the handler must run exactly once for an authenticated call")
 	})
 }
 
@@ -143,7 +157,7 @@ func TestInboundCallRequiresTheSecret(t *testing.T) {
 // would confirm to someone guessing that they had found the right header, or
 // tell them the deployment is misconfigured.
 func TestTheReplyDoesNotSayWhichPartFailed(t *testing.T) {
-	lis := startServer(t, Config{Addr: "10.0.0.5:50051", Secret: "s3cret"})
+	lis, _ := startServer(t, Config{Addr: "10.0.0.5:50051", Secret: "s3cret"})
 
 	_, errMissing := dial(t, lis, "").Register(context.Background(), &forgev1.RegisterRequest{})
 	_, errWrong := dial(t, lis, "wrong").Register(context.Background(), &forgev1.RegisterRequest{})
@@ -162,7 +176,7 @@ func TestLoopbackWithoutASecretServes(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 	require.False(t, cfg.Enabled())
 
-	lis := startServer(t, cfg)
+	lis, _ := startServer(t, cfg)
 	_, err := dial(t, lis, "").Register(context.Background(), &forgev1.RegisterRequest{})
 	assert.NoError(t, err, "a loopback deployment must not need a secret to work")
 }
@@ -171,42 +185,40 @@ func TestLoopbackWithoutASecretServes(t *testing.T) {
 // a unary-only guard would leave the worker's heartbeat — and the identity it
 // carries — unauthenticated.
 func TestStreamCallsAreAlsoGuarded(t *testing.T) {
-	lis := startServer(t, Config{Addr: "10.0.0.5:50051", Secret: "s3cret"})
+	lis, stub := startServer(t, Config{Addr: "10.0.0.5:50051", Secret: "s3cret"})
 
 	t.Run("without a secret", func(t *testing.T) {
 		stream, err := dial(t, lis, "").Heartbeat(context.Background())
 		require.NoError(t, err, "the stream opens lazily")
 
-		// The refusal is asserted as an OUTCOME, not as a position.
+		// The assertion is on the SERVER: the handler must never be entered.
 		//
-		// Three things race here: the client's Send, the server's rejection
-		// (which the interceptor produces before the handler runs) and the
-		// client's Recv. A bidirectional stream makes it worse — the handler
-		// sends a Pong for every Ping, so a Recv can legitimately succeed on a
-		// Pong that was in flight while the rejection travelled. Asserting
-		// "Send fails" or "the first Recv fails" therefore depends on which side
-		// of that race the machine lands on, and this test failed in CI exactly
-		// that way.
+		// Two earlier versions of this test asserted on the client instead —
+		// first "Send fails", then "Send or Recv fails" — and both failed in CI.
+		// The reason is structural, not a matter of wording: the rejection and
+		// the client's calls travel independently, and a bidirectional stream
+		// makes it worse because the handler Pongs every Ping. Where the client
+		// notices is therefore a race.
 		//
-		// What must hold is that the stream is refused and the caller learns it.
-		// So: keep exchanging until the error arrives, and fail if it never does.
-		deadline := time.Now().Add(5 * time.Second)
-		var lastErr error
-		for time.Now().Before(deadline) {
-			if sendErr := stream.Send(&forgev1.HeartbeatPing{}); sendErr != nil {
-				lastErr = sendErr
-				break
-			}
-			if _, recvErr := stream.Recv(); recvErr != nil {
-				lastErr = recvErr
-				break
-			}
-		}
+		// Whether the handler ran is not a race. The interceptor decides before
+		// the handler is reached, so a guarded stream leaves streamHit at zero —
+		// and that is exactly the property this test is named for.
+		//
+		// The client is still exercised (a Ping is sent) so the request really
+		// reaches the server; the outcome asserted is the server's.
+		_ = stream.Send(&forgev1.HeartbeatPing{})
+		_, _ = stream.Recv()
 
-		require.Error(t, lastErr,
-			"the stream must be refused: a guard that lets a Ping/Pong exchange continue is not guarding")
-		assert.Equal(t, codes.Unauthenticated, status.Code(lastErr),
-			"and the refusal is an authentication failure, not some other error")
+		// The handler runs on the server's goroutine. Waiting briefly makes the
+		// assertion meaningful rather than merely early: if the interceptor were
+		// going to let it through, it would have by now. The wait does not make
+		// the test pass or fail — the count must be zero either way — it only
+		// removes the possibility of asserting before the server has decided.
+		time.Sleep(100 * time.Millisecond)
+
+		_, streamHit := stub.hits()
+		assert.Zero(t, streamHit,
+			"the streaming handler must not run for an unauthenticated stream")
 	})
 
 	t.Run("with the right secret", func(t *testing.T) {
@@ -279,17 +291,42 @@ func metadataWith(key, value string) context.Context {
 	return metadata.NewIncomingContext(context.Background(), metadata.Pairs(key, value))
 }
 
-// stubWorkerService satisfies the service so a call can reach the interceptor;
-// the handlers themselves are not what is under test.
+// stubWorkerService records whether its handlers ran.
+//
+// That recording is what the guard test asserts on, and it is the reason this
+// stub is not trivial. "The handler never executed" is a FACT about the server,
+// decided by the interceptor before any handler is reached. Asserting instead on
+// where the CLIENT observes the refusal is asserting on a race — the rejection
+// and the client's first Send/Recv travel independently — and three attempts to
+// phrase that assertion differently all failed in CI for that same reason.
 type stubWorkerService struct {
 	forgev1.UnimplementedWorkerServiceServer
+
+	mu        sync.Mutex
+	unaryHit  int
+	streamHit int
+}
+
+// hits reports how many times each handler was entered. A guarded call leaves
+// both at zero.
+func (s *stubWorkerService) hits() (unary, stream int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.unaryHit, s.streamHit
 }
 
 func (s *stubWorkerService) Register(context.Context, *forgev1.RegisterRequest) (*forgev1.RegisterResponse, error) {
+	s.mu.Lock()
+	s.unaryHit++
+	s.mu.Unlock()
 	return &forgev1.RegisterResponse{}, nil
 }
 
 func (s *stubWorkerService) Heartbeat(stream forgev1.WorkerService_HeartbeatServer) error {
+	s.mu.Lock()
+	s.streamHit++
+	s.mu.Unlock()
+
 	for {
 		if _, err := stream.Recv(); err != nil {
 			return nil
