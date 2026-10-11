@@ -120,9 +120,19 @@ stages:
 	// created inside Subscribe), so the first insert may land too early —
 	// keep re-inserting until the chain has fired.
 	var workflowID string
+	var lastSQLErr error
 	require.Eventually(t, func() bool {
-		execSQL(t, ctx, pgStore, "DELETE FROM cdc_chain_test")
-		execSQL(t, ctx, pgStore, "INSERT INTO cdc_chain_test VALUES (1, 'first')")
+		// tryExec, not execSQL: this closure runs on Eventually's own goroutine,
+		// where require.* would call t.FailNow from the wrong goroutine and lose
+		// the error. See tryExec for what that looked like from outside.
+		if err := tryExec(ctx, pgStore, "DELETE FROM cdc_chain_test"); err != nil {
+			lastSQLErr = err
+			return false
+		}
+		if err := tryExec(ctx, pgStore, "INSERT INTO cdc_chain_test VALUES (1, 'first')"); err != nil {
+			lastSQLErr = err
+			return false
+		}
 
 		workflows, err := boltStore.ListWorkflows(ctx, "", 100, 0)
 		if err != nil {
@@ -139,7 +149,7 @@ stages:
 		}
 		return false
 	}, 45*time.Second, 3*time.Second,
-		"CDC event should reach the trigger and submit cdc_demo with mapped params")
+		"CDC event should reach the trigger and submit cdc_demo with mapped params; last fixture error: %v", lastSQLErr)
 
 	// The submitted instance went through bridge + SubmitDAG: its tasks are
 	// the bridged registry tasks, ready for dispatch.
@@ -167,4 +177,20 @@ func execSQL(t *testing.T, ctx context.Context, pg *storage.PGStorage, sql strin
 	t.Helper()
 	_, err := pg.Pool().Exec(ctx, sql)
 	require.NoError(t, err, "exec: %s", sql)
+}
+
+// tryExec runs a statement and RETURNS the error instead of failing the test.
+//
+// It exists for use inside require.Eventually, whose condition runs on its own
+// goroutine. require.NoError calls t.FailNow, and testing requires FailNow to be
+// called from the goroutine running the test — from anywhere else it kills that
+// goroutine with runtime.Goexit and the failure is recorded without the error
+// that caused it. What a reader then sees is a bare "--- FAIL" with no reason,
+// which is indistinguishable from the thing the test was actually checking.
+//
+// So a statement that cannot even run is reported as "not yet", and the last
+// error is carried out so the eventual failure says what went wrong.
+func tryExec(ctx context.Context, pg *storage.PGStorage, sql string) error {
+	_, err := pg.Pool().Exec(ctx, sql)
+	return err
 }
