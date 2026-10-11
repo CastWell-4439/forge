@@ -119,6 +119,16 @@ type SubagentLimits struct {
 	// from the parent" (see DefaultChildSteps) — a child must not be able to
 	// spend the parent's entire step budget on one subtask.
 	ChildMaxSteps int
+	// MaxBackground bounds how many background delegations one run may have
+	// outstanding at once. Zero means unlimited.
+	//
+	// It is separate from MaxConcurrent, and both apply: MaxConcurrent bounds how
+	// many children RUN at once, while this bounds how many are ACCEPTED without
+	// being collected. A run that dispatches a hundred background tasks with a
+	// concurrency of one is not running them all — it is accumulating
+	// obligations, and each one holds the session, the tools and the cleanup it
+	// will eventually need.
+	MaxBackground int
 }
 
 // Delegation budget defaults.
