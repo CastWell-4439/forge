@@ -21,8 +21,8 @@ import (
 // The response carries `thought`, which the structured parser requires: a reply
 // with only an answer is rejected, so omitting it would make every child fail
 // for a reason unrelated to what these tests check.
-func answerChild(answer string) func(context.Context, string, []string) (*AgentLoop, func(), error) {
-	return func(_ context.Context, _ string, _ []string) (*AgentLoop, func(), error) {
+func answerChild(answer string) func(context.Context, string, []string) (ChildRunner, func(), error) {
+	return func(_ context.Context, _ string, _ []string) (ChildRunner, func(), error) {
 		loop := NewAgentLoop(
 			&mockLLM{responses: []string{`{"thought": "t", "answer": "` + answer + `"}`}},
 			NewToolRouter(workers.NewToolRegistry()),
@@ -34,8 +34,8 @@ func answerChild(answer string) func(context.Context, string, []string) (*AgentL
 
 // blockingChild builds a child whose model blocks until released, so a child can
 // be observed while it is still running.
-func blockingChild(release <-chan struct{}) func(context.Context, string, []string) (*AgentLoop, func(), error) {
-	return func(_ context.Context, _ string, _ []string) (*AgentLoop, func(), error) {
+func blockingChild(release <-chan struct{}) func(context.Context, string, []string) (ChildRunner, func(), error) {
+	return func(_ context.Context, _ string, _ []string) (ChildRunner, func(), error) {
 		loop := NewAgentLoop(
 			&blockingLLM{release: release, answer: `{"thought": "t", "answer": "done"}`},
 			NewToolRouter(workers.NewToolRegistry()),

@@ -49,13 +49,36 @@ func SubagentDepthFrom(ctx context.Context) int {
 	return 0
 }
 
-// ChildLoopFactory builds a loop for a delegated child.
+// ChildRunner is what a delegated child must be able to do.
+//
+// It exists so a child need not be an in-process loop. The factory used to
+// return *AgentLoop, which was accurate while every child was one — but a child
+// running under the Agent Client Protocol executes its own loop in another
+// process, and it is not an AgentLoop and never will be. Forcing it to pretend
+// to be one would mean wrapping a foreign protocol in a structure built for a
+// local loop, and the wrap would leak at the first difference.
+//
+// The two methods are the whole contract, and they are what the runner actually
+// calls: run a task, continue a session.
+type ChildRunner interface {
+	// Run executes one task in the given session and returns the outcome.
+	Run(ctx context.Context, sessionID string, task string) (*RunResult, error)
+	// Continue appends another turn to an existing session.
+	Continue(ctx context.Context, sessionID string, userInput string) (*RunResult, error)
+}
+
+// ChildLoopFactory builds a runner for a delegated child.
 //
 // It receives the child's session id (so the child's persistence is its own)
-// and the narrowed tool set (empty = inherit). It returns the loop and a
+// and the narrowed tool set (empty = inherit). It returns the runner and a
 // release function, mirroring how the parent's own assembly works: whatever the
 // child starts must be stopped when the child is done.
-type ChildLoopFactory func(ctx context.Context, childSessionID string, tools []string) (*AgentLoop, func(), error)
+//
+// The release function must be safe to call more than once and after the child
+// has finished: a background child is released both when it completes and when
+// the run that owns it unwinds, and a double release that panicked would turn a
+// clean shutdown into a crash.
+type ChildLoopFactory func(ctx context.Context, childSessionID string, tools []string) (ChildRunner, func(), error)
 
 // SubagentRunnerConfig configures the runner.
 type SubagentRunnerConfig struct {

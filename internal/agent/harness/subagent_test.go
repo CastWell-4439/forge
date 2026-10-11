@@ -23,7 +23,7 @@ func TestDepthLimitRefusesNestedDelegation(t *testing.T) {
 	})
 	runner := NewSubagentRunner(SubagentRunnerConfig{
 		Config: cfg,
-		Factory: func(context.Context, string, []string) (*AgentLoop, func(), error) {
+		Factory: func(context.Context, string, []string) (ChildRunner, func(), error) {
 			t.Fatal("a refused delegation must not build a child")
 			return nil, nil, nil
 		},
@@ -46,7 +46,7 @@ func TestDepthZeroForbidsAllDelegation(t *testing.T) {
 	})
 	runner := NewSubagentRunner(SubagentRunnerConfig{
 		Config:  cfg,
-		Factory: func(context.Context, string, []string) (*AgentLoop, func(), error) { return nil, nil, nil },
+		Factory: func(context.Context, string, []string) (ChildRunner, func(), error) { return nil, nil, nil },
 	})
 	require.NotNil(t, runner)
 	assert.Error(t, runner.checkDepth(0), "even the top level is refused")
@@ -61,7 +61,7 @@ func TestDepthTwoAllowsGrandchild(t *testing.T) {
 	})
 	runner := NewSubagentRunner(SubagentRunnerConfig{
 		Config:  cfg,
-		Factory: func(context.Context, string, []string) (*AgentLoop, func(), error) { return nil, nil, nil },
+		Factory: func(context.Context, string, []string) (ChildRunner, func(), error) { return nil, nil, nil },
 	})
 	require.NotNil(t, runner)
 	assert.NoError(t, runner.checkDepth(0))
@@ -76,7 +76,7 @@ func TestDepthTwoAllowsGrandchild(t *testing.T) {
 func TestOffBuildsNoRunner(t *testing.T) {
 	runner := NewSubagentRunner(SubagentRunnerConfig{
 		Config:  core.SubagentConfig{Mode: core.SubagentOff},
-		Factory: func(context.Context, string, []string) (*AgentLoop, func(), error) { return nil, nil, nil },
+		Factory: func(context.Context, string, []string) (ChildRunner, func(), error) { return nil, nil, nil },
 	})
 	assert.Nil(t, runner)
 
@@ -170,7 +170,7 @@ func TestConcurrencySemaphoreSize(t *testing.T) {
 	})
 	runner := NewSubagentRunner(SubagentRunnerConfig{
 		Config:  cfg,
-		Factory: func(context.Context, string, []string) (*AgentLoop, func(), error) { return nil, nil, nil },
+		Factory: func(context.Context, string, []string) (ChildRunner, func(), error) { return nil, nil, nil },
 	})
 	require.NotNil(t, runner)
 	assert.Equal(t, 3, cap(runner.sem))
@@ -180,7 +180,7 @@ func TestConcurrencySemaphoreSize(t *testing.T) {
 	cfg2 := core.NormalizeSubagentConfig(core.SubagentConfig{Mode: core.SubagentIsolated})
 	runner2 := NewSubagentRunner(SubagentRunnerConfig{
 		Config:  cfg2,
-		Factory: func(context.Context, string, []string) (*AgentLoop, func(), error) { return nil, nil, nil },
+		Factory: func(context.Context, string, []string) (ChildRunner, func(), error) { return nil, nil, nil },
 	})
 	require.NotNil(t, runner2)
 	assert.Equal(t, core.DefaultSubagentMaxConcurrent, cap(runner2.sem))

@@ -26,12 +26,17 @@ import (
 //     one subtask cannot spend everything the parent has left.
 
 // childFactory builds the ChildLoopFactory for this agent.
+//
+// It returns a ChildRunner rather than a *harness.AgentLoop: the local loop
+// satisfies that interface, and so does a child running under ACP in another
+// process. The narrowing is what lets one delegation mechanism serve both
+// instead of growing a second one for remote children.
 func (a *Agent) childFactory(
 	parentRegistry *workers.ToolRegistry,
 	parentCfg workers.HandlerConfig,
 	subCfg core.SubagentConfig,
 ) harness.ChildLoopFactory {
-	return func(ctx context.Context, childSessionID string, tools []string) (*harness.AgentLoop, func(), error) {
+	return func(ctx context.Context, childSessionID string, tools []string) (harness.ChildRunner, func(), error) {
 		registry := workers.NewToolRegistry()
 
 		// The child's handler config is the parent's, with one change: the
