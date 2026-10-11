@@ -175,7 +175,22 @@ func TestStreamCallsAreAlsoGuarded(t *testing.T) {
 	t.Run("without a secret", func(t *testing.T) {
 		stream, err := dial(t, lis, "").Heartbeat(context.Background())
 		require.NoError(t, err, "the stream opens lazily")
-		require.NoError(t, stream.Send(&forgev1.HeartbeatPing{}))
+
+		// WHERE the refusal surfaces is not part of the property being tested.
+		//
+		// The server rejects the stream from the interceptor, before the handler
+		// runs, but the client learns of it whenever the rejection reaches it —
+		// at the first Send if the status has arrived, at the first Recv
+		// otherwise. Asserting a specific one made this test depend on how the
+		// two raced, and it failed in CI on a machine that lost the race
+		// differently than the local one. What must hold is that the stream is
+		// refused, whichever call observes it.
+		if sendErr := stream.Send(&forgev1.HeartbeatPing{}); sendErr != nil {
+			assert.Equal(t, codes.Unauthenticated, status.Code(sendErr),
+				"a refused Send must be an authentication failure and nothing else")
+			return
+		}
+
 		_, err = stream.Recv()
 		require.Error(t, err, "the first round trip must be refused")
 		assert.Equal(t, codes.Unauthenticated, status.Code(err))
