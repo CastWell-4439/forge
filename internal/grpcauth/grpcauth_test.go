@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -176,24 +177,36 @@ func TestStreamCallsAreAlsoGuarded(t *testing.T) {
 		stream, err := dial(t, lis, "").Heartbeat(context.Background())
 		require.NoError(t, err, "the stream opens lazily")
 
-		// WHERE the refusal surfaces is not part of the property being tested.
+		// The refusal is asserted as an OUTCOME, not as a position.
 		//
-		// The server rejects the stream from the interceptor, before the handler
-		// runs, but the client learns of it whenever the rejection reaches it —
-		// at the first Send if the status has arrived, at the first Recv
-		// otherwise. Asserting a specific one made this test depend on how the
-		// two raced, and it failed in CI on a machine that lost the race
-		// differently than the local one. What must hold is that the stream is
-		// refused, whichever call observes it.
-		if sendErr := stream.Send(&forgev1.HeartbeatPing{}); sendErr != nil {
-			assert.Equal(t, codes.Unauthenticated, status.Code(sendErr),
-				"a refused Send must be an authentication failure and nothing else")
-			return
+		// Three things race here: the client's Send, the server's rejection
+		// (which the interceptor produces before the handler runs) and the
+		// client's Recv. A bidirectional stream makes it worse — the handler
+		// sends a Pong for every Ping, so a Recv can legitimately succeed on a
+		// Pong that was in flight while the rejection travelled. Asserting
+		// "Send fails" or "the first Recv fails" therefore depends on which side
+		// of that race the machine lands on, and this test failed in CI exactly
+		// that way.
+		//
+		// What must hold is that the stream is refused and the caller learns it.
+		// So: keep exchanging until the error arrives, and fail if it never does.
+		deadline := time.Now().Add(5 * time.Second)
+		var lastErr error
+		for time.Now().Before(deadline) {
+			if sendErr := stream.Send(&forgev1.HeartbeatPing{}); sendErr != nil {
+				lastErr = sendErr
+				break
+			}
+			if _, recvErr := stream.Recv(); recvErr != nil {
+				lastErr = recvErr
+				break
+			}
 		}
 
-		_, err = stream.Recv()
-		require.Error(t, err, "the first round trip must be refused")
-		assert.Equal(t, codes.Unauthenticated, status.Code(err))
+		require.Error(t, lastErr,
+			"the stream must be refused: a guard that lets a Ping/Pong exchange continue is not guarding")
+		assert.Equal(t, codes.Unauthenticated, status.Code(lastErr),
+			"and the refusal is an authentication failure, not some other error")
 	})
 
 	t.Run("with the right secret", func(t *testing.T) {

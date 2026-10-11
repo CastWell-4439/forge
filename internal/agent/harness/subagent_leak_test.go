@@ -26,14 +26,21 @@ func TestRunEndCancelsOutstandingChildren(t *testing.T) {
 	// the signal, and the test would report "never cancelled" about a child that
 	// was cancelled correctly.
 	stopped := make(chan struct{}, 1)
+	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	defer close(release)
 
 	// A child that would run forever if nothing stopped it. It reports when its
 	// context is cancelled, which is the only thing that can stop it.
+	//
+	// It also reports when it has ENTERED the model call. Without that, the test
+	// races its own setup: the child's goroutine may not have reached the
+	// blocking call yet when CancelAll runs, so the cancellation lands before
+	// there is anything to cancel and no stop signal is ever sent — the child is
+	// correctly cancelled and the test still says it was not.
 	factory := func(ctx context.Context, _ string, _ []string) (*AgentLoop, func(), error) {
 		loop := NewAgentLoop(
-			&cancellableLLM{stopped: stopped},
+			&cancellableLLM{stopped: stopped, entered: entered},
 			NewToolRouter(workers.NewToolRegistry()),
 			DefaultLoopConfig(),
 		)
@@ -46,6 +53,14 @@ func TestRunEndCancelsOutstandingChildren(t *testing.T) {
 	_, err := runner.StartSubagent(context.Background(), core.SubagentRequest{Task: "long"}, &reg)
 	require.NoError(t, err)
 	require.Equal(t, 1, reg.ActiveCount())
+
+	// Wait until the child is actually inside its model call, so cancelling it
+	// has something to interrupt.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the child never reached its model call")
+	}
 
 	// The run ends. CancelAll is what Agent.Run defers.
 	reg.CancelAll(context.Background())
@@ -92,9 +107,19 @@ func TestCancelledChildCollectsAsAnError(t *testing.T) {
 // stopped. It models the only thing a long-running child can be doing.
 type cancellableLLM struct {
 	stopped chan struct{}
+	// entered, when set, is signalled once the call is blocking. A test that
+	// cancels must wait for it, or it may cancel before there is anything to
+	// interrupt.
+	entered chan struct{}
 }
 
 func (c *cancellableLLM) Chat(ctx context.Context, _ []core.Message) (string, error) {
+	if c.entered != nil {
+		select {
+		case c.entered <- struct{}{}:
+		default:
+		}
+	}
 	<-ctx.Done()
 	select {
 	case c.stopped <- struct{}{}:
