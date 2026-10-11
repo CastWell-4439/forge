@@ -58,10 +58,88 @@ func (s Store) Save(p Pack, draft bool) (string, error) {
 		return "", fmt.Errorf("save %s: %w", p.Metadata.ID, err)
 	}
 	path := filepath.Join(dir, p.Metadata.ID+".yaml")
+
+	// Keep the version being replaced.
+	//
+	// The file is keyed by id alone, so saving a changed pack overwrote the old
+	// one and the previous version was gone — and with the version string a
+	// constant, there was no way to tell that anything had been lost. Archiving
+	// under .history keeps the layout existing deployments already have while
+	// making the overwrite reversible.
+	//
+	// Only a DIFFERENT version is archived: re-saving the same content is the
+	// same document, and copying it would fill the history with duplicates of
+	// one revision.
+	if previous, err := readPack(path); err == nil {
+		if previous.Metadata.Version != "" && previous.Metadata.Version != p.Metadata.Version {
+			if err := s.archiveVersion(previous); err != nil {
+				return "", fmt.Errorf("save %s: archive previous version: %w", p.Metadata.ID, err)
+			}
+		}
+	}
+
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("save %s: %w", p.Metadata.ID, err)
 	}
 	return path, nil
+}
+
+// historyDirName is a dot-directory so the pack listing, which walks the root
+// for *.yaml, does not pick archived versions up as published skills.
+const historyDirName = ".history"
+
+// HistoryDir is where replaced versions of one pack are kept.
+func (s Store) HistoryDir(id string) string {
+	return filepath.Join(s.Root, historyDirName, id)
+}
+
+// archiveVersion writes a pack into its id's history under its own version.
+//
+// A version that does not look like a filename (it may carry build metadata
+// such as "+a1b2c3d4") is made safe rather than rejected: losing history over a
+// punctuation choice would be the wrong trade.
+func (s Store) archiveVersion(p Pack) error {
+	version := p.Metadata.Version
+	if version == "" {
+		version = "unversioned"
+	}
+	safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "+", "-").Replace(version)
+
+	dir := s.HistoryDir(p.Metadata.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(p)
+	if err != nil {
+		return err
+	}
+	// Never overwrite an archived version: the first copy of a revision is the
+	// one that records what it actually was.
+	path := filepath.Join(dir, safe+".yaml")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// History lists the archived versions of a pack.
+func (s Store) History(id string) ([]string, error) {
+	entries, err := os.ReadDir(s.HistoryDir(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		out = append(out, strings.TrimSuffix(e.Name(), ".yaml"))
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // Load reads a published pack by id.
