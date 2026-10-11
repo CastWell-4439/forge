@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/castwell/forge/internal/identity"
 )
 
 // WorkflowAPI implements the gRPC WorkflowService handlers.
@@ -85,10 +87,17 @@ func (a *WorkflowAPI) GetWorkflowStatus(ctx context.Context, instanceID string) 
 }
 
 // ResumeHITL responds to a HITL request.
+//
+// The actor is read from the context rather than taken as a parameter, because
+// it belongs to the CALL rather than to the decision: an in-process caller
+// (a coordinator handler, a test) has whatever identity the transport put there,
+// and a caller that forgets to pass one should produce "unattributed" rather
+// than a compile error everyone works around by passing "".
 func (a *WorkflowAPI) ResumeHITL(ctx context.Context, requestID, decision, feedback string) error {
 	resp := &Response{
 		Decision: decision,
 		Feedback: feedback,
+		Actor:    identity.FromContext(ctx),
 	}
 	return a.hitlMgr.Respond(ctx, requestID, resp)
 }

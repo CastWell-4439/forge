@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/castwell/forge/internal/identity"
 )
 
 // ResolveFunc acts on a decision about a request: it is how the answer reaches
@@ -76,6 +78,15 @@ func (h *Handler) HandleRespond(w http.ResponseWriter, r *http.Request) {
 	resp := &Response{
 		Decision: req.Decision,
 		Feedback: req.Feedback,
+		// WHO decided, recorded from the request's declared identity.
+		//
+		// A HITL gate exists so that a person is answerable for a decision, and
+		// until now the record held the decision without the person: "this was
+		// approved" with no subject. The declaration is unverified (see
+		// internal/identity), and the Actor says so, which is the honest state —
+		// an audit entry reading "alice (declared, unverified) approved" is worth
+		// far more than one reading "approved".
+		Actor: identity.FromHTTP(r.Header),
 	}
 
 	// Look the request up BEFORE recording the answer: once Respond marks it
