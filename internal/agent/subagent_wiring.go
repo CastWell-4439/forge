@@ -77,7 +77,16 @@ func (a *Agent) childFactory(
 
 		loopCfg := a.loopConfigFor(registry)
 		router := harness.NewToolRouter(registry)
-		child := harness.NewAgentLoop(a.LLM, router, loopCfg)
+		// Route the child to its own model when one is configured.
+		//
+		// Everything else about the child — its handlers, guards, MCP bridge,
+		// narrowed tools — is unchanged, so a different provider changes what
+		// the child costs and how fast it answers, not what it may do.
+		childLLM := a.LLM
+		if a.ChildLLM != nil {
+			childLLM = a.ChildLLM
+		}
+		child := harness.NewAgentLoop(childLLM, router, loopCfg)
 		a.applyLoopDeps(child)
 
 		// The child talks to the same provider and model as its parent, so the
