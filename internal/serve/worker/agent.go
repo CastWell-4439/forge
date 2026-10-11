@@ -100,6 +100,13 @@ func registerAgent(r *worker.Registry) {
 		}),
 	}
 
+	// Child model routing (optional): a delegated subtask is often mechanical,
+	// and a cheaper model pays for itself there. Unset means children inherit
+	// the parent's client, which is the historical behaviour.
+	if childLLM := newChildLLMClient(); childLLM != nil {
+		opts = append(opts, agentcore.WithChildLLM(childLLM))
+	}
+
 	// Water-line reminders, compaction keep-count and compaction target (N2c
 	// S1/S4): env lives here, the loop only ever sees numbers (0 = defaults,
 	// remind < 0 = off).

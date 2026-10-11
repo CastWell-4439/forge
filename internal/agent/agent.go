@@ -29,6 +29,20 @@ type Agent struct {
 	// ToolOutputGuard screens untrusted tool output before it is shown to the
 	// model (nil = pass through, the historical behaviour).
 	ToolOutputGuard core.InputGuard
+	// ChildLLM is the model client delegated children use. Nil means inherit the
+	// parent's, which is the historical behaviour and the right default: a child
+	// doing the same kind of work needs no different model, and sharing the
+	// parent's keeps the calibration store applicable to both.
+	//
+	// It exists because a delegated subtask is often not the same kind of work.
+	// Mechanical subtasks — extracting, reformatting, summarising a file — are
+	// where a cheaper or faster model pays for itself, and the parent cannot
+	// choose per call once the child exists.
+	//
+	// Only model routing differs. The child is still assembled by the same path
+	// as its parent (same handler mode, guards, MCP bridge, narrowed tools), so
+	// pointing it at another provider cannot widen what it is allowed to do.
+	ChildLLM core.LLMClient
 	// NativeTools requests provider-native function calling (tools/tool_calls
 	// with real parameter schemas) instead of the prompt-encoded JSON
 	// convention. It is a request: an endpoint that refuses the tools field
@@ -185,6 +199,19 @@ func WithHandlerMode(m workers.HandlerMode) Option { return func(a *Agent) { a.H
 // WithWorkspace sets the base directory for file/shell tools. It is created
 // on demand when the loop is built.
 func WithWorkspace(dir string) Option { return func(a *Agent) { a.Workspace = dir } }
+
+// WithChildLLM routes delegated children to their own model client.
+//
+// A nil client is ignored rather than stored, so "not configured" and "configured
+// to nothing" do not become two states that behave the same way but read
+// differently in a debugger.
+func WithChildLLM(client core.LLMClient) Option {
+	return func(a *Agent) {
+		if client != nil {
+			a.ChildLLM = client
+		}
+	}
+}
 
 // WithToolConfig applies assembly-level handler settings (data source, web
 // search backend, fetch policy, ...) every time the loop is built.
