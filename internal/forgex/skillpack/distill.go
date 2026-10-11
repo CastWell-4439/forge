@@ -82,13 +82,36 @@ func LoadSource(runDir string, registry *cases.Registry) (*Source, error) {
 	}, nil
 }
 
-// Distill turns a verified source into a draft SkillPack.
+// Distill turns one verified source into a draft SkillPack.
+//
+// It is the single-source case of DistillMany, which owns the extraction and
+// merge rules. The signature is unchanged so existing callers keep working.
+func Distill(src *Source, now time.Time) Pack {
+	if src == nil {
+		return Pack{}
+	}
+	pack, err := DistillMany([]*Source{src}, MergeSpec{ID: src.Spec.ID}, now)
+	if err != nil {
+		// Only reachable for a source whose id is empty, which the loader
+		// refuses; returning an empty pack keeps the old behaviour rather than
+		// inventing a new failure mode for callers that cannot handle one.
+		return Pack{}
+	}
+	return pack
+}
+
+// distillOne is the original single-source extraction.
+//
+// DistillMany delegates here when there is exactly one source, so a single-case
+// pack is byte-for-byte what it always was apart from the version. The merge
+// helpers generalise the same rules; letting them run on one source would risk
+// changing every existing draft for no reason.
 //
 // The extraction rules are fixed so the same run always distils to the same
-// bytes: tools keep first-occurrence order and are deduplicated, lessons
-// become constraints in recorded order, and the readme starts as a template
-// that the publish gate refuses.
-func Distill(src *Source, now time.Time) Pack {
+// bytes: tools keep first-occurrence order and are deduplicated, lessons become
+// constraints in recorded order, and the readme starts as a template that the
+// publish gate refuses.
+func distillOne(src *Source, now time.Time) Pack {
 	seenTools := make(map[string]bool)
 	var steps []Step
 	var permissions []string
@@ -116,8 +139,10 @@ func Distill(src *Source, now time.Time) Pack {
 		APIVersion: APIVersion,
 		Kind:       Kind,
 		Metadata: Metadata{
-			ID:            src.Spec.ID,
-			Version:       "0.1.0",
+			ID: src.Spec.ID,
+			// Version is deliberately absent: DistillMany stamps it from the
+			// finished content, so a value set here would be overwritten and
+			// would only mislead a reader about where the version comes from.
 			Status:        StatusDraft,
 			ReviewStatus:  ReviewPending,
 			SourceCases:   []string{src.Spec.ID},
