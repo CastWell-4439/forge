@@ -43,6 +43,18 @@ type Agent struct {
 	// as its parent (same handler mode, guards, MCP bridge, narrowed tools), so
 	// pointing it at another provider cannot widen what it is allowed to do.
 	ChildLLM core.LLMClient
+	// ChildFactory, when set, replaces the factory that builds delegated
+	// children.
+	//
+	// It exists so a child need not run in this process: an ACP agent runs its
+	// own loop elsewhere and cannot be assembled here. The field is a hook rather
+	// than an env read because this type must not know about transports — the
+	// serve layer owns that decision, exactly as it owns every other deployment
+	// choice.
+	//
+	// Nil means the historical behaviour: children are local loops built by the
+	// same assembly path as their parent.
+	ChildFactory harness.ChildLoopFactory
 	// NativeTools requests provider-native function calling (tools/tool_calls
 	// with real parameter schemas) instead of the prompt-encoded JSON
 	// convention. It is a request: an endpoint that refuses the tools field
@@ -199,6 +211,20 @@ func WithHandlerMode(m workers.HandlerMode) Option { return func(a *Agent) { a.H
 // WithWorkspace sets the base directory for file/shell tools. It is created
 // on demand when the loop is built.
 func WithWorkspace(dir string) Option { return func(a *Agent) { a.Workspace = dir } }
+
+// WithChildFactory routes delegated children through a caller-supplied factory.
+//
+// It is how a deployment sends subtasks to an external agent (ACP) rather than
+// building a local loop. A nil factory is ignored: "not configured" and
+// "configured to nothing" should not be two states that behave the same but
+// read differently in a debugger.
+func WithChildFactory(factory harness.ChildLoopFactory) Option {
+	return func(a *Agent) {
+		if factory != nil {
+			a.ChildFactory = factory
+		}
+	}
+}
 
 // WithChildLLM routes delegated children to their own model client.
 //
@@ -425,9 +451,16 @@ func (a *Agent) buildLoop(ctx context.Context) (*harness.AgentLoop, func(), erro
 	subCfg := core.NormalizeSubagentConfig(a.Subagent)
 	var subRunner *harness.SubagentRunnerImpl
 	if subCfg.Mode.Enabled() {
+		// An injected factory wins: it is how a deployment routes children to an
+		// external agent. Otherwise the local assembly path builds them, which
+		// keeps a child identical to its parent in tools, guards and bridge.
+		factory := a.ChildFactory
+		if factory == nil {
+			factory = a.childFactory(registry, cfg, subCfg)
+		}
 		subRunner = harness.NewSubagentRunner(harness.SubagentRunnerConfig{
 			Config:  subCfg,
-			Factory: a.childFactory(registry, cfg, subCfg),
+			Factory: factory,
 		})
 		if subRunner != nil {
 			handler := workers.NewSubagentHandler(subRunner, subCfg)

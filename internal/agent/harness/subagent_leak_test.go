@@ -38,7 +38,7 @@ func TestRunEndCancelsOutstandingChildren(t *testing.T) {
 	// blocking call yet when CancelAll runs, so the cancellation lands before
 	// there is anything to cancel and no stop signal is ever sent — the child is
 	// correctly cancelled and the test still says it was not.
-	factory := func(ctx context.Context, _ string, _ []string) (*AgentLoop, func(), error) {
+	factory := func(ctx context.Context, _ string, _ []string) (ChildRunner, func(), error) {
 		loop := NewAgentLoop(
 			&cancellableLLM{stopped: stopped, entered: entered},
 			NewToolRouter(workers.NewToolRegistry()),
@@ -82,7 +82,7 @@ func TestCancelledChildCollectsAsAnError(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
-	factory := func(ctx context.Context, _ string, _ []string) (*AgentLoop, func(), error) {
+	factory := func(ctx context.Context, _ string, _ []string) (ChildRunner, func(), error) {
 		loop := NewAgentLoop(
 			&cancellableLLM{stopped: make(chan struct{}, 1)},
 			NewToolRouter(workers.NewToolRegistry()),

@@ -127,6 +127,14 @@ func registerAgent(r *worker.Registry) {
 	// and the Kueue queue.
 	opts = append(opts, agentcore.WithSubagent(subagentConfig()))
 
+	// The fourth delegation axis: children may run under an external ACP agent
+	// instead of in this process. Nil means local, which is the default, and the
+	// decision is read here rather than inside the agent because transports are a
+	// deployment concern.
+	if factory := acpChildFactory(workspace); factory != nil {
+		opts = append(opts, agentcore.WithChildFactory(factory))
+	}
+
 	// The streak stop and the S2 slimming profile are deployment decisions: the
 	// right number depends on the work, and both change what the model sees.
 	opts = append(opts, agentcore.WithNoProgressThreshold(noProgressThreshold()))
