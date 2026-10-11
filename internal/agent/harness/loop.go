@@ -157,6 +157,10 @@ type AgentLoop struct {
 	// citation contract records nothing, which is the behaviour before it
 	// existed — and still correct: no sink, no evidence, no decisions.
 	usageSink core.ObservationSink
+	// background is where background delegations are registered. Nil means
+	// background delegation is refused: a child nobody owns is a leak, and the
+	// loop has no way to know when to clean up one it started itself.
+	background *BackgroundRegistry
 	// recalledThis is the set of memory ids offered to this run, and citedThis
 	// accumulates the ids the model said it relied on. Both are per-run: a
 	// citation only means something against what THIS run was shown.
@@ -198,6 +202,16 @@ func NewAgentLoop(llm core.LLMClient, router *ToolRouter, config LoopConfig) *Ag
 
 // SetInputGuard enables M6 input checking.
 func (l *AgentLoop) SetInputGuard(g core.InputGuard) { l.inputGuard = g }
+
+// SetBackgroundRegistry gives the loop somewhere to dispatch background
+// delegations.
+//
+// The registry is supplied by whoever owns the run, because the obligations a
+// background delegation creates belong to that run: the owner is the only party
+// that knows when the run is over and can cancel what is left. A nil registry
+// (the default) means background delegation is refused rather than silently
+// becoming fire-and-forget.
+func (l *AgentLoop) SetBackgroundRegistry(r *BackgroundRegistry) { l.background = r }
 
 // SetOutputGuard enables M6 output filtering.
 func (l *AgentLoop) SetOutputGuard(g core.OutputGuard) { l.outputGuard = g }
