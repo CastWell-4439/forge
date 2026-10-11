@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/castwell/forge/internal/identity"
 )
 
 // RequestStatus represents the state of a HITL request.
@@ -37,6 +39,13 @@ type Request struct {
 type Response struct {
 	Decision string // one of the Options
 	Feedback string // optional free-text
+	// Actor is WHO made the decision.
+	//
+	// A HITL gate exists so that a person is answerable for a decision, and
+	// until this field existed the record held the decision without the person:
+	// "this was approved", with no subject. The declaration is unverified and
+	// the Actor reports that about itself, which is the honest state.
+	Actor identity.Actor
 }
 
 // HITLCallback is called when a HITL request is created (to notify external systems).

@@ -26,6 +26,7 @@ import (
 	forgexruntime "github.com/castwell/forge/internal/forgex/runtime"
 	"github.com/castwell/forge/internal/forgex/toolgw"
 	"github.com/castwell/forge/internal/grpcauth"
+	"github.com/castwell/forge/internal/identity"
 	"github.com/castwell/forge/internal/observability"
 )
 
@@ -229,7 +230,15 @@ func Run(appCtx context.Context) error {
 		return fmt.Errorf("listen gRPC %s: %w", grpcAddr, err)
 	}
 
+	// Identity is a separate interceptor from tracing and from auth, and all
+	// three are chained: a deployment that turns tracing off must not silently
+	// lose attribution, and a deployment that authenticates must not silently
+	// stop recording WHO the authenticated caller said it was.
 	grpcOpts := append(observability.ServerOptions(), authCfg.ServerOptions()...)
+	grpcOpts = append(grpcOpts,
+		grpc.ChainUnaryInterceptor(identity.UnaryServerInterceptor()),
+		grpc.ChainStreamInterceptor(identity.StreamServerInterceptor()),
+	)
 	grpcServer := grpc.NewServer(grpcOpts...)
 	forgev1.RegisterCoordinatorServiceServer(grpcServer, coord)
 	// Out-of-process workers register themselves through WorkerService/
