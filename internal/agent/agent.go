@@ -341,6 +341,23 @@ func (a *Agent) Run(ctx context.Context, sessionID string, userInput string) (*h
 		return nil, err
 	}
 	defer stop()
+
+	// Background delegations belong to the RUN, not to the process.
+	//
+	// Whatever this run dispatched and did not collect is cancelled as the run
+	// ends. That is the leak guard: without it, a child dispatched near the end
+	// of a run would keep running with no parent left to answer to and nothing
+	// would ever report it.
+	//
+	// The registry is created per Run call rather than stored on the Agent,
+	// because two concurrent runs of one Agent are separate obligations —
+	// a shared registry would let either run's ending cancel the other's
+	// children. Cancellation uses a context that ignores the run's own
+	// cancellation, so the cleanup still runs when the run was cancelled.
+	reg := harness.NewBackgroundRegistry(a.Subagent.Limits.MaxBackground)
+	defer reg.CancelAll(context.WithoutCancel(ctx))
+
+	loop.SetBackgroundRegistry(reg)
 	return loop.Run(ctx, sessionID, userInput)
 }
 
