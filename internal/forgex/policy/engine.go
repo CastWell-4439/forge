@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,14 @@ type decisionInput struct {
 	Actor         string
 	ActorDeclared bool
 	ActorVerified bool
+	// ActorRoles is the set of roles the caller belongs to, already normalised.
+	// KnownRoles is the set of roles the policy defines.
+	//
+	// They are resolved once by the engine rather than looked up per rule: every
+	// rule asks the same question, and resolving it N times would make the
+	// membership test depend on the config being read repeatedly.
+	ActorRoles map[string]bool
+	KnownRoles map[string]bool
 }
 
 // LoadConfig reads a policy YAML file.
@@ -100,6 +109,8 @@ func (e *Engine) DecideFor(runID string, authority AuthorityLevel, contract tool
 		// taking it from the value means the day verification exists, rules using
 		// it start working without an edit here.
 		ActorVerified: actor.Verified(),
+		KnownRoles:    e.knownRoles(),
+		ActorRoles:    e.rolesOf(actorID, actorDeclared),
 	}
 	decision := Decision{
 		ID:           newDecisionID(runID),
@@ -113,7 +124,26 @@ func (e *Engine) DecideFor(runID string, authority AuthorityLevel, contract tool
 		CreatedAt:    e.now().UTC(),
 	}
 
+	// Undefined roles referenced by rules are collected while scanning, so the
+	// final reason can name them.
+	//
+	// This is what keeps "an undefined role matches nothing" from being a silent
+	// failure. The rule that references one can never fire — and a permission
+	// that quietly stopped applying is the expensive kind of mistake — so the
+	// decision says which role was undefined. A reader at the point of refusal
+	// then learns exactly what a startup error would have told them, without
+	// paying the wider cost of refusing to load the whole policy over one typo.
+	var undefinedRoles []string
+	seenUndefined := map[string]bool{}
+
 	for _, rule := range e.cfg.Rules {
+		if rule.When.ActorRole != "" {
+			role := normalizeKey(rule.When.ActorRole)
+			if !input.KnownRoles[role] && !seenUndefined[role] {
+				seenUndefined[role] = true
+				undefinedRoles = append(undefinedRoles, rule.When.ActorRole)
+			}
+		}
 		if rule.When.matches(input) {
 			decision.Action = rule.Action
 			decision.Reason = ruleReason(rule)
@@ -123,7 +153,53 @@ func (e *Engine) DecideFor(runID string, authority AuthorityLevel, contract tool
 	}
 
 	applySafeDefault(&decision, authority, contract)
+
+	// The note is appended to whatever the outcome was, including a safe-default
+	// denial or allow: the undefined role is a fact about the POLICY, not about
+	// this decision, and a reader needs it whichever way the decision went.
+	if len(undefinedRoles) > 0 {
+		sort.Strings(undefinedRoles)
+		note := fmt.Sprintf("policy references undefined role(s): %s", strings.Join(undefinedRoles, ", "))
+		if decision.Reason == "" {
+			decision.Reason = note
+		} else {
+			decision.Reason = decision.Reason + "; " + note
+		}
+	}
 	return decision
+}
+
+// knownRoles is the set of role names the policy defines, normalised.
+func (e *Engine) knownRoles() map[string]bool {
+	out := make(map[string]bool, len(e.cfg.Roles))
+	for name := range e.cfg.Roles {
+		out[normalizeKey(name)] = true
+	}
+	return out
+}
+
+// rolesOf reports which roles a principal belongs to.
+//
+// An undeclared principal belongs to no role. That is not the same as belonging
+// to a role whose member list happens to be empty — the first is "nobody said
+// who this is" and the second is "this group is empty" — but neither grants
+// anything, and the distinction that matters to a policy (`actor_declared`) is
+// already carried separately on the input.
+func (e *Engine) rolesOf(actorID string, declared bool) map[string]bool {
+	out := map[string]bool{}
+	if !declared {
+		return out
+	}
+	key := normalizeKey(actorID)
+	for name, members := range e.cfg.Roles {
+		for _, member := range members {
+			if normalizeKey(member) == key {
+				out[normalizeKey(name)] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 func applySafeDefault(decision *Decision, authority AuthorityLevel, contract toolgw.ToolContract) {
