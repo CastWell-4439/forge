@@ -12,8 +12,12 @@ import (
 //
 //	handler: agent
 //	params:
-//	  task:       裁剪视频到 5~15 秒
-//	  acceptance: 输出时长在 5~15 秒之间，且内容与原文一致
+//	  task:       summarize the quarterly report into ten bullet points
+//	  acceptance: ten bullet points, each traceable to a passage in the report
+//
+// The example is deliberately domain-neutral. This layer is a planner for
+// arbitrary subtasks; an example drawn from one particular business makes the
+// abstraction look narrower than it is, and readers copy the example.
 //
 // Tool selection belongs at execution time, not at planning time. The step's
 // executor has the workspace, the actual data and the tool registry in front of
