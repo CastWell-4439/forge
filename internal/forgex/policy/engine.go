@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/castwell/forge/internal/forgex/toolgw"
+	"github.com/castwell/forge/internal/identity"
 )
 
 var decisionSeq atomic.Uint64
@@ -26,6 +27,12 @@ type decisionInput struct {
 	SideEffect       string
 	ApprovalRequired bool
 	Authority        AuthorityLevel
+	// The WHO dimension: the declared principal, whether one was declared at
+	// all, and whether it was checked. All three travel together because a
+	// rule may constrain any of them.
+	Actor         string
+	ActorDeclared bool
+	ActorVerified bool
 }
 
 // LoadConfig reads a policy YAML file.
@@ -53,17 +60,46 @@ func NewEngine(cfg *Config) *Engine {
 }
 
 // Decide returns one policy decision for a tool contract and authority level.
+//
+// It is the historical entry point and is kept so every existing caller keeps
+// working. It decides as an UNATTRIBUTED caller, which is what those callers
+// are: they pass no identity, so rules that constrain one do not apply to them.
+// A deployment that wants unattributed calls refused says so in policy (see
+// Condition.ActorDeclared), not by this function changing behaviour underneath
+// its existing users.
 func (e *Engine) Decide(runID string, authority AuthorityLevel, contract toolgw.ToolContract) Decision {
+	return e.DecideFor(runID, authority, contract, identity.Actor{})
+}
+
+// DecideFor returns one policy decision for a caller with a declared identity.
+//
+// The actor is a PARAMETER rather than read from a context, because this engine
+// is otherwise a pure function of its inputs and its tests rely on that: a value
+// that arrives through a context makes every rule's behaviour depend on
+// something the call site does not show.
+//
+// Actor and authority are independent, and both must pass. A run granted L4
+// authority still faces rules written against the caller, and a rule requiring
+// an actor does not care what authority the run was granted.
+func (e *Engine) DecideFor(runID string, authority AuthorityLevel, contract toolgw.ToolContract, actor identity.Actor) Decision {
 	if e == nil {
 		e = NewEngine(nil)
 	}
 	authority = NormalizeAuthority(authority)
+	actorID, actorDeclared := actor.Declared()
+
 	input := decisionInput{
 		ToolName:         strings.TrimSpace(contract.Name),
 		RiskLevel:        strings.ToLower(strings.TrimSpace(string(contract.RiskLevel))),
 		SideEffect:       strings.ToLower(strings.TrimSpace(string(contract.SideEffect))),
 		ApprovalRequired: contract.ApprovalRequired,
 		Authority:        authority,
+		Actor:            actorID,
+		ActorDeclared:    actorDeclared,
+		// Read from the Actor rather than assumed: today it is always false, and
+		// taking it from the value means the day verification exists, rules using
+		// it start working without an edit here.
+		ActorVerified: actor.Verified(),
 	}
 	decision := Decision{
 		ID:           newDecisionID(runID),
@@ -73,6 +109,7 @@ func (e *Engine) Decide(runID string, authority AuthorityLevel, contract toolgw.
 		SideEffect:   string(contract.SideEffect),
 		Authority:    authority,
 		RequiresHITL: false,
+		Actor:        actor,
 		CreatedAt:    e.now().UTC(),
 	}
 
