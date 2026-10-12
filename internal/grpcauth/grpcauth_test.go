@@ -256,13 +256,16 @@ func TestSecretIsReadWithOrWithoutTheBearerPrefix(t *testing.T) {
 	cfg := Config{Secret: "s3cret"}
 
 	ctx := metadataWith(authorizationHeader, "Bearer s3cret")
-	assert.NoError(t, cfg.authorize(ctx))
+	_, err := cfg.authorize(ctx)
+	assert.NoError(t, err)
 
 	ctx = metadataWith(authorizationHeader, "s3cret")
-	assert.NoError(t, cfg.authorize(ctx))
+	_, err = cfg.authorize(ctx)
+	assert.NoError(t, err)
 
 	ctx = metadataWith(authorizationHeader, "Bearer  s3cret ") // stray whitespace
-	assert.NoError(t, cfg.authorize(ctx))
+	_, err = cfg.authorize(ctx)
+	assert.NoError(t, err)
 }
 
 // ClientOptions follows the environment, so every dial site authenticates the
