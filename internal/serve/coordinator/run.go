@@ -230,10 +230,19 @@ func Run(appCtx context.Context) error {
 		return fmt.Errorf("listen gRPC %s: %w", grpcAddr, err)
 	}
 
-	// Identity is a separate interceptor from tracing and from auth, and all
-	// three are chained: a deployment that turns tracing off must not silently
-	// lose attribution, and a deployment that authenticates must not silently
-	// stop recording WHO the authenticated caller said it was.
+	// Three interceptors, chained in an order that is load-bearing:
+	//
+	//	tracing       records what happened
+	//	grpcauth      resolves a credential — and a valid token yields a VERIFIED
+	//	              principal that it puts on the context
+	//	identity      fills in an unverified DECLARATION, but only if the context
+	//	              does not already carry one
+	//
+	// The last two must be in that order. Reversed, the declaration would be
+	// written first and the verified principal second — which still works — but
+	// with the identity interceptor's guard removed the declaration would
+	// overwrite the token's answer, and holding any valid token would be enough
+	// to be anyone. The guard and the order are two halves of the same rule.
 	grpcOpts := append(observability.ServerOptions(), authCfg.ServerOptions()...)
 	grpcOpts = append(grpcOpts,
 		grpc.ChainUnaryInterceptor(identity.UnaryServerInterceptor()),
