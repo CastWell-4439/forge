@@ -412,7 +412,7 @@ func checkPolicy(args []string) error {
 	fs := flag.NewFlagSet("policy check", flag.ContinueOnError)
 	toolName := fs.String("tool", "", "tool name to check, e.g. demo.expensive_generation")
 	authority := fs.String("authority", "L0", "authority level to evaluate, e.g. L0-L4")
-	actorFlag := fs.String("actor", "", "the principal to check as; empty means unattributed")
+	actorFlag := fs.String("actor", "", "the principal to check as; empty means unattributed (role membership is resolved from the policy file)")
 	contractsPath := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
 	policyPath := fs.String("policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
 	if err := fs.Parse(args); err != nil {
