@@ -39,6 +39,16 @@ services:
       # be unreachable from the other containers — so the secret is not optional
       # here. Override it for anything beyond a local trial.
       FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
+      # Per-principal tokens let the server say WHO is calling, which is what the
+      # HITL audit trail needs: a shared secret admits a caller but makes every
+      # holder indistinguishable, so an approval would record a decision with no
+      # subject. Format: principal:sha256:<hex>, comma separated.
+      #
+      # Unset by default, so a trial deployment behaves exactly as before. When
+      # set, each client should also be given its own FORGE_GRPC_CLIENT_TOKEN —
+      # until it has one it keeps falling back to the shared secret, and keeps
+      # being recorded as unattributed.
+      FORGE_GRPC_TOKENS: ${FORGE_GRPC_TOKENS:-}
     ports:
       - "50051:50051"  # gRPC
       - "8081:8081"    # HTTP/metrics
@@ -61,6 +71,9 @@ services:
     environment:
       FORGE_COORDINATOR_ADDR: coordinator:50051
       FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
+      # The token THIS worker presents. Unset means it authenticates with the
+      # shared secret instead, which still works but leaves it unattributed.
+      FORGE_GRPC_CLIENT_TOKEN: ${FORGE_WORKER_GO_TOKEN:-}
       FORGE_WORKER_LANG: go
     deploy:
       replicas: 3
@@ -79,6 +92,9 @@ services:
       FORGE_COORDINATOR: coordinator:50051
       FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
       FORGE_WORKER_LANG: python
+      # The token THIS worker presents. Unset means it authenticates with the
+      # shared secret instead, which still works but leaves it unattributed.
+      FORGE_GRPC_CLIENT_TOKEN: ${FORGE_WORKER_PYTHON_TOKEN:-}
     deploy:
       replicas: 2
     depends_on:
@@ -108,6 +124,9 @@ services:
       FORGE_COORDINATOR: coordinator:50051
       FORGE_GRPC_SECRET: ${FORGE_GRPC_SECRET:-forge-dev-secret}
       FORGE_WORKER_LANG: cpp
+      # The token THIS worker presents. Unset means it authenticates with the
+      # shared secret instead, which still works but leaves it unattributed.
+      FORGE_GRPC_CLIENT_TOKEN: ${FORGE_WORKER_CPP_TOKEN:-}
     deploy:
       replicas: 1
     depends_on:

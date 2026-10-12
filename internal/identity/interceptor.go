@@ -50,7 +50,16 @@ func StreamServerInterceptor() grpc.StreamServerInterceptor {
 }
 
 // withDeclaredActor reads the actor from incoming metadata and stores it.
+//
+// An actor ALREADY on the context is left alone. That happens whenever the
+// credential interceptor ran first and resolved a principal from a verified
+// token — and there the token is the better answer than a header, because it was
+// checked. Overwriting it would make verification pointless: anyone holding a
+// valid token of their own could state a different name and be believed.
 func withDeclaredActor(ctx context.Context) context.Context {
+	if HasActor(ctx) {
+		return ctx
+	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		// No metadata at all: an in-process call or a transport that does not

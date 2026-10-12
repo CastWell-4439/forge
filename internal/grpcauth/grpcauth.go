@@ -44,6 +44,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/castwell/forge/internal/identity"
 )
 
 // EnvSecret is the environment variable holding the shared secret for inbound
@@ -81,7 +83,17 @@ var UnauthenticatedError = status.Error(codes.Unauthenticated, "unauthenticated"
 // Config is the resolved authentication posture.
 type Config struct {
 	// Secret is the shared secret, or "" when none is configured.
+	//
+	// It still admits a caller, and a caller admitted this way has NO verified
+	// identity: a shared secret cannot distinguish its holders. That is not a
+	// wart to be removed — it is the difference between the two credentials, and
+	// both are kept because they answer different questions. A deployment that
+	// only needs "not open to the world" sets this; one that needs "who" adds
+	// tokens.
 	Secret string
+	// Tokens are the per-principal credentials, or the zero value when none are
+	// configured.
+	Tokens TokenSet
 	// Addr is the address the server will bind, used to decide whether the
 	// deployment is reachable by others.
 	Addr string
@@ -91,12 +103,17 @@ type Config struct {
 func FromEnv(addr string) Config {
 	return Config{
 		Secret: strings.TrimSpace(os.Getenv(EnvSecret)),
+		Tokens: TokensFromEnv(),
 		Addr:   addr,
 	}
 }
 
 // Enabled reports whether calls will be authenticated.
-func (c Config) Enabled() bool { return c.Secret != "" }
+//
+// Either credential is enough to require one: a deployment that configured only
+// tokens must still reject an unauthenticated call, which is the bug that would
+// follow from checking the shared secret alone here.
+func (c Config) Enabled() bool { return c.Secret != "" || c.Tokens.Configured() }
 
 // Validate decides whether the deployment may serve, and is the whole of the
 // fail-closed behaviour.
@@ -109,23 +126,44 @@ func (c Config) Enabled() bool { return c.Secret != "" }
 // It returns an error naming the variable to set and the two ways out, because
 // the person reading it is looking at a service that will not start.
 func (c Config) Validate() error {
+	// A malformed token entry is refused wherever it occurs, including on
+	// loopback. It is a configuration mistake rather than a posture choice: the
+	// named principal would silently be unable to authenticate, and the symptom
+	// would surface much later as a confusing rejection. This is the opposite
+	// direction from an undefined policy role, and deliberately so — there the
+	// alternative was refusing to start over a rule, here the alternative is a
+	// principal who cannot get in at all.
+	if err := c.Tokens.Error(); err != nil {
+		return fmt.Errorf("refusing to serve gRPC: %w", err)
+	}
 	if c.Enabled() || isLoopbackAddr(c.Addr) {
 		return nil
 	}
 	return fmt.Errorf(
 		"refusing to serve gRPC on %s without authentication: this address is reachable from other machines "+
-			"and the API can submit and cancel workflows. Set %s, or bind loopback (FORGE_GRPC_ADDR=127.0.0.1:50051)",
-		c.Addr, EnvSecret)
+			"and the API can submit and cancel workflows. Set %s (or %s for per-principal identities), "+
+			"or bind loopback (FORGE_GRPC_ADDR=127.0.0.1:50051)",
+		c.Addr, EnvSecret, EnvTokens)
 }
 
 // LogPosture states which mode the server is in. An operator should not have to
 // infer whether their API is locked from the absence of a log line.
+//
+// The identity half is reported separately from the locked half, because they
+// are genuinely different questions: a deployment can be closed to the world and
+// still unable to say who called. Saying only "auth enabled" would let an
+// operator believe attribution works when it does not.
 func (c Config) LogPosture() {
+	who := fmt.Sprintf("%s with %d principal(s)", EnvTokens, c.Tokens.Len())
+	if !c.Tokens.Configured() {
+		who = "no per-principal identities (" + EnvTokens + " unset): callers are indistinguishable"
+	}
+
 	switch {
 	case c.Enabled() && isLoopbackAddr(c.Addr):
-		log.Printf("INFO: gRPC auth enabled on %s (secret from %s; bound loopback)", c.Addr, EnvSecret)
+		log.Printf("INFO: gRPC auth enabled on %s (bound loopback); %s", c.Addr, who)
 	case c.Enabled():
-		log.Printf("INFO: gRPC auth enabled on %s (secret from %s)", c.Addr, EnvSecret)
+		log.Printf("INFO: gRPC auth enabled on %s; %s", c.Addr, who)
 	default:
 		log.Printf("WARN: gRPC auth DISABLED on %s: bound loopback and no %s set. "+
 			"Only processes on this machine can reach it; set %s before exposing the port",
@@ -151,40 +189,91 @@ func (c Config) ServerOptions() []grpc.ServerOption {
 // UnaryInterceptor authenticates a unary call.
 func (c Config) UnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if err := c.authorize(ctx); err != nil {
+		authed, err := c.authorize(ctx)
+		if err != nil {
 			return nil, err
 		}
-		return handler(ctx, req)
+		return handler(authed, req)
 	}
 }
 
 // StreamInterceptor authenticates a streaming call.
 func (c Config) StreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if err := c.authorize(ss.Context()); err != nil {
+		authed, err := c.authorize(ss.Context())
+		if err != nil {
 			return err
 		}
-		return handler(srv, ss)
+		return handler(srv, &authenticatedStream{ServerStream: ss, ctx: authed})
 	}
 }
 
-// authorize checks the credential on a call.
-func (c Config) authorize(ctx context.Context) error {
+// authorize checks the credential on a call and returns the context the handler
+// should see.
+//
+// It returns a context rather than only an error because a valid token
+// ESTABLISHES an identity: the principal the token belongs to becomes a verified
+// Actor on the context. Returning only an error would leave the caller to
+// re-derive that, and the second derivation would be a second place that decides
+// what a token means.
+func (c Config) authorize(ctx context.Context) (context.Context, error) {
 	presented := secretFromContext(ctx)
+
+	// A per-principal token is tried first, and it wins.
+	//
+	// Order matters for a security reason rather than a stylistic one: if the
+	// shared secret were accepted first, a caller holding it could also state any
+	// identity in the header and that declaration — being the only one present —
+	// would be used. Trying the token first means that when one is valid, the
+	// principal comes from the credential instead of from a claim.
+	if actor, ok := c.Tokens.Resolve(presented); ok {
+		return identity.WithActor(ctx, actor), nil
+	}
+
+	// A caller with a token configured but a WRONG one falls through to the
+	// shared secret rather than being rejected here, so that a deployment adding
+	// tokens does not lock out clients still using the old credential. The
+	// rejection below is the same one an unknown credential always got.
+	if c.Secret == "" {
+		if c.Tokens.Configured() {
+			return nil, UnauthenticatedError
+		}
+		// No credential is configured at all. Validate has already refused a
+		// routable bind in that state, so reaching here means loopback, where the
+		// only callers are on this machine.
+		return ctx, nil
+	}
+
 	// Equal lengths first: ConstantTimeCompare returns 0 immediately for
 	// different lengths, and there is no way around that, but doing the length
 	// check here keeps the intent explicit rather than implicit in the stdlib.
 	if len(presented) != len(c.Secret) {
-		return UnauthenticatedError
+		return nil, UnauthenticatedError
 	}
 	// Constant time, so the reply carries no information about how much of the
 	// secret was right. `==` on strings stops at the first differing byte, which
 	// is enough to recover a secret one character at a time.
 	if subtle.ConstantTimeCompare([]byte(presented), []byte(c.Secret)) != 1 {
-		return UnauthenticatedError
+		return nil, UnauthenticatedError
 	}
-	return nil
+
+	// The shared secret admits the caller but establishes NO identity: every
+	// holder of it is indistinguishable from every other, so there is no
+	// principal to record. The context is returned unchanged, which lets the
+	// identity interceptor fill in an unverified declaration if the caller made
+	// one — the correct outcome, and an honest one.
+	return ctx, nil
 }
+
+// authenticatedStream overrides Context so the handler sees the context
+// authorize produced, including any verified principal.
+type authenticatedStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+// Context implements grpc.ServerStream.
+func (s *authenticatedStream) Context() context.Context { return s.ctx }
 
 // secretFromContext reads the presented credential from incoming metadata.
 func secretFromContext(ctx context.Context) string {
@@ -211,16 +300,25 @@ func secretFromContext(ctx context.Context) string {
 // a deployment towards enabling TLS it does not have — a larger decision than
 // this one. An explicit interceptor does what the deployment asked for.
 //
-// No secret configured means no option: a client talking to an unauthenticated
+// A per-principal token is preferred when BOTH are set. The client presents one
+// credential, not two: the server accepts either, and sending the token is what
+// makes the call attributable. A deployment that has issued a token for this
+// process wants that identity used, not the anonymous one the shared secret
+// gives it.
+//
+// Neither configured means no option: a client talking to an unauthenticated
 // loopback server should not have to know that.
 func ClientOptions() []grpc.DialOption {
-	secret := strings.TrimSpace(os.Getenv(EnvSecret))
-	if secret == "" {
+	credential := strings.TrimSpace(os.Getenv(EnvClientToken))
+	if credential == "" {
+		credential = strings.TrimSpace(os.Getenv(EnvSecret))
+	}
+	if credential == "" {
 		return nil
 	}
 	return []grpc.DialOption{
-		grpc.WithChainUnaryInterceptor(clientUnaryInterceptor(secret)),
-		grpc.WithChainStreamInterceptor(clientStreamInterceptor(secret)),
+		grpc.WithChainUnaryInterceptor(clientUnaryInterceptor(credential)),
+		grpc.WithChainStreamInterceptor(clientStreamInterceptor(credential)),
 	}
 }
 

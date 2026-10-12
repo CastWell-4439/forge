@@ -192,3 +192,23 @@ func FromContext(ctx context.Context) Actor {
 	}
 	return Actor{}
 }
+
+// HasActor reports whether an actor was already recorded on the context.
+//
+// It exists because two interceptors can both want to set one. The credential
+// interceptor resolves a principal from a VERIFIED token; the identity
+// interceptor reads an unverified declaration from a header. They are separate
+// concerns that happen to share a slot, so without this check whichever ran
+// second would silently overwrite the other — and the pair would look like it
+// worked while the outcome depended only on ordering.
+//
+// A caller with a verified actor therefore keeps it, and a caller with only a
+// declaration gets nothing from that call. The direction is the point: a
+// verified principal must not be replaceable by a header someone typed.
+func HasActor(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	_, ok := ctx.Value(actorKey{}).(Actor)
+	return ok
+}
