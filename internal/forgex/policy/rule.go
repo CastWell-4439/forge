@@ -6,7 +6,21 @@ import "strings"
 type Config struct {
 	Version int    `json:"version" yaml:"version"`
 	Profile string `json:"profile" yaml:"profile"`
-	Rules   []Rule `json:"rules" yaml:"rules"`
+	// Roles names groups of principals.
+	//
+	// They exist because a rule about a team would otherwise be one rule per
+	// person: granting five people the ability to deploy meant five
+	// near-identical rules, and changing the policy meant editing all five. A
+	// role is the collective noun for that set, and nothing more — it carries no
+	// permission of its own, because a permission belongs to a rule, and a rule
+	// can ask for several things at once.
+	//
+	// Membership is a list rather than a reference to an external directory: the
+	// policy file is the whole authorisation story today, and splitting it across
+	// a file and a directory would mean a reader can no longer answer "who may
+	// deploy" from one place.
+	Roles map[string][]string `json:"roles,omitempty" yaml:"roles,omitempty"`
+	Rules []Rule              `json:"rules" yaml:"rules"`
 }
 
 // Rule maps a condition to a policy action.
@@ -58,6 +72,23 @@ type Condition struct {
 	// therefore safe — it takes effect the day verification exists, and does
 	// nothing before then.
 	ActorVerified *bool `json:"actor_verified,omitempty" yaml:"actor_verified,omitempty"`
+	// ActorRole matches any principal listed in a named role.
+	//
+	// It is sugar over Actor and deliberately no more than that: a rule with
+	// `actor_role: deployers` means exactly the same as one rule per member.
+	// Keeping that equivalence exact is what makes the feature explainable —
+	// there is no second authorisation model to reason about, only a shorter way
+	// to write the first one. A test asserts the equivalence directly.
+	//
+	// An UNDEFINED role matches nothing, and that direction is chosen: a rule
+	// naming a role that does not exist becomes a permission that does not apply,
+	// so the refusal is visible to whoever is turned away. Making it a load error
+	// instead would mean one typo stops the entire policy from starting — a
+	// failure wider than the mistake it reports. Because the softer direction
+	// costs a rule that silently stops working, the decision reason names the
+	// undefined role, so a reader at the point of refusal learns what a startup
+	// error would have told them.
+	ActorRole string `json:"actor_role,omitempty" yaml:"actor_role,omitempty"`
 }
 
 func (c Condition) matches(input decisionInput) bool {
@@ -99,5 +130,35 @@ func (c Condition) matches(input decisionInput) bool {
 	if c.ActorVerified != nil && *c.ActorVerified != input.ActorVerified {
 		return false
 	}
+
+	// A role is a set of principals. Two ways to fail, and they are different
+	// facts about the policy rather than two flavours of the same one:
+	//
+	//   - the role is not defined at all: the rule can never match, and the
+	//     policy has a mistake in it
+	//   - the role is defined but the caller is not in it: the rule works, and
+	//     the answer is simply no
+	//
+	// Both return false here; the difference is reported by the engine, which is
+	// the layer that knows what "the caller" means.
+	if c.ActorRole != "" {
+		role := normalizeKey(c.ActorRole)
+		if !input.KnownRoles[role] {
+			return false
+		}
+		if !input.ActorRoles[role] {
+			return false
+		}
+	}
 	return true
+}
+
+// normalizeKey lowercases and trims a role or principal name for comparison.
+//
+// Both sides of a membership test go through it, so a policy cannot be made to
+// disagree with itself by capitalisation. The same reasoning as Actor matching:
+// a name an operator types is not case-significant, and a rule that silently
+// stopped applying would be a permission that quietly vanished.
+func normalizeKey(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
