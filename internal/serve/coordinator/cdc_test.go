@@ -119,7 +119,20 @@ stages:
 	// The WAL source subscribes asynchronously (slot + publication are
 	// created inside Subscribe), so the first insert may land too early —
 	// keep re-inserting until the chain has fired.
+	//
+	// The predicate waits for the WHOLE outcome, not just the workflow row.
+	//
+	// SubmitDAG saves the workflow first and its tasks afterwards, so between
+	// those two writes an observer sees a workflow with no tasks yet. Waiting
+	// only for the workflow therefore returns inside that window, and the
+	// assertions after it read a half-written instance — which is exactly what
+	// failed in CI: the trigger fired, the workflow appeared, and the task list
+	// was still empty.
+	//
+	// The fix is not a sleep. It is to make the awaited condition the same
+	// condition the assertions need, so the wait and the checks cannot disagree.
 	var workflowID string
+	var tasks []*storage.Task
 	var lastSQLErr error
 	require.Eventually(t, func() bool {
 		// tryExec, not execSQL: this closure runs on Eventually's own goroutine,
@@ -139,22 +152,33 @@ stages:
 			return false
 		}
 		for _, wf := range workflows {
-			if wf.Name == "cdc_demo" {
-				workflowID = wf.ID
-				var input map[string]any
-				if json.Unmarshal(wf.Input, &input) == nil && fmt.Sprint(input["item_id"]) == "1" {
-					return true
-				}
+			if wf.Name != "cdc_demo" {
+				continue
 			}
+			var input map[string]any
+			if json.Unmarshal(wf.Input, &input) != nil || fmt.Sprint(input["item_id"]) != "1" {
+				continue
+			}
+
+			// The right workflow. Now require its tasks to exist, because that
+			// is what the assertions below read.
+			found, err := boltStore.ListTasksByWorkflow(ctx, wf.ID)
+			if err != nil || len(found) == 0 {
+				// Saved but not yet populated: keep waiting rather than
+				// returning an instance whose tasks are still being written.
+				return false
+			}
+			workflowID = wf.ID
+			tasks = found
+			return true
 		}
 		return false
 	}, 45*time.Second, 3*time.Second,
-		"CDC event should reach the trigger and submit cdc_demo with mapped params; last fixture error: %v", lastSQLErr)
+		"CDC event should reach the trigger and submit cdc_demo with mapped params and its tasks; last fixture error: %v", lastSQLErr)
 
 	// The submitted instance went through bridge + SubmitDAG: its tasks are
 	// the bridged registry tasks, ready for dispatch.
-	tasks, err := boltStore.ListTasksByWorkflow(ctx, workflowID)
-	require.NoError(t, err)
+	require.Equal(t, workflowID != "", true, "the wait must have found the workflow")
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "shell", tasks[0].Handler, "worker became handler through the bridge")
 	assert.Contains(t, string(tasks[0].Input), "echo captured")

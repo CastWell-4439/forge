@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
@@ -84,6 +85,33 @@ func Run(appCtx context.Context) error {
 		return fmt.Errorf("discovery: %w", err)
 	}
 	defer stopDiscovery()
+
+	// --- Recover work a previous process left behind ---
+	//
+	// This is placed AFTER discovery because that is what decides the shape:
+	// with etcd, becoming leader triggers its own reclaim (see
+	// StartLeaderElection), and this pass still runs for the window before
+	// leadership is settled. Without etcd — the standalone and single-node
+	// cases, and the ones where the defect was easiest to hit — this is the ONLY
+	// pass, which is why it cannot live inside the discovery wiring: that
+	// function returns early when etcd is unset.
+	//
+	// It runs in the background. Startup must not block on a store scan, and the
+	// work it does is not a precondition for serving: a task recovered a second
+	// later is still recovered.
+	go func() {
+		// A short pause lets in-process workers finish registering, so the pass
+		// can tell "this worker is gone" from "this worker has not said hello
+		// yet". Without it the conservative predicate would treat every worker as
+		// unknown at startup and reset tasks that are about to be claimed — the
+		// aggressive failure, arrived at by impatience.
+		select {
+		case <-appCtx.Done():
+			return
+		case <-time.After(coordinator.OrphanReclaimDelay):
+		}
+		coord.ReclaimOrphanedTasks(appCtx)
+	}()
 
 	// --- Kueue GPU queue (optional) ---
 	// FORGE_KUEUE_ENABLED unset = off (dispatch unchanged); enabled but
