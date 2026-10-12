@@ -1,6 +1,10 @@
 package policy
 
-import "time"
+import (
+	"time"
+
+	"github.com/castwell/forge/internal/identity"
+)
 
 // Action is the policy outcome for a tool invocation.
 type Action string
@@ -25,5 +29,12 @@ type Decision struct {
 	SideEffect   string         `json:"side_effect" yaml:"side_effect"`
 	Authority    AuthorityLevel `json:"authority" yaml:"authority"`
 	RequiresHITL bool           `json:"requires_hitl" yaml:"requires_hitl"`
-	CreatedAt    time.Time      `json:"created_at" yaml:"created_at"`
+	// Actor is WHO the decision was made about.
+	//
+	// A denial is only actionable if the reader can see whose request it was:
+	// "denied by rule r-7" and "denied by rule r-7, for alice" lead to different
+	// next steps, and the second is what an operator needs. The zero value means
+	// no identity was declared, which the Actor reports about itself.
+	Actor     identity.Actor `json:"actor" yaml:"actor"`
+	CreatedAt time.Time      `json:"created_at" yaml:"created_at"`
 }

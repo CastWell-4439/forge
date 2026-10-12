@@ -24,6 +24,7 @@ import (
 	"github.com/castwell/forge/internal/forgex/scorecard"
 	"github.com/castwell/forge/internal/forgex/storage"
 	"github.com/castwell/forge/internal/forgex/toolgw"
+	"github.com/castwell/forge/internal/identity"
 )
 
 const version = "ForgeX v0.1.0"
@@ -411,6 +412,7 @@ func checkPolicy(args []string) error {
 	fs := flag.NewFlagSet("policy check", flag.ContinueOnError)
 	toolName := fs.String("tool", "", "tool name to check, e.g. demo.expensive_generation")
 	authority := fs.String("authority", "L0", "authority level to evaluate, e.g. L0-L4")
+	actorFlag := fs.String("actor", "", "the principal to check as; empty means unattributed")
 	contractsPath := fs.String("contracts", demo.DefaultContractsPath, "tool contracts YAML path")
 	policyPath := fs.String("policy", demo.DefaultToolPolicyPath, "tool policy YAML path")
 	if err := fs.Parse(args); err != nil {
@@ -431,8 +433,15 @@ func checkPolicy(args []string) error {
 	if err != nil {
 		return err
 	}
-	decision := forgexpolicy.NewEngine(cfg).Decide("policy_check", forgexpolicy.AuthorityLevel(*authority), contract)
-	fmt.Printf("tool=%s\tauthority=%s\taction=%s\trequires_hitl=%t\trisk=%s\tside_effect=%s\treason=%s\n", decision.ToolName, decision.Authority, decision.Action, decision.RequiresHITL, decision.RiskLevel, decision.SideEffect, decision.Reason)
+	// The actor is declared on the command line so an operator can check how a
+	// rule behaves FOR A PRINCIPAL, which is the dimension that used to be
+	// untestable: "does alice's deploy get denied" had no way to be asked.
+	//
+	// It is declared, not verified — nothing verifies one — and the printed
+	// decision says so.
+	actor := identity.NewDeclared(*actorFlag)
+	decision := forgexpolicy.NewEngine(cfg).DecideFor("policy_check", forgexpolicy.AuthorityLevel(*authority), contract, actor)
+	fmt.Printf("tool=%s\tauthority=%s\taction=%s\trequires_hitl=%t\trisk=%s\tside_effect=%s\tactor=%s\treason=%s\n", decision.ToolName, decision.Authority, decision.Action, decision.RequiresHITL, decision.RiskLevel, decision.SideEffect, decision.Actor.String(), decision.Reason)
 	return nil
 }
 
