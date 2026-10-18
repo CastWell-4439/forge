@@ -1,0 +1,53 @@
+# 变异清单：internal/grpcauth
+#
+# 用途：验证"测试是否真的在测它"。每条变异把代码改坏，
+# 期望测试变红（caught）。变绿（NOT CAUGHT）= 这条性质没有守卫。
+#
+# 格式见 scripts/mutation_check.go 的文件头。
+
+internal/grpcauth/tokens.go
+--- name early exit on first match (D-75 声称的"不提前退出")
+--- old
+			matched = p.Name
+		}
+--- new
+			matched = p.Name
+			break
+		}
+=== end
+
+internal/grpcauth/tokens.go
+--- name expiry never triggers (D-72 声称的令牌会过期)
+--- old
+	return !p.expiresAt.IsZero() && !now.Before(p.expiresAt)
+--- new
+	return false
+=== end
+
+internal/grpcauth/grpcauth.go
+--- name client prefers the shared secret (D-75 声称令牌优先)
+--- old
+	credential := strings.TrimSpace(os.Getenv(EnvClientToken))
+	if credential == "" {
+		credential = strings.TrimSpace(os.Getenv(EnvSecret))
+	}
+--- new
+	credential := strings.TrimSpace(os.Getenv(EnvSecret))
+	if credential == "" {
+		credential = strings.TrimSpace(os.Getenv(EnvClientToken))
+	}
+=== end
+
+internal/grpcauth/tokens.go
+--- name expired token still authenticates (D-72 声称过期即失效)
+--- old
+			if p.expired(now) {
+				matched = ""
+				continue
+			}
+--- new
+			if p.expired(now) && false {
+				matched = ""
+				continue
+			}
+=== end
