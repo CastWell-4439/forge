@@ -227,6 +227,7 @@ func (c Config) authorize(ctx context.Context) (context.Context, error) {
 	// would be used. Trying the token first means that when one is valid, the
 	// principal comes from the credential instead of from a claim.
 	if actor, ok := c.Tokens.Resolve(presented); ok {
+		auditSuccess(actor.ID(), actor.Verified(), actor.Verifier())
 		return identity.WithActor(ctx, actor), nil
 	}
 
@@ -236,11 +237,15 @@ func (c Config) authorize(ctx context.Context) (context.Context, error) {
 	// rejection below is the same one an unknown credential always got.
 	if c.Secret == "" {
 		if c.Tokens.Configured() {
+			auditFailure(tokenFingerprint(presented), true, false)
 			return nil, UnauthenticatedError
 		}
 		// No credential is configured at all. Validate has already refused a
 		// routable bind in that state, so reaching here means loopback, where the
 		// only callers are on this machine.
+		//
+		// Nothing is audited: there was no authentication to record, and a line
+		// per call would bury the real events under routine loopback traffic.
 		return ctx, nil
 	}
 
@@ -248,12 +253,14 @@ func (c Config) authorize(ctx context.Context) (context.Context, error) {
 	// different lengths, and there is no way around that, but doing the length
 	// check here keeps the intent explicit rather than implicit in the stdlib.
 	if len(presented) != len(c.Secret) {
+		auditFailure(tokenFingerprint(presented), c.Tokens.Configured(), true)
 		return nil, UnauthenticatedError
 	}
 	// Constant time, so the reply carries no information about how much of the
 	// secret was right. `==` on strings stops at the first differing byte, which
 	// is enough to recover a secret one character at a time.
 	if subtle.ConstantTimeCompare([]byte(presented), []byte(c.Secret)) != 1 {
+		auditFailure(tokenFingerprint(presented), c.Tokens.Configured(), true)
 		return nil, UnauthenticatedError
 	}
 
@@ -262,6 +269,12 @@ func (c Config) authorize(ctx context.Context) (context.Context, error) {
 	// principal to record. The context is returned unchanged, which lets the
 	// identity interceptor fill in an unverified declaration if the caller made
 	// one — the correct outcome, and an honest one.
+	//
+	// The call is still audited, with no principal and the mechanism named. An
+	// investigation asking "was this the shared secret or a token" needs the
+	// distinction, and a line that omitted it would be indistinguishable from a
+	// token call with no identity.
+	auditSuccess("", false, "shared-secret")
 	return ctx, nil
 }
 
