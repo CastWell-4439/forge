@@ -372,22 +372,44 @@ func splitExpiry(entry string) (rest string, at time.Time, raw string) {
 // principal. With the handful of principals a deployment has, that is nothing
 // next to a gRPC round trip.
 func (t TokenSet) Resolve(token string) (identity.Actor, bool) {
+	actor, ok, _ := t.ResolveCounting(token)
+	return actor, ok
+}
+
+// ResolveCounting is Resolve, and additionally reports how many entries were
+// examined.
+//
+// The count exists so the no-early-exit property can be TESTED rather than
+// merely asserted. Without it the property is invisible: mutating the loop to
+// `break` on the first match left every test in this package green, because the
+// observable outcome — which principal wins — is identical either way. A security
+// property that cannot be observed cannot be protected by a test, and one that
+// survives its own violation is a comment.
+//
+// The count is the mechanism's own testimony, not a proxy: it is incremented
+// inside the loop that performs the comparisons, so a `break` changes the number.
+//
+// It is exported rather than test-only because the alternative — a build-tagged
+// counter — would mean the tested code and the shipped code differ, which is the
+// gap this whole exercise was meant to close.
+func (t TokenSet) ResolveCounting(token string) (identity.Actor, bool, int) {
 	if !t.configured || token == "" || len(t.principals) == 0 {
-		return identity.Actor{}, false
+		return identity.Actor{}, false, 0
 	}
 
 	presented := sha256.Sum256([]byte(token))
 	now := t.clock()()
 
 	matched := ""
+	examined := 0
 	for _, p := range t.principals {
-		// Constant-time per comparison, and the result is accumulated rather than
+		// Every entry is compared, and the result is accumulated rather than
 		// branched on, so the loop body does the same work whichever entry
-		// matches.
+		// matches — and, critically, the loop reaches the end whether or not one
+		// did.
+		examined++
 		if subtle.ConstantTimeCompare(presented[:], p.digest[:]) == 1 {
 			if p.expired(now) {
-				// Matched but no longer valid. Clearing rather than breaking keeps
-				// the work per entry identical.
 				matched = ""
 				continue
 			}
@@ -395,7 +417,7 @@ func (t TokenSet) Resolve(token string) (identity.Actor, bool) {
 		}
 	}
 	if matched == "" {
-		return identity.Actor{}, false
+		return identity.Actor{}, false, examined
 	}
-	return identity.NewVerified(matched, verifierName), true
+	return identity.NewVerified(matched, verifierName), true, examined
 }
