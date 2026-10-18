@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/castwell/forge/internal/identity"
 	"github.com/castwell/forge/internal/storage"
 )
 
@@ -76,6 +77,74 @@ func TestPGStoreRoundTrip(t *testing.T) {
 	require.NotNil(t, again.Response)
 	assert.Equal(t, "approve", again.Response.Decision)
 	assert.Equal(t, "LGTM", again.Response.Feedback)
+}
+
+// The actor survives the database, not just the in-memory map.
+//
+// This is the assertion that was missing, and its absence hid a real defect: the
+// Response was stored as JSON, Actor's fields are unexported (deliberately, so
+// verification cannot be asserted by assignment), and encoding/json therefore
+// wrote `{}` for it. Approvals were persisted with a decision and no subject, and
+// reading them back said "unattributed" — while every in-memory test passed,
+// because none of them went through the store.
+//
+// A unit test of the encoder would not have caught it either. The bug lived in
+// the seam between two correct things: a type that hides its fields, and a store
+// that serialises. Only a round-trip through the store covers the seam.
+func TestPGStorePersistsTheDecidingActor(t *testing.T) {
+	pg := requirePGStore(t)
+	ctx := context.Background()
+	suffix := time.Now().Format("150405.000000000")
+
+	req := &Request{
+		ID: "test-actor-" + suffix, WorkflowID: "wf-actor", TaskID: "task-actor",
+		Message: "who approved this?", Options: []string{"approve", "reject"},
+	}
+	require.NoError(t, pg.Save(ctx, req))
+
+	req.Status = StatusResponded
+	req.Response = &Response{
+		Decision: "approve",
+		Feedback: "released by alice",
+		Actor:    identity.NewVerified("alice", "per-principal-token"),
+	}
+	require.NoError(t, pg.Update(ctx, req))
+
+	again, err := pg.Get(ctx, req.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again.Response)
+
+	actor := again.Response.Actor
+	assert.Equal(t, "alice", actor.ID(), "the subject must come back from the row")
+	assert.True(t, actor.Verified(), "and so must the fact that it was checked")
+	assert.Equal(t, "per-principal-token", actor.Verifier(),
+		"including what checked it: 'verified' alone is an audit entry that says 'trust me'")
+}
+
+// An approval stored with no identity reads back as unattributed rather than as
+// an empty string, so a gap in the record is visible as a gap.
+func TestPGStorePreservesAnUnattributedResponse(t *testing.T) {
+	pg := requirePGStore(t)
+	ctx := context.Background()
+	suffix := time.Now().Format("150405.000000000")
+
+	req := &Request{
+		ID: "test-noactor-" + suffix, WorkflowID: "wf-noactor", TaskID: "task-noactor",
+		Message: "no identity declared", Options: []string{"approve"},
+	}
+	require.NoError(t, pg.Save(ctx, req))
+
+	req.Status = StatusResponded
+	req.Response = &Response{Decision: "approve"}
+	require.NoError(t, pg.Update(ctx, req))
+
+	again, err := pg.Get(ctx, req.ID)
+	require.NoError(t, err)
+	require.NotNil(t, again.Response)
+
+	_, declared := again.Response.Actor.Declared()
+	assert.False(t, declared)
+	assert.Equal(t, "unattributed", again.Response.Actor.String())
 }
 
 // Only pending requests are listed as outstanding; an answered one is not work
